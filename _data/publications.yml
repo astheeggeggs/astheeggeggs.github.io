@@ -1,0 +1,270 @@
+- year: 2026
+  title: "The Biobank Rare Variant consortium powers the discovery of rare genetic associations through global collaboration"
+  authors: "<em>Palmer DS</em>, Hill B, Hodgson S, Jäeloo M, Kalantzis G, Kousathanas A, et al., Neale BM"
+  venue: "medRxiv"
+  url: "https://www.medrxiv.org/content/10.64898/2026.05.21.26353759v1"
+  badge: "Preprint"
+  tags: "lead rare preprint"
+
+- year: 2026
+  title: "Deviations from genetic additivity driven by rare variants at biobank scale"
+  authors: "Lassen FH, Venkatesh SS, Baya NA, Lindgren CM, <em>Palmer DS</em>"
+  venue: "Nature Communications"
+  url: "https://scholar.google.com/citations?user=-OiUY4kAAAAJ&hl=en"
+  tags: "lead rare methods"
+
+- year: 2026
+  title: "Individuals who deviate from polygenic expectation are enriched for damaging variants in genes linked to rare disease"
+  authors: "Baya NA, Lassen FH, Hill B, Venkatesh SS, Currant H, Lindgren CM, <em>Palmer DS</em>, et al."
+  venue: "American Journal of Human Genetics 113:1415–1433"
+  url: "https://www.cell.com/ajhg/home"
+  tags: "lead rare methods"
+
+- year: 2026
+  title: "Meta-analysis across six global biobanks identifies recessive coding associations with complex traits and diseases"
+  authors: "Lassen FH, Kalantzis G, Eoli A, Hill B, Sonehara K, Namba S, Wade I, <em>Palmer DS</em>, et al."
+  venue: "American Journal of Human Genetics 113:1330–1346"
+  url: "https://www.sciencedirect.com/science/article/pii/S0002929726001552"
+  tags: "lead rare methods"
+
+- year: 2026
+  title: "Exome sequencing and analysis of 44,028 British South Asians enriched for high autozygosity"
+  authors: "Kim HI, DeBoever C, Walter K, Kalantzis G, Li C, Mozaffari SV, Kundu K, et al."
+  venue: "Nature Genetics"
+  url: "https://www.nature.com/ng/"
+  tags: "rare"
+
+- year: 2026
+  title: "Systematic common and rare variant association testing in 392,030 whole genomes in All of Us"
+  authors: "Lu W, Carroll RJ, Solomonson M, Guez J, He MK, Marten DJ, et al."
+  venue: "medRxiv"
+  url: "https://www.medrxiv.org/"
+  badge: "Preprint"
+  tags: "rare preprint"
+
+- year: 2026
+  title: "Population-scale ancestral recombination graphs with tskit 1.0"
+  authors: "Jeffery B, Wong Y, Thornton K, Tsambos G, Bisschop G, Deng Y, et al."
+  venue: "arXiv:2602.09649"
+  url: "https://arxiv.org/"
+  badge: "Preprint"
+  tags: "methods preprint pathogen"
+
+- year: 2025
+  title: "Pan-UK Biobank genome-wide association analyses enhance discovery and resolution of ancestry-enriched effects"
+  authors: "Karczewski KJ, Gupta R, Kanai M, Lu W, Tsuo K, Wang Y, Walters RK, et al."
+  venue: "Nature Genetics 57:2408–2417"
+  url: "https://www.nature.com/articles/s41588-025-02403-y"
+  tags: "methods"
+
+- year: 2025
+  title: "Genome-wide analyses identify 25 infertility loci and relationships with reproductive traits across the allele frequency spectrum"
+  authors: "Venkatesh SS, Wittemans LBL, <em>Palmer DS</em>, Baya NA, Ferreira T, Hill B, et al."
+  venue: "Nature Genetics 57:1107–1118"
+  url: "https://doi.org/10.1038/s41588-025-02156-8"
+  tags: "lead repro"
+
+- year: 2025
+  title: "Combining evidence from human genetic and functional screens to identify pathways altering obesity and fat distribution"
+  authors: "Baya NA, Erdem IS, Venkatesh SS, Reibe S, Charles PD, et al."
+  venue: "American Journal of Human Genetics 112:2316–2337"
+  url: "https://www.cell.com/ajhg/home"
+  tags: "repro"
+
+- year: 2025
+  title: "A pandemic-scale ancestral recombination graph for SARS-CoV-2"
+  authors: "Zhan SH, Wong Y, Ignatieva A, Eaton K, Guthrie I, Jeffery B, <em>Palmer DS</em>, et al."
+  venue: "bioRxiv"
+  url: "https://www.biorxiv.org/content/10.1101/2023.06.08.544212"
+  badge: "Preprint"
+  tags: "pathogen preprint"
+
+- year: 2025
+  title: "Disruption of cell-type-specific molecular programs of medium spiny neurons in autism"
+  authors: "Yuan G, Suresh V, Wigdor EM, Hao Y, Leonard R, Steyert M, Griffiths M, et al."
+  venue: "bioRxiv"
+  url: "https://www.biorxiv.org/"
+  badge: "Preprint"
+  tags: "psych preprint"
+
+- year: 2024
+  title: "Principled distillation of UK Biobank phenotype data reveals underlying structure in human variation"
+  authors: "Carey CE, Shafee R, Wedow R, Elliott A, <em>Palmer DS</em>, Compitello J, et al."
+  venue: "Nature Human Behaviour 8:1599–1615"
+  url: "https://www.nature.com/nathumbehav/"
+  tags: "lead methods psych"
+
+- year: 2024
+  title: "Exome-wide evidence of compound heterozygous effects across common phenotypes in the UK Biobank"
+  authors: "Lassen FH, Venkatesh SS, Baya N, Hill B, Zhou W, Bloemendal A, et al."
+  venue: "Cell Genomics 4(7)"
+  url: "https://www.cell.com/cell-genomics/home"
+  tags: "rare methods"
+
+- year: 2024
+  title: "Characterising the genetic architecture of changes in adiposity during adulthood using electronic health records"
+  authors: "Venkatesh SS, Ganjgahi H, <em>Palmer DS</em>, Coley K, Linchangco GV Jr, Hui Q, et al."
+  venue: "Nature Communications 15:5801"
+  url: "https://www.nature.com/ncomms/"
+  tags: "lead repro"
+
+- year: 2024
+  title: "A systematic evaluation of the performance and properties of the UK Biobank Polygenic Risk Score (PRS) Release"
+  authors: "Thompson DJ, Wells D, Selzam S, Peneva I, Moore R, Sharp K, et al."
+  venue: "PLoS ONE 19(9):e0307270"
+  url: "https://doi.org/10.1371/journal.pone.0307270"
+  tags: "methods"
+
+- year: 2023
+  title: "Analysis of genetic dominance in the UK Biobank"
+  authors: "<em>Palmer DS</em>, Zhou W, Abbott L, Wigdor EM, Baya N, Churchhouse C, et al."
+  venue: "Science 379:1341–1348"
+  url: "https://doi.org/10.1126/science.abn8455"
+  tags: "lead methods rare"
+
+- year: 2023
+  title: "A second update on mapping the human genetic architecture of COVID-19"
+  authors: "Kanai M, Andrews SJ, Cordioli M, Stevens C, Neale BM, Daly M, Ganna A, et al."
+  venue: "Nature 621:E7–E26"
+  url: "https://www.nature.com/nature/"
+  tags: "pathogen"
+
+- year: 2022
+  title: "Exome sequencing in bipolar disorder identifies AKAP11 as a risk gene shared with schizophrenia"
+  authors: "<em>Palmer DS</em>, Howrigan DP, Chapman SB, Adolfsson R, Bass N, et al."
+  venue: "Nature Genetics 54:541–547"
+  url: "https://doi.org/10.1038/s41588-022-01034-x"
+  tags: "lead psych rare"
+
+- year: 2022
+  title: "Rare coding variants in ten genes confer substantial risk for schizophrenia"
+  authors: "Singh T, Poterba T, Curtis D, Akil H, Al Eissa M, Barchas JD, Bass N, et al."
+  venue: "Nature 604:509–516"
+  url: "https://doi.org/10.1038/s41586-022-04556-w"
+  tags: "psych rare"
+
+- year: 2022
+  title: "Systematic single-variant and gene-based association testing of thousands of phenotypes in 394,841 UK Biobank exomes"
+  authors: "Karczewski KJ, Solomonson M, Chao KR, Goodrich JK, Tiao G, Lu W, et al."
+  venue: "Cell Genomics 2(9)"
+  url: "https://www.cell.com/cell-genomics/home"
+  tags: "rare methods"
+
+- year: 2022
+  title: "Whole-genome sequencing reveals host factors underlying critical COVID-19"
+  authors: "Kousathanas A, Pairo-Castineira E, Rawlik K, Stuckey A, Odhams CA, et al."
+  venue: "Nature 607:97–103"
+  url: "https://www.nature.com/nature/"
+  tags: "pathogen"
+
+- year: 2022
+  title: "The female protective effect against autism spectrum disorder"
+  authors: "Wigdor EM, Weiner DJ, Grove J, Fu JM, Thompson WK, Carey CE, et al."
+  venue: "Cell Genomics 2(6)"
+  url: "https://www.cell.com/cell-genomics/home"
+  tags: "psych"
+
+- year: 2022
+  title: "A data harmonization pipeline to leverage external controls and boost power in GWAS"
+  authors: "Chen D, Tashman K, <em>Palmer DS</em>, Neale B, Roeder K, Bloemendal A, et al."
+  venue: "Human Molecular Genetics 31:481–489"
+  url: "https://academic.oup.com/hmg"
+  tags: "lead methods"
+
+- year: 2021
+  title: "Mapping the human genetic architecture of COVID-19"
+  authors: "COVID-19 Host Genetics Initiative"
+  venue: "Nature 600:472–477"
+  url: "https://www.nature.com/nature/"
+  tags: "pathogen"
+
+- year: 2021
+  title: "Investigating rare pathogenic/likely pathogenic exonic variation in bipolar disorder"
+  authors: "Jia X, Goes FS, Locke AE, <em>Palmer DS</em>, Wang W, Cohen-Woods S, et al."
+  venue: "Molecular Psychiatry"
+  url: "https://www.nature.com/mp/"
+  tags: "lead psych rare"
+
+- year: 2020
+  title: "Large-scale exome sequencing study implicates both developmental and functional changes in the neurobiology of autism"
+  authors: "Satterstrom FK, Kosmicki JA, Wang J, Breen MS, De Rubeis S, An JY, et al."
+  venue: "Cell 180:568–584"
+  url: "https://doi.org/10.1016/j.cell.2019.12.036"
+  tags: "psych rare"
+
+- year: 2020
+  title: "Predicting functional effects of missense variants in voltage-gated sodium and calcium channels"
+  authors: "Heyne HO, Baez-Nieto D, Iqbal S, <em>Palmer DS</em>, Brunklaus A, May P, et al."
+  venue: "Science Translational Medicine 12:eaay6848"
+  url: "https://www.science.org/journal/stm"
+  tags: "lead methods"
+
+- year: 2019
+  title: "Mapping the drivers of within-host pathogen evolution using massive data sets"
+  authors: "<em>Palmer DS</em>, Turner I, Fidler S, Frater J, Goedhals D, Goulder P, et al., McLean AR, McVean G"
+  venue: "Nature Communications 10:3017"
+  url: "https://doi.org/10.1038/s41467-019-10724-w"
+  tags: "lead pathogen methods"
+
+- year: 2019
+  title: "Identification of common genetic risk variants for autism spectrum disorder"
+  authors: "Grove J, Ripke S, Als TD, Mattheisen M, Walters RK, Won H, Pallesen J, et al."
+  venue: "Nature Genetics 51:431–444"
+  url: "https://doi.org/10.1038/s41588-019-0344-8"
+  tags: "psych"
+
+- year: 2019
+  title: "Discovery of the first genome-wide significant risk loci for attention deficit/hyperactivity disorder"
+  authors: "Demontis D, Walters RK, Martin J, Mattheisen M, Als TD, Agerbo E, et al."
+  venue: "Nature Genetics 51:63–75"
+  url: "https://doi.org/10.1038/s41588-018-0269-7"
+  tags: "psych"
+
+- year: 2019
+  title: "Genomic relationships, novel loci, and pleiotropic mechanisms across eight psychiatric disorders"
+  authors: "Lee PH, Anttila V, Won H, Feng YCA, Rosenthal J, Zhu Z, Tucker-Drob EM, et al."
+  venue: "Cell 179:1469–1482"
+  url: "https://www.cell.com/cell/home"
+  tags: "psych"
+
+- year: 2019
+  title: "Autism spectrum disorder and attention deficit hyperactivity disorder have a similar burden of rare protein-truncating variants"
+  authors: "Satterstrom FK, Walters RK, Singh T, Wigdor EM, Lescai F, Demontis D, et al."
+  venue: "Nature Neuroscience 22:1961–1965"
+  url: "https://www.nature.com/neuro/"
+  tags: "psych rare"
+
+- year: 2018
+  title: "A naturally protective epitope of limited variability as an influenza vaccine target"
+  authors: "Thompson CP, Lourenço J, Walters AA, Obolski U, Edmans M, <em>Palmer DS</em>, et al."
+  venue: "Nature Communications 9:3859"
+  url: "https://www.nature.com/ncomms/"
+  tags: "lead pathogen"
+
+- year: 2018
+  title: "Large-scale meta-analysis highlights the hypothalamic–pituitary–gonadal axis in the genetic regulation of menstrual cycle length"
+  authors: "Laisk T, Kukuškina V, <em>Palmer D</em>, Laber S, Chen CY, Ferreira T, et al."
+  venue: "Human Molecular Genetics 27:4323–4332"
+  url: "https://academic.oup.com/hmg"
+  tags: "lead repro"
+
+- year: 2018
+  title: "A genetic investigation of sex bias in the prevalence of attention-deficit/hyperactivity disorder"
+  authors: "Martin J, Walters RK, Demontis D, Mattheisen M, Lee SH, Robinson E, et al."
+  venue: "Biological Psychiatry 83:1044–1053"
+  url: "https://www.biologicalpsychiatryjournal.com/"
+  tags: "psych"
+
+- year: 2013
+  title: "Integrating genealogical and dynamical modelling to infer escape and reversion rates in HIV epitopes"
+  authors: "<em>Palmer D</em>, Frater J, Phillips RE, McLean AR, McVean G"
+  venue: "Proc. R. Soc. B 280:20130696"
+  url: "https://doi.org/10.1098/rspb.2013.0696"
+  tags: "lead pathogen methods"
+
+- year: 2012
+  title: "Cytotoxic T-lymphocyte escape mutations identified by HLA association favor those which escape and revert rapidly"
+  authors: "Fryer HR, Frater J, Duda A, <em>Palmer D</em>, Phillips RE, McLean AR"
+  venue: "Journal of Virology 86:8568–8580"
+  url: "https://journals.asm.org/journal/jvi"
+  tags: "lead pathogen"

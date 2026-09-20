@@ -1,20 +1,71 @@
 <!DOCTYPE html>
-<html lang="{{ page.lang | default: site.lang | default: "en" }}">
+<html lang="{{ page.lang | default: site.lang | default: 'en' }}">
+{% include head.html %}
+<body>
 
-  {% include head.html %}
+  {% include header.html %}
 
-  <body>
+  <main class="page-content" aria-label="Content">
+    {{ content }}
+  </main>
 
-    {% include header.html %}
+  {% include footer.html %}
 
-    <main class="page-content" aria-label="Content">
-      <div class="wrapper">
-        {{ content }}
-      </div>
-    </main>
+  {% if page.quest %}
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+  <script src="{{ '/assets/js/riff.js' | relative_url }}"></script>
+  <script src="{{ '/assets/js/boss.js' | relative_url }}" defer></script>
+  <script src="{{ '/assets/js/shmup.js' | relative_url }}" defer></script>
+  <script src="{{ '/assets/js/quest.js' | relative_url }}" defer></script>
+  {% endif %}
 
-    {% include footer.html %}
+  <script>
+  (function () {
+    /* scroll progress */
+    var bar = document.getElementById('progress');
+    function onScroll() {
+      var h = document.documentElement;
+      var p = h.scrollTop / Math.max(1, (h.scrollHeight - h.clientHeight));
+      bar.style.transform = 'scaleX(' + p + ')';
+    }
+    document.addEventListener('scroll', onScroll, { passive: true }); onScroll();
 
-  </body>
+    /* reveal on scroll */
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
 
+    /* count-up stats */
+    var co = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var el = en.target, target = parseFloat(el.dataset.count), suffix = el.dataset.suffix || '';
+        var dec = (target % 1 !== 0) ? 1 : 0, t0 = null;
+        function step(ts) {
+          if (!t0) t0 = ts;
+          var p = Math.min((ts - t0) / 1400, 1);
+          var v = target * (1 - Math.pow(1 - p, 3));
+          el.textContent = v.toLocaleString('en-GB', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + suffix;
+          if (p < 1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step); co.unobserve(el);
+      });
+    }, { threshold: 0.5 });
+    document.querySelectorAll('[data-count]').forEach(function (el) { co.observe(el); });
+
+    /* publication filters */
+    var filters = document.querySelectorAll('.filters button');
+    filters.forEach(function (b) {
+      b.addEventListener('click', function () {
+        var key = b.dataset.filter;
+        filters.forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+        document.querySelectorAll('.pub').forEach(function (p) {
+          p.hidden = !(key === 'all' || (p.dataset.tags || '').split(' ').indexOf(key) > -1);
+        });
+      });
+    });
+  })();
+  </script>
+</body>
 </html>

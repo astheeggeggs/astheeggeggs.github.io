@@ -1,48 +1,19 @@
 <footer class="site-footer">
-
-  <div class="wrapper">
-
-    <!-- <h2 class="footer-heading">{{ site.title | escape }}</h2> -->
-
-    <div class="footer-col-wrapper">
-      <div class="footer-col footer-col-1">
-        <ul class="contact-list">
-          <li>
-            <!-- {% if site.author %}
-              {{ site.author | escape }}
-            {% else %}
-              {{ site.title | escape }}
-            {% endif %} -->
-            contact me:
-            </li>
-            {% if site.email %}
-            <li><a href="mailto:{{ site.email }}">{{ site.email }}</a></li>
-            {% endif %}
-        </ul>
-      </div>
-
-      <div class="footer-col footer-col-2">
-        <p>{{ site.description | escape }}</p>
-      </div>
-
-      <div class="footer-col footer-col-3">
-        <ul class="social-media-list">
-          {% if site.github_username %}
-          <li>
-            {% include icon-github.html username=site.github_username %}
-          </li>
-          {% endif %}
-
-          {% if site.twitter_username %}
-          <li>
-            {% include icon-twitter.html username=site.twitter_username %}
-          </li>
-          {% endif %}
-        </ul>
-      </div>
-
+  <div class="wrap foot-grid">
+    <div>
+      <div style="font-family:var(--serif);font-size:1.35rem;">Say hello.</div>
+      <a class="link" href="mailto:{{ site.email }}">{{ site.email }}</a>
+      <div class="colophon" style="margin-top:.9rem;">Big Data Institute &amp; Department of Statistics · University of Oxford</div>
     </div>
-
+    <ul class="social">
+      <li><a href="{{ site.links.github }}"  target="_blank" rel="noopener" title="GitHub">GH</a></li>
+      <li><a href="{{ site.links.scholar }}" target="_blank" rel="noopener" title="Google Scholar">GS</a></li>
+      <li><a href="{{ site.links.bluesky }}" target="_blank" rel="noopener" title="Bluesky">BS</a></li>
+      <li><a href="{{ site.links.twitter }}" target="_blank" rel="noopener" title="X">X</a></li>
+      <li><a href="{{ site.links.brava }}"   target="_blank" rel="noopener" title="BRaVa">BR</a></li>
+    </ul>
   </div>
-
+  <div class="wrap colophon" style="margin-top:2rem;opacity:.6;">
+    © {{ 'now' | date: "%Y" }} {{ site.title }} · built with Jekyll, gradients, and no restraint
+  </div>
 </footer>

@@ -1,30 +1,12 @@
 source "https://rubygems.org"
 
-# Hello! This is where you manage which Jekyll version is used to run.
-# When you want to use a different version, change it below, save the
-# file and run `bundle install`. Run Jekyll with `bundle exec`, like so:
-#
-#     bundle exec jekyll serve
-#
-# This will help ensure the proper Jekyll version is running.
-# Happy Jekylling!
-# gem "jekyll", "3.5.1"
+# GitHub Pages builds this site with its own pinned dependency set.
+# This Gemfile exists so that `bundle exec jekyll serve` works locally.
+gem "jekyll", "~> 4.3"
 
-# This is the default theme for new Jekyll sites. You may change this to anything you like.
-gem "minima", "~> 2.0"
-
-# If you have any plugins, put them here!
 group :jekyll_plugins do
-   gem "jekyll-feed", "~> 0.6"
+  gem "jekyll-feed", "~> 0.17"
 end
 
-# Windows does not include zoneinfo files, so bundle the tzinfo-data gem
-gem 'tzinfo-data', platforms: [:mingw, :mswin, :x64_mingw, :jruby]
-
-source 'https://rubygems.org'
-
-require 'json'
-require 'open-uri'
-versions = JSON.parse(open('https://pages.github.com/versions.json').read)
-
-gem 'github-pages', versions['github-pages']
+# Windows does not include zoneinfo files.
+gem "tzinfo-data", platforms: [:mingw, :mswin, :x64_mingw, :jruby]
