@@ -1,7 +1,7 @@
 /* =============================================================================
    RIFF.JS — procedurally generated chip-metal. No samples, no MIDI files,
    no copyright: every note is synthesised in WebAudio at runtime.
-   Riff.play('quest'), Riff.stop(), Riff.toggle(style), Riff.setDread(0..1), Riff.playing
+   Riff.play('quest' | 'space' | 'cave'), Riff.stop(), Riff.toggle(style), Riff.setDread(0..1), Riff.playing
    ============================================================================= */
 (function () {
   'use strict';
@@ -412,8 +412,8 @@
   }
   function applyTone(now, quick) {
     if (!AC) return;
-    var space = style === 'space', d = space ? 0 : dread, cut = 18000 - 14500 * Math.pow(d, 1.5), tc = quick ? 0.03 : 0.5;
-    if (bossOn && !space) cut = Math.max(cut, 7500);           // a boss needs air: choir formants and cymbals live up there
+    var open = style === 'space' || style === 'cave', d = open ? 0 : dread, cut = 18000 - 14500 * Math.pow(d, 1.5), tc = quick ? 0.03 : 0.5;
+    if (bossOn && !open) cut = Math.max(cut, 7500);           // a boss needs air: choir formants and cymbals live up there
     tone.frequency.setTargetAtTime(cut, now, tc);
     if (fbGain) fbGain.gain.setTargetAtTime(0.32 + 0.4 * d, now, tc);
     if (wetGain) wetGain.gain.setTargetAtTime(0.22 + 0.3 * d, now, tc);
@@ -641,6 +641,205 @@
     }
   }
 
+
+  /* --- the cave kit: Beethoven on a Mega Drive ----------------------------
+     Piano Sonata No. 14 in C sharp minor, Op. 27 No. 2, first movement (Adagio sostenuto,
+     1801: public domain, and synthesised here from scratch, so there is nothing to license).
+     The voices are a Genesis arrangement, not a piano: an FM bell for the triplet stream, a
+     warm sine/triangle octave for the left hand, a detuned lead with late vibrato for the tune. */
+  var CAVE_BPM = 60, caveIn = null;        // BPM is crotchets; the movement is alla breve at about this pulse
+  function caveBus() {
+    if (caveIn) return caveIn;
+    caveIn = AC.createGain(); caveIn.gain.value = 1; caveIn.connect(owMix);
+    var send = AC.createGain(); send.gain.value = 0.30; caveIn.connect(send); send.connect(hall());   // flooded stone
+    return caveIn;
+  }
+  // 2:1 FM with a fast index decay: bell on the attack, near-sine by the tail. `acc` is the crotchet.
+  function fmBell(note, t, dur, vel, acc) {
+    var fr = f(note), car = AC.createOscillator(), mod = AC.createOscillator(), mg = AC.createGain(), g = AC.createGain();
+    car.type = 'sine'; car.frequency.value = fr;
+    mod.type = 'sine'; mod.frequency.value = fr * 2;
+    mg.gain.setValueAtTime(fr * (acc ? 3.4 : 2.5), t);          // depth in Hz = index x modulator frequency
+    mg.gain.exponentialRampToValueAtTime(fr * 0.16, t + 0.17);
+    mod.connect(mg); mg.connect(car.frequency);
+    var end = env(g, t, 0.004, vel * CAVE_BELL, 0.22, 0.2, dur, 0.3);
+    car.connect(g); g.connect(caveBus());
+    mod.start(t); mod.stop(end + 0.03); car.start(t); car.stop(end + 0.03);
+  }
+  function caveBass(note, t, dur, vel) {   // the left-hand octave: sine below, triangle above, dry
+    var lp = AC.createBiquadFilter(), g = AC.createGain(), g2 = AC.createGain(),
+        o1 = AC.createOscillator(), o2 = AC.createOscillator();
+    lp.type = 'lowpass'; lp.frequency.value = 430; lp.Q.value = 0.5;
+    o1.type = 'sine'; o1.frequency.value = f(note);
+    o2.type = 'triangle'; o2.frequency.value = f(note + 12); o2.detune.value = 5;
+    g2.gain.value = 0.5; o2.connect(g2); g2.connect(lp); o1.connect(lp);
+    var end = env(g, t, 0.05, vel * CAVE_BASS, 0.45, 0.66, dur, 0.45);
+    lp.connect(g); g.connect(owMix);
+    o1.start(t); o2.start(t); o1.stop(end + 0.04); o2.stop(end + 0.04);
+  }
+  function caveLead(note, t, dur, vel) {   // two triangles seven cents apart; the vibrato arrives late
+    var g = AC.createGain(), lp = AC.createBiquadFilter(), lg = null;
+    lp.type = 'lowpass'; lp.frequency.value = 2600; lp.Q.value = 0.4;
+    if (dur > 0.5) {
+      var v = AC.createOscillator(); lg = AC.createGain(); v.frequency.value = 4.9;
+      lg.gain.setValueAtTime(0, t + 0.2); lg.gain.linearRampToValueAtTime(8, t + 0.85);
+      v.connect(lg); v.start(t); v.stop(t + dur + 0.3);
+    }
+    [-7, 7].forEach(function (det) {
+      var o = AC.createOscillator(); o.type = 'triangle'; o.frequency.value = f(note); o.detune.value = det;
+      if (lg) lg.connect(o.detune); o.connect(lp); o.start(t); o.stop(t + dur + 0.4);
+    });
+    env(g, t, 0.035, vel * CAVE_LEAD, 0.25, 0.8, dur, 0.22);
+    lp.connect(g); g.connect(caveBus());
+  }
+
+  /* --- the cave piece: 32 bars of the Adagio sostenuto, ending on its own dominant -------
+     Score bars 1-9 (the introduction and the first phrase, cadencing in E major), 10-15 (the
+     E minor turn down to B), 16-22 (the B pedal and the chromatic slide into F sharp), 23-27
+     (F sharp minor, C sharp seven, the crescendo) and 28-31 of the long G sharp pedal, then
+     bar 28 again as the turnaround: G sharp seven flat nine resolving into bar 1's tonic.
+     Grid: 48 steps to the bar, a twelfth of a crotchet, which is both a triplet quaver (4
+     steps) and a semiquaver (3), so the triplet stream and the dotted melody share one table.
+     Pitches are transcribed from the score, not invented: see the harmony in TRIP below. */
+  var CAVE = null, CAVE_BELL = 0.34, CAVE_BASS = 0.30, CAVE_LEAD = 0.38;
+  function composeCave() {
+    if (CAVE) return CAVE;
+    var FORM = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,28];
+    var TRIP = [
+      [56,61,64,56,61,64,56,61,64,56,61,64],
+      [56,61,64,56,61,64,56,61,64,56,61,64],
+      [57,61,64,57,61,64,57,62,66,57,62,66],
+      [56,60,66,56,61,64,56,61,63,54,60,63],
+      [52,56,61,56,61,64,56,61,64,56,61,64],
+      [56,63,66,56,63,66,56,63,66,56,63,66],
+      [56,61,64,56,61,64,57,61,66,57,61,66],
+      [56,59,64,56,59,64,57,59,63,57,59,63],
+      [56,59,64,56,59,64,56,59,64,56,59,64],
+      [55,59,64,55,59,64,55,59,64,55,59,64],
+      [55,59,65,55,59,65,55,59,65,55,59,65],
+      [55,60,64,55,59,64,55,61,64,54,61,64],
+      [54,59,62,54,59,62,55,59,61,52,59,61],
+      [54,59,62,54,59,62,54,58,61,54,58,61],
+      [59,62,66,59,62,66,59,63,66,59,63,66],
+      [59,64,67,59,64,67,59,64,67,59,64,67],
+      [59,63,66,59,63,66,59,63,66,59,63,66],
+      [59,64,67,59,64,67,59,64,67,59,64,67],
+      [59,63,66,59,63,66,59,62,65,59,62,65],
+      [59,61,68,59,61,68,57,61,66,57,61,66],
+      [55,59,62,55,59,62,54,57,63,54,57,63],
+      [49,54,57,49,54,57,49,54,56,49,53,56],
+      [54,57,61,57,61,66,61,66,69,61,66,69],
+      [61,68,71,61,68,71,61,68,71,61,68,71],
+      [61,66,69,61,66,69,60,66,69,61,66,69],
+      [63,66,68,63,66,68,63,66,68,63,66,68],
+      [64,68,73,64,68,73,63,66,69,61,64,70],
+      [72,60,63,68,60,63,69,60,63,66,60,63],
+      [0,60,63,56,60,63,57,60,63,54,60,63],
+      [52,64,68,73,64,68,76,64,68,73,64,68],
+      [0,52,56,61,52,56,64,52,56,61,52,56],
+      [72,60,63,68,60,63,69,60,63,66,60,63]];
+    var BASS = [
+      [0,37,48],
+      [0,35,48],
+      [0,33,24,24,30,24],
+      [0,32,24,24,32,24],
+      [0,37,48],
+      [0,36,48],
+      [0,37,24,24,30,24],
+      [0,35,24,24,35,24],
+      [0,40,48],
+      [0,40,48],
+      [0,38,48],
+      [0,36,12,12,35,12,24,34,24],
+      [0,35,24,24,40,12,36,43,12],
+      [0,42,24,24,30,24],
+      [0,35,48],
+      [0,35,12,12,40,12,24,43,12,36,40,12],
+      [0,35,48],
+      [0,35,12,12,40,12,24,43,12,36,40,12],
+      [0,35,24,24,32,24],
+      [0,29,24,24,30,24],
+      [0,35,24,24,36,24],
+      [0,37,24,24,37,24],
+      [0,30,48],
+      [0,41,48],
+      [0,42,24,24,39,12,36,37,12],
+      [0,36,36,36,36,12],
+      [0,37,24,24,30,12,36,31,12],
+      [0,32,48],
+      [0,32,48],
+      [0,32,48],
+      [0,32,48],
+      [0,32,48]];
+    var MEL = [
+      [],
+      [],
+      [],
+      [],
+      [36,68,9,45,68,3],
+      [0,68,36,36,68,9,45,68,3],
+      [0,68,24,24,69,24],
+      [0,68,24,24,66,12,36,71,12],
+      [0,64,12],
+      [36,67,9,45,67,3],
+      [0,67,36,36,67,9,45,67,3],
+      [0,67,36,36,66,12],
+      [0,66,24,24,67,12,36,64,12],
+      [0,66,24,24,66,24],
+      [0,59,12,36,71,12],
+      [0,72,36,36,70,12],
+      [0,71,36,36,71,12],
+      [0,72,36,36,70,12],
+      [0,71,24,24,71,24],
+      [0,71,24,24,69,24],
+      [0,67,24,24,66,24],
+      [0,61,24,24,61,12,36,61,12],
+      [0,54,12,36,73,9,45,73,3],
+      [0,73,36,36,73,9,45,73,3],
+      [0,73,24,24,72,12,36,73,12],
+      [0,75,36,36,75,12],
+      [0,76,24,24,75,12,36,73,12],
+      [12,68,12,24,69,12,36,66,12],
+      [12,56,12,24,57,12,36,54,12],
+      [12,73,12,24,76,12,36,73,12],
+      [12,61,12,24,64,12,36,61,12],
+      [12,68,12,24,69,12,36,66,12]];
+    var DYN = [0.62,0.64,0.66,0.66,0.7,0.7,0.72,0.72,0.7,0.7,0.7,0.72,0.72,0.72,0.7,0.72,0.72,0.74,0.76,0.78,0.78,0.76,0.78,0.8,0.84,0.9,0.95,0.78,0.72,0.72,0.68,0.62];
+    var steps = [], SPB = 48;
+    for (var b = 0; b < FORM.length; b++) {
+      var vel = DYN[b], row = new Array(SPB), i, s;
+      for (i = 0; i < SPB; i++) row[i] = null;
+      for (i = 0; i < 12; i++) {                                  // the unbroken triplet stream
+        if (!TRIP[b][i]) continue;                                // bars 29 and 31 rest on the first one
+        s = row[i * 4] || (row[i * 4] = {});
+        s.t3 = { n: TRIP[b][i], v: vel * (i % 3 === 0 ? 1 : 0.82), a: i % 3 === 0 };
+      }
+      for (i = 0; i < BASS[b].length; i += 3) {                   // [step, lowest note, length in steps]
+        s = row[BASS[b][i]] || (row[BASS[b][i]] = {});
+        s.bass = { n: BASS[b][i + 1], len: BASS[b][i + 2], v: vel };
+      }
+      for (i = 0; i < MEL[b].length; i += 3) {
+        s = row[MEL[b][i]] || (row[MEL[b][i]] = {});
+        s.mel = { n: MEL[b][i + 1], len: MEL[b][i + 2], v: vel * (b >= 27 ? 0.6 : 1) };   // the pedal bars only lean on the arpeggio top
+      }
+      for (i = 0; i < SPB; i++) steps.push(row[i]);
+    }
+    return CAVE = { bpm: CAVE_BPM, steps: steps, bars: FORM.length };
+  }
+  function scheduleCave() {
+    var song = composeCave(), spb = 60 / song.bpm / 12, now = AC.currentTime, n = song.steps.length;
+    while (nextT < now - 0.05) { nextT += spb; step++; }          // the tab stalled: drop what is already late
+    while (nextT < now + 0.3) {
+      var st = song.steps[step % n], t = nextT;                   // step % n is the whole loop: no reset, no seam
+      if (st) {
+        if (st.t3) fmBell(st.t3.n, t, spb * 3.9, st.t3.v, st.t3.a);
+        if (st.bass) caveBass(st.bass.n, t, st.bass.len * spb * 0.96, st.bass.v);
+        if (st.mel) caveLead(st.mel.n, t, st.mel.len * spb * 0.94, st.mel.v);
+      }
+      nextT += spb; step++;
+    }
+  }
+
   /* --- stingers: one-shots on their own bus, so they sound with the music off and ignore the dread filter ---- */
   var stingFx = null, inSting = false;
   function stingOut(wet) {
@@ -739,7 +938,7 @@
     });
   }
   function prune() { var now = AC.currentTime, k = 0; while (k < live.length && now - live[k].born > 9) k++; if (k) live.splice(0, k); }
-  function tick() { try { if (parked) return; prune(); if (style === 'space') scheduleSpace(); else scheduleOverworld(); } catch (e) { if (window.console) console.error(e); } }
+  function tick() { try { if (parked) return; prune(); if (style === 'space') scheduleSpace(); else if (style === 'cave') scheduleCave(); else scheduleOverworld(); } catch (e) { if (window.console) console.error(e); } }
   var Riff = {
     get playing() { return playing; },
     get style() { return style; },
@@ -748,7 +947,7 @@
       if (AC.state === 'suspended') AC.resume();
       st = st || 'quest';
       if (playing && style === st) return;
-      Riff.stop(); style = lastStyle = st; playing = true; step = 0; bossOn = bossWant && st !== 'space'; bossStep = 0;
+      Riff.stop(); style = lastStyle = st; playing = true; step = 0; bossOn = bossWant && st !== 'space' && st !== 'cave'; bossStep = 0;
       var now = AC.currentTime; nextT = now + 0.12;
       gate.gain.setTargetAtTime(1, now + 0.07, 0.01);           // stop() above has just shut the gate; open it again once the old voices are gone
       duck.gain.cancelScheduledValues(now); duck.gain.setTargetAtTime(1, now, 0.15);
@@ -777,10 +976,13 @@
     get metal() { return boost > 0; },
     get dread() { return dread; },
     info: function () {
-      var s = composeOverworld(), sp = composeSpace(), b = composeBoss(), secs = function (x) { return Math.round(x.steps.length * 60 / x.bpm / 4); };
+      var s = composeOverworld(), sp = composeSpace(), b = composeBoss(), cv = composeCave(),
+          secs = function (x) { return Math.round(x.steps.length * 60 / x.bpm / 4); },
+          caveSecs = Math.round(cv.steps.length * 60 / cv.bpm / 12);   // the cave grid is twelfths, not sixteenths
       return { steps: s.steps.length, seconds: secs(s), notes: s.steps.filter(function (x) { return x.mel; }).length,
         spaceSeconds: secs(sp), space: { steps: sp.steps.length, bars: sp.steps.length / 16, bpm: sp.bpm, seconds: secs(sp), notes: sp.steps.filter(function (x) { return x.lead; }).length },
-        boss: { steps: b.steps.length, bars: b.steps.length / 16, bpm: b.bpm, seconds: secs(b) } };
+        boss: { steps: b.steps.length, bars: b.steps.length / 16, bpm: b.bpm, seconds: secs(b) },
+        caveSeconds: caveSecs, cave: { steps: cv.steps.length, bars: cv.bars, bpm: cv.bpm, seconds: caveSecs, notes: cv.steps.filter(function (x) { return x && x.mel; }).length } };
     },
     stop: function () {
       playing = false; if (timer) clearInterval(timer); timer = null;
