@@ -9,7 +9,7 @@
   var dread = 0, fbGain = null, wetGain = null, KEYPC = 67 % 12;
   var owMix = null, metalMix = null, boost = 0, mstep = 0;
   var step = 0, nextT = 0, buttons = [];
-  var gate = null, duck = null, stingBus = null, lastStyle = null;
+  var gate = null, duck = null, stingBus = null, lastStyle = null, parked = false;
   var bossWant = false, bossOn = false, bossStep = 0;
 
   function ctx() {
@@ -38,7 +38,9 @@
     dist = pre;
     return AC;
   }
-  function curve(k) { var n = 1024, c = new Float32Array(n); for (var i = 0; i < n; i++) { var x = i * 2 / n - 1; c[i] = (1 + k) * x / (1 + k * Math.abs(x)); } return c; }
+  // n - 1, not n: a WaveShaper maps input 0 to index (n-1)/2, so an off-centre table leaks a
+  // constant DC offset into the whole mix (softClip() below gets this right with an odd length).
+  function curve(k) { var n = 1025, c = new Float32Array(n); for (var i = 0; i < n; i++) { var x = i * 2 / (n - 1) - 1; c[i] = (1 + k) * x / (1 + k * Math.abs(x)); } return c; }
   // transparent below 0.6, then a tanh shoulder that can never exceed 0.97. Input domain is ±2 (see `trim`).
   function softClip() {
     var n = 4097, c = new Float32Array(n), K = 0.6, H = 0.37;
@@ -56,7 +58,7 @@
       (lean ? [k * 7 - 7] : [-6, 6]).forEach(function (det) {
         var o = AC.createOscillator(), g = AC.createGain();
         o.type = 'sawtooth'; o.frequency.value = f(note + iv); o.detune.value = det;
-        var a = (mute ? 0.55 : 0.35) * (lean ? 1.7 : 1), d = mute ? Math.min(dur, 0.11) : dur;
+        var a = (mute ? 0.55 : 0.35) * (lean ? 1.1 : 1), d = mute ? Math.min(dur, 0.11) : dur;
         g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a / (k + 1), t + 0.004);
         g.gain.exponentialRampToValueAtTime(0.0008, t + d);
         o.connect(g); g.connect(dist); o.start(t); o.stop(t + d + 0.02);
@@ -70,8 +72,18 @@
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     o.connect(g); g.connect(dist); o.start(t); o.stop(t + dur + 0.02);
   }
-  var noiseBuf = null;
-  function noise() { if (noiseBuf) return noiseBuf; var b = AC.createBuffer(1, AC.sampleRate * 0.5, AC.sampleRate), d = b.getChannelData(0); for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return noiseBuf = b; }
+  var noiseBufs = {}, LOOPN = 3;
+  function noise(sec) {
+    sec = sec || 0.5; var k = 'b' + sec; if (noiseBufs[k]) return noiseBufs[k];
+    var b = AC.createBuffer(1, Math.round(AC.sampleRate * sec), AC.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    return noiseBufs[k] = b;
+  }
+  // Transients (kick, snare, hats, thumps) are shorter than the half-second buffer. Anything that
+  // LOOPS for seconds — the crash, the riser, every stinger bed — takes the long buffer and starts
+  // at a random offset, so the same noise does not repeat at 2 Hz under the blast-off.
+  function loopNoise() { var s = AC.createBufferSource(); s.buffer = noise(LOOPN); s.loop = true; return s; }
+  function loopAt() { return Math.random() * (LOOPN - 0.25); }
   function kick(t, v) {
     v = v === undefined ? 1 : v;
     var o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine';
@@ -105,16 +117,22 @@
     soft.connect(owMix); soft.connect(delay); delay.connect(lp); lp.connect(fb); fb.connect(delay); lp.connect(wet); wet.connect(owMix);
     return soft;
   }
+  // A note shorter than its own attack + decay still has to be scheduled in time order: an event
+  // that sorts before the decay ramp cancels it, and the note jumps from peak to sustain in one
+  // sample — a flat top and a click instead of a decay. Hold the sustain until the decay has run.
+  // Notes longer than a + d are unchanged. Returns the time the envelope reaches silence.
   function env(g, t, a, peak, d, sus, dur, rel) {
+    var s = Math.max(0.0002, peak * sus), hold = Math.max(dur, a + d);
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + a);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * sus), t + a + d);
-    g.gain.setValueAtTime(Math.max(0.0002, peak * sus), t + dur); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + rel);
+    g.gain.exponentialRampToValueAtTime(s, t + a + d);
+    g.gain.setValueAtTime(s, t + hold); g.gain.exponentialRampToValueAtTime(0.0001, t + hold + rel);
+    return t + hold + rel;
   }
   function marimba(note, t, dur, vel) {
     var o = AC.createOscillator(), o2 = AC.createOscillator(), g = AC.createGain(), g2 = AC.createGain();
     o.type = 'sine'; o.frequency.value = f(note); o2.type = 'sine'; o2.frequency.value = f(note) * 4.0;
-    env(g, t, 0.003, vel * 0.5, 0.25, 0.08, Math.min(dur, 0.5), 0.15); env(g2, t, 0.002, vel * 0.12, 0.06, 0.01, 0.08, 0.05);
-    o.connect(g); o2.connect(g2); g.connect(softBus()); g2.connect(softBus()); o.start(t); o2.start(t); o.stop(t + dur + 0.4); o2.stop(t + 0.3);
+    var end = env(g, t, 0.003, vel * 0.5, 0.25, 0.08, Math.min(dur, 0.5), 0.15); env(g2, t, 0.002, vel * 0.12, 0.06, 0.01, 0.08, 0.05);
+    o.connect(g); o2.connect(g2); g.connect(softBus()); g2.connect(softBus()); o.start(t); o2.start(t); o.stop(Math.max(t + dur + 0.4, end + 0.03)); o2.stop(t + 0.3);
   }
   function ocarina(note, t, dur, vel) {
     var o = AC.createOscillator(), g = AC.createGain(), v = AC.createOscillator(), vg = AC.createGain(), lp = AC.createBiquadFilter();
@@ -126,8 +144,8 @@
   function bell(note, t, dur, vel) {
     [1, 2.76, 5.4].forEach(function (r, i) {
       var o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.value = f(note) * r;
-      env(g, t, 0.002, vel * [0.35, 0.12, 0.05][i], 0.4 / (i + 1), 0.05, Math.min(dur, 0.9), 0.3);
-      o.connect(g); g.connect(softBus()); o.start(t); o.stop(t + dur + 0.6);
+      var end = env(g, t, 0.002, vel * [0.35, 0.12, 0.05][i], 0.4 / (i + 1), 0.05, Math.min(dur, 0.9), 0.3);
+      o.connect(g); g.connect(softBus()); o.start(t); o.stop(Math.max(t + dur + 0.6, end + 0.03));
     });
   }
   function bass(note, t, dur, vel) {
@@ -232,8 +250,8 @@
       var o = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
       o.type = i ? 'triangle' : 'sawtooth'; o.frequency.value = f(note + iv); o.detune.value = (i - 1) * 9 * dread;
       lp.type = 'lowpass'; lp.frequency.value = 260 + 300 * dread;
-      env(g, t, 0.8, vel * [0.16, 0.06, 0.04][i], 0.5, 0.9, dur - 0.5, 1.2);
-      o.connect(lp); lp.connect(g); g.connect(owMix); o.start(t); o.stop(t + dur + 1.5);
+      var end = env(g, t, 0.8, vel * [0.16, 0.06, 0.04][i], 0.5, 0.9, dur - 0.5, 1.2);
+      o.connect(lp); lp.connect(g); g.connect(owMix); o.start(t); o.stop(Math.max(t + dur + 1.5, end + 0.05));
     });
   }
   function heartbeat(t) { softKick(t); softKick(t + 0.17); }
@@ -250,7 +268,7 @@
   function hall() {   // three feedback delays at unrelated lengths: a cheap stone room
     if (hallIn) return hallIn;
     hallIn = AC.createGain(); hallIn.gain.value = 1;
-    var out = AC.createGain(); out.gain.value = 0.3; out.connect(master);
+    var out = AC.createGain(); out.gain.value = 0.2; out.connect(master);
     [0.113, 0.179, 0.263].forEach(function (s) {
       var d = AC.createDelay(0.5), fb = AC.createGain(), lp = AC.createBiquadFilter();
       d.delayTime.value = s; fb.gain.value = 0.56; lp.type = 'lowpass'; lp.frequency.value = 2600;
@@ -263,7 +281,7 @@
   function choirBus() {
     if (choirIn) return choirIn;
     choirIn = AC.createGain(); choirIn.gain.value = 1; choirF = [];
-    var out = AC.createGain(); out.gain.value = 2.4; out.connect(master); out.connect(hall());
+    var out = AC.createGain(); out.gain.value = 1.0; out.connect(master); out.connect(hall());
     VOWEL.aah.forEach(function (v, i) {
       var bp = AC.createBiquadFilter(), g = AC.createGain(); bp.type = 'bandpass'; bp.frequency.value = v[0]; bp.Q.value = 4 + i * 2; g.gain.value = v[1];
       choirIn.connect(bp); bp.connect(g); g.connect(out); choirF.push({ bp: bp, g: g });
@@ -296,20 +314,20 @@
   function timp(note, t, vel, roll) {   // kettle drum: a sine that settles onto its pitch, a fifth above it for the kettle, a felt thump
     var fr = f(note), d = roll ? 0.26 : 1.0, o = AC.createOscillator(), g = AC.createGain();
     o.type = 'sine'; o.frequency.setValueAtTime(fr * 1.4, t); o.frequency.exponentialRampToValueAtTime(fr, t + 0.05);
-    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * 0.7, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0008, t + d);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * 0.52, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0008, t + d);
     o.connect(g); g.connect(metalMix); g.connect(hall()); o.start(t); o.stop(t + d + 0.02);
     if (!roll) {
       var o2 = AC.createOscillator(), g2 = AC.createGain(); o2.type = 'triangle'; o2.frequency.value = fr * 1.5;
-      g2.gain.setValueAtTime(0.0001, t); g2.gain.linearRampToValueAtTime(vel * 0.16, t + 0.004); g2.gain.exponentialRampToValueAtTime(0.0008, t + 0.5);
+      g2.gain.setValueAtTime(0.0001, t); g2.gain.linearRampToValueAtTime(vel * 0.12, t + 0.004); g2.gain.exponentialRampToValueAtTime(0.0008, t + 0.5);
       o2.connect(g2); g2.connect(metalMix); o2.start(t); o2.stop(t + 0.52);
     }
     var s = AC.createBufferSource(), sg = AC.createGain(), lp = AC.createBiquadFilter(); s.buffer = noise(); lp.type = 'lowpass'; lp.frequency.value = 700;
-    sg.gain.setValueAtTime(vel * (roll ? 0.2 : 0.4), t); sg.gain.exponentialRampToValueAtTime(0.001, t + 0.06); s.connect(lp); lp.connect(sg); sg.connect(metalMix); s.start(t); s.stop(t + 0.08);
+    sg.gain.setValueAtTime(vel * (roll ? 0.15 : 0.3), t); sg.gain.exponentialRampToValueAtTime(0.001, t + 0.06); s.connect(lp); lp.connect(sg); sg.connect(metalMix); s.start(t); s.stop(t + 0.08);
   }
   function brass(notes, t, dur, vel, stab) {   // low brass: saws behind a low-pass that opens as the players lean in
     var lp = AC.createBiquadFilter(), g = AC.createGain(), top = 500 + 1300 * vel, pk = stab ? 0.03 : dur * 0.62;
     lp.type = 'lowpass'; lp.Q.value = 1.4; lp.frequency.setValueAtTime(stab ? top : 160, t); if (!stab) lp.frequency.linearRampToValueAtTime(top, t + pk); lp.frequency.exponentialRampToValueAtTime(240, t + dur + 0.2);
-    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * (stab ? 0.2 : 0.17), t + pk); g.gain.setValueAtTime(vel * (stab ? 0.2 : 0.17), t + Math.max(pk, dur * 0.8)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.25);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * (stab ? 0.15 : 0.13), t + pk); g.gain.setValueAtTime(vel * (stab ? 0.15 : 0.13), t + Math.max(pk, dur * 0.8)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.25);
     lp.connect(g); g.connect(metalMix); g.connect(hall());
     notes.forEach(function (n, k) {
       (k ? [4] : [-7, 7]).forEach(function (det) { var o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f(n); o.detune.value = det; o.connect(lp); o.start(t); o.stop(t + dur + 0.3); });
@@ -318,7 +336,7 @@
   function tubular(note, t, vel) {   // tubular bell: stretched partials with the minor-third "church" partial at 2.4
     [[1, 0.5, 3.6], [2, 0.34, 2.8], [2.4, 0.2, 2.2], [3, 0.2, 1.7], [4.5, 0.1, 1.1], [6.3, 0.05, 0.7]].forEach(function (p) {
       var o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.value = f(note) * p[0];
-      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * p[1] * 0.5, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + p[2]);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vel * p[1] * 0.36, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + p[2]);
       o.connect(g); g.connect(master); g.connect(hall()); o.start(t); o.stop(t + p[2] + 0.05);
     });
   }
@@ -380,16 +398,16 @@
     if (st.stab) brass(st.stab, t, spb * 1.6, 1, true);
     if (st.timp) timp(st.timp.n, t, st.timp.vel, false);
     if (st.roll) timp(st.roll.n, t, st.roll.vel, true);
-    if (i16 === 0 || i16 === 8) bass(st.root, t, spb * 8, 1.1);
+    if (i16 === 0 || i16 === 8) bass(st.root, t, spb * 8, 0.95);
     // the gallop and the boots stay, now following the harmony
     if (full) {
       if (i16 % 2 === 0 || i16 % 4 === 3) chug(st.root, t, spb * 0.9, true, true);
-      if (i16 === 0 || i16 === 8 || i16 === 10 || (st.bar % 2 && i16 >= 14)) kick(t);
-      if (i16 === 4 || i16 === 12 || (st.last && i16 >= 10 && i16 % 2 === 0) || (st.last && i16 >= 13)) snare(t);
-      if (i16 % 2 === 0) hat(t, i16 === 14);
+      if (i16 === 0 || i16 === 8 || i16 === 10 || (st.bar % 2 && i16 >= 14)) kick(t, 0.78);
+      if (i16 === 4 || i16 === 12 || (st.last && i16 >= 10 && i16 % 2 === 0) || (st.last && i16 >= 13)) snare(t, 0.72);
+      if (i16 % 2 === 0) hat(t, i16 === 14, 0.8);
     } else {
       if (i16 === 0 || i16 === 8) chug(st.root, t, spb * 0.9, true, true);
-      if (st.last && i16 >= 8) { snare(t); if (i16 % 2 === 0) kick(t); }
+      if (st.last && i16 >= 8) { snare(t, 0.72); if (i16 % 2 === 0) kick(t, 0.78); }
     }
   }
   function applyTone(now, quick) {
@@ -495,14 +513,14 @@
     g.gain.setValueAtTime(0.75 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.24); o.connect(g); g.connect(metalMix); o.start(t); o.stop(t + 0.26);
   }
   function crash(t, v) {
-    var s = AC.createBufferSource(), hp = AC.createBiquadFilter(), g = AC.createGain(); s.buffer = noise(); s.loop = true; hp.type = 'highpass'; hp.frequency.value = 4500;
-    g.gain.setValueAtTime(0.3 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1.5); s.connect(hp); hp.connect(g); g.connect(metalMix); s.start(t); s.stop(t + 1.55);
+    var s = loopNoise(), hp = AC.createBiquadFilter(), g = AC.createGain(); hp.type = 'highpass'; hp.frequency.value = 4500;
+    g.gain.setValueAtTime(0.3 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1.5); s.connect(hp); hp.connect(g); g.connect(metalMix); s.start(t, loopAt()); s.stop(t + 1.55);
   }
   function riser(t, dur, v) {   // the build: band-passed noise climbing four octaves
-    var s = AC.createBufferSource(), bp = AC.createBiquadFilter(), g = AC.createGain(); s.buffer = noise(); s.loop = true; bp.type = 'bandpass'; bp.Q.value = 2.5;
+    var s = loopNoise(), bp = AC.createBiquadFilter(), g = AC.createGain(); bp.type = 'bandpass'; bp.Q.value = 2.5;
     bp.frequency.setValueAtTime(300, t); bp.frequency.exponentialRampToValueAtTime(6000, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3 * v, t + dur); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.08);
-    s.connect(bp); bp.connect(g); g.connect(metalMix); s.start(t); s.stop(t + dur + 0.1);
+    s.connect(bp); bp.connect(g); g.connect(metalMix); s.start(t, loopAt()); s.stop(t + dur + 0.1);
   }
 
   /* --- the space piece: E minor with lifts to G, composed once from a seed, 112 bars, loops into bar 1 ---- */
@@ -641,10 +659,10 @@
     o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.05); return o;
   }
   function sNoise(kind, f0, f1, q, t, dur, peak, a, dest) {   // filtered noise whose filter slides from f0 to f1. Returns the gain for extra shaping.
-    var s = AC.createBufferSource(), fl = AC.createBiquadFilter(), g = AC.createGain(); s.buffer = noise(); s.loop = true; fl.type = kind; fl.Q.value = q;
+    var s = loopNoise(), fl = AC.createBiquadFilter(), g = AC.createGain(); fl.type = kind; fl.Q.value = q;
     fl.frequency.setValueAtTime(f0, t); fl.frequency.exponentialRampToValueAtTime(f1, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(fl); fl.connect(g); g.connect(dest); s.start(t); s.stop(t + dur + 0.05); return g;
+    s.connect(fl); fl.connect(g); g.connect(dest); s.start(t, loopAt()); s.stop(t + dur + 0.05); return g;
   }
   function sHorns(notes, t, dur, peak, dest) {   // fanfare brass: saws behind a filter that blats open on the attack
     var lp = AC.createBiquadFilter(), g = AC.createGain(); lp.type = 'lowpass'; lp.Q.value = 1.8;
@@ -721,7 +739,7 @@
     });
   }
   function prune() { var now = AC.currentTime, k = 0; while (k < live.length && now - live[k].born > 9) k++; if (k) live.splice(0, k); }
-  function tick() { try { prune(); if (style === 'space') scheduleSpace(); else scheduleOverworld(); } catch (e) { if (window.console) console.error(e); } }
+  function tick() { try { if (parked) return; prune(); if (style === 'space') scheduleSpace(); else scheduleOverworld(); } catch (e) { if (window.console) console.error(e); } }
   var Riff = {
     get playing() { return playing; },
     get style() { return style; },
@@ -736,7 +754,7 @@
       duck.gain.cancelScheduledValues(now); duck.gain.setTargetAtTime(1, now, 0.15);
       applyTone(now, true);                                     // space: filter fully open, dread ignored. quest: whatever dread says
       if (bossOn) vowel('ooh', now, 0.01);
-      timer = setInterval(tick, 100); tick(); sync();
+      timer = setInterval(tick, 100); tick(); park(); sync();     // park() re-parks if this started while the tab is hidden
     },
     setDread: function (d) {
       dread = Math.max(0, Math.min(1, d));
@@ -781,8 +799,20 @@
     }
   };
   function sync() { buttons.forEach(function (o) { var on = playing; o.b.setAttribute('aria-pressed', String(on)); o.b.textContent = on ? '♫ ON' : '♫ OFF'; }); }
-  document.addEventListener('visibilitychange', function () { if (document.hidden && playing) Riff.stop(); });
-  Riff.__dbg = function () { return { step: step, nextT: nextT, bossOn: bossOn, bossWant: bossWant, bossStep: bossStep, live: live.length, now: AC ? AC.currentTime : 0, tone: tone ? tone.frequency.value : 0, gate: gate ? gate.gain.value : -1, duck: duck ? duck.gain.value : -1 }; }; /*TEMP*/
-  Riff.__short = function (a, b) { var sp = composeSpace(); sp.steps = sp.steps.slice(0, a).concat(sp.steps.slice(sp.steps.length - b)); return sp.steps.length; }; /*TEMP*/
+  // A hidden tab throttles setInterval, which would wreck the look-ahead scheduler — so park the
+  // audio clock rather than tear the score down. AC.currentTime freezes while the context is
+  // suspended, so nextT stays valid and the music resumes exactly where it stopped; `playing`
+  // stays true, so the pill and the host's musicWanted flag still describe what the player hears.
+  function park() {
+    if (!AC) return;
+    try {
+      if (document.hidden) {
+        if (playing) { parked = true; var sp = AC.suspend(); if (sp && sp.catch) sp.catch(function () { parked = false; }); }   // idempotent, and beats a resume() that has not settled yet
+      } else if (parked) {
+        parked = false; var rp = AC.resume(); if (rp && rp.then) rp.then(function () { if (playing) tick(); }, function () {});
+      }
+    } catch (e) { parked = false; }
+  }
+  document.addEventListener('visibilitychange', park);
   window.Riff = Riff;
 })();
