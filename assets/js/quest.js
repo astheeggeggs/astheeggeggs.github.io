@@ -394,7 +394,7 @@
     // navigation state (see "reviewer navigation"): smoothed heading, plan/waypoint, approach slot, zigzag, stuck detector, escape, homing
     b.head = b.yaw; b.mode = 0; b.plan = i * 0.03; b.wx = b.x; b.wz = b.z; b.chase = false; b.slot = 0; b.slotOn = false; b.fleeA = 0;
     b.side = i % 2 ? 1 : -1; b.zig = b.side; b.zigT = 0; b.aimed = 0; b.stuckT = 0; b.stuckN = 0; b.sx = b.x; b.sz = b.z; b.careful = 0; b.probe = 0;
-    b.esc = 0; b.ex = b.x; b.ez = b.z; b.goHome = false; b.homeField = null; b.homeSerial = -1; b.moved = 0;
+    b.esc = 0; b.ex = b.x; b.ez = b.z; b.goHome = false; b.homeSerial = -1; b.moved = 0;   // b.homeField is allocated with the other nav arrays, below
   });
 
   /* ------------------------------------------------------------ state */
@@ -679,23 +679,26 @@
   }
   /* ------------------------------------------------------------ reviewer navigation
      The reviewers used to run straight at the player and wedge themselves against the first wall they met.
-     - navCell  : a 1-unit grid over the playable square (0 wide open, 1 walkable, 2 blocked), filled lazily from
-                  collide() and refilled whenever colliders.length changes (the boss flattens the town).
+     - navCell  : a 1-unit grid over the playable square (0 wide open, 1 walkable, 2 blocked), stamped from the
+                  collider list (a fraction of a millisecond) the first frame anybody walks, and again whenever
+                  colliders.length changes (the boss flattens the town).
      - navField : ONE shared flood-fill distance field from the player's cell (8-connected, no corner cutting,
                   5/7 step costs), refreshed at most ~3x a second and only when somebody cannot see him.
-                  Each reviewer also owns a static field that leads home.
+                  Each reviewer also owns a static field that leads home. One flood is in flight at a time and it
+                  is poured a few thousand cells per frame, so no single frame ever carries a whole one.
      - behaviour: clear line of sight -> run straight, at a personal approach slot so they fan out and flank;
                   otherwise follow the field downhill, string-pulled to the farthest cell they can see. Wall sliding,
                   a stuck detector, separation, and a zigzag when you stare at one down the barrel in first person.
      Nobody got faster. They merely read the map. */
-  var NAV_R = 0.5, NAV_N = 2 * (WORLD + 5), NAV_MIN = -(WORLD + 5), NAV_CELLS = NAV_N * NAV_N, NAV_INF = 65535, NAV_EVERY = 0.33;
+  var NAV_R = 0.5, NAV_NEAR = 0.5 + 0.7072, NAV_N = 2 * (WORLD + 5), NAV_MIN = -(WORLD + 5), NAV_CELLS = NAV_N * NAV_N, NAV_INF = 65535, NAV_EVERY = 0.33;
   var navCell = new Uint8Array(NAV_CELLS), navField = new Uint16Array(NAV_CELLS), navBack = new Uint16Array(NAV_CELLS), navQueue = new Int32Array(NAV_CELLS), navInQ = new Uint8Array(NAV_CELLS);
   var NAV_OFF = [1, -1, NAV_N, -NAV_N, NAV_N + 1, NAV_N - 1, -NAV_N + 1, -NAV_N - 1];           // four straight neighbours, then four diagonal
   var NAV_OX = [0, 0, 0, 0, 1, -1, 1, -1], NAV_OZ = [0, 0, 0, 0, NAV_N, NAV_N, -NAV_N, -NAV_N];   // the two cells a diagonal step squeezes between
   var navBuiltFor = -1, navSerial = 0, navT = 0, navFieldAt = -1e9, navFieldCell = -1, navFieldSerial = -1, navSlotAt = -1e9;
-  var navQHead = 0, navQTail = 0, navQCount = 0, navFlooding = false, navBackCell = -1, navPath = new Int32Array(16), navBudget = 0;
+  var navQHead = 0, navQTail = 0, navQCount = 0, navJob = 0, navJobB = null, navBackCell = -1, navPath = new Int32Array(16), navBudget = 0;   // navJob: 0 nothing flooding, 1 the shared player field into navBack, 2 navJobB's field home
   var navWx = 0, navWz = 0, navPvx = 0, navPvz = 0, navLastPx = 0, navLastPz = 0, navAimX = 0, navAimZ = 1;
   var navOrder = BADDIES.map(function () { return 0; }), navBear = BADDIES.map(function () { return 0; });
+  BADDIES.forEach(function (b) { b.homeField = new Uint16Array(NAV_CELLS); });   // 26 KB each, once: never a new field in the middle of a frame
 
   function navTurn(a, b) { return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }   // signed shortest way round from b to a
   function navIdx(x, z) {
@@ -723,24 +726,44 @@
     }
     return true;
   }
-  // quadtree fill: a single collide() call clears a whole open block, so the full grid costs a few thousand calls, not 26,000
-  function navFill(i0, j0, s) {
-    if (i0 >= NAV_N || j0 >= NAV_N) return;
-    var x = NAV_MIN + i0 + s / 2, z = NAV_MIN + j0 + s / 2, i, j, i1, j1, h;
-    if (!collide(x, z, NAV_R + s * 0.7072)) {        // nothing within reach of any point of the block
-      i1 = Math.min(NAV_N, i0 + s); j1 = Math.min(NAV_N, j0 + s);
-      for (j = j0; j < j1; j++) for (i = i0; i < i1; i++) navCell[j * NAV_N + i] = 0;
-      return;
-    }
-    if (s === 1) { navCell[j0 * NAV_N + i0] = collide(x, z, 0.55) ? 2 : 1; return; }
-    h = s / 2; navFill(i0, j0, h); navFill(i0 + h, j0, h); navFill(i0, j0 + h, h); navFill(i0 + h, j0 + h, h);
-  }
+  // Stamp the obstacles into the grid rather than interrogating the grid about the obstacles: each collider writes
+  // only the cells it can reach, so the fill is O(colliders) and costs a fraction of a millisecond. Cell by cell it
+  // says exactly what asking collide() at the cell centre would have said:
+  //   2 = a reviewer standing in the middle of it is inside something (radius 0.55)
+  //   1 = he fits, but something is within NAV_NEAR, so some corner of the cell is not clear
+  //   0 = nothing can touch him anywhere in the cell (NAV_NEAR = body radius + half a cell diagonal), so navHit()
+  //       may answer from the grid alone without walking the collider list.
   function navBuild() {
-    var i, s = 1;
-    while (s < NAV_N) s *= 2;
-    navFill(0, 0, s);
-    for (i = 0; i < NAV_N; i++) navCell[i] = navCell[NAV_CELLS - 1 - i] = navCell[i * NAV_N] = navCell[i * NAV_N + NAV_N - 1] = 2;   // a solid rim: the flood fill needs no bounds checks
-    navBuiltFor = colliders.length; navSerial++; navFlooding = false;
+    var k, i, j, i0, i1, j0, j1, c, hw, hd, dx, dz, dd, r0, r1, row, v;
+    navCell.fill(0);
+    for (k = 0; k < colliders.length; k++) {
+      c = colliders[k];
+      hw = c.r !== undefined ? c.r : c.hw; hd = c.r !== undefined ? c.r : c.hd;
+      i0 = Math.max(1, Math.floor(c.x - hw - NAV_NEAR - NAV_MIN - 0.5)); i1 = Math.min(NAV_N - 2, Math.ceil(c.x + hw + NAV_NEAR - NAV_MIN - 0.5));
+      j0 = Math.max(1, Math.floor(c.z - hd - NAV_NEAR - NAV_MIN - 0.5)); j1 = Math.min(NAV_N - 2, Math.ceil(c.z + hd + NAV_NEAR - NAV_MIN - 0.5));
+      if (c.r !== undefined) {
+        r0 = (c.r + 0.55) * (c.r + 0.55); r1 = (c.r + NAV_NEAR) * (c.r + NAV_NEAR);
+        for (j = j0; j <= j1; j++) {
+          row = j * NAV_N; dz = NAV_MIN + j + 0.5 - c.z; dz *= dz;
+          for (i = i0; i <= i1; i++) {
+            dx = NAV_MIN + i + 0.5 - c.x; dd = dx * dx + dz;
+            if (dd < r1) { v = dd < r0 ? 2 : 1; if (v > navCell[row + i]) navCell[row + i] = v; }
+          }
+        }
+      } else {
+        for (j = j0; j <= j1; j++) {
+          row = j * NAV_N; dz = Math.abs(NAV_MIN + j + 0.5 - c.z);
+          if (dz >= hd + NAV_NEAR) continue;
+          for (i = i0; i <= i1; i++) {
+            dx = Math.abs(NAV_MIN + i + 0.5 - c.x);
+            v = dx < hw + 0.55 && dz < hd + 0.55 ? 2 : dx < hw + NAV_NEAR ? 1 : 0;
+            if (v > navCell[row + i]) navCell[row + i] = v;
+          }
+        }
+      }
+    }
+    for (i = 0; i < NAV_N; i++) navCell[i] = navCell[NAV_CELLS - 1 - i] = navCell[i * NAV_N] = navCell[i * NAV_N + NAV_N - 1] = 2;   // outside the world (collide() rejects |x| > WORLD + 4): also a solid rim, so the flood needs no bounds checks
+    navBuiltFor = colliders.length; navSerial++; navJob = 0; navJobB = null;                   // any flood in flight was of the old town
     BADDIES.forEach(function (b) {                     // a desk inside a tree is no desk at all (Reviewer 1 had one)
       if (collide(b.home.x, b.home.z, 0.6) && navNearest(b.home.x, b.home.z, true)) { b.home.x = navWx; b.home.z = navWz; }
     });
@@ -787,20 +810,28 @@
     navQHead = head; navQTail = tail; navQCount = count;
     return count === 0;
   }
-  function navFieldSwap() { var f = navField; navField = navBack; navBack = f; navFieldCell = navBackCell; navFieldAt = navT; navFieldSerial = navSerial; navFlooding = false; }
-  function navFlood(field, sx, sz) {                   // all in one go (first field, home fields)
-    if (navFlooding) { navFloodRun(navBack, 1e9); navFieldSwap(); }
-    navFloodSeed(field, sx, sz); navFloodRun(field, 1e9);
+  function navFieldSwap() { var f = navField; navField = navBack; navBack = f; navFieldCell = navBackCell; navFieldAt = navT; navFieldSerial = navSerial; navJob = 0; navJobB = null; }
+  // one flood at a time (they share the queue), a slice of it per frame. -> true the step it drains.
+  function navJobRun(budget) {
+    var f = navJob === 1 ? navBack : navJob === 2 && navJobB ? navJobB.homeField : null;
+    if (!f) { navJob = 0; navJobB = null; return false; }
+    if (!navFloodRun(f, budget)) return false;
+    if (navJob === 1) navFieldSwap();
+    else { navJobB.homeSerial = navSerial; navJob = 0; navJobB = null; }
+    return true;
   }
   function navPlayerField(px, pz) {                    // shared by all six; about 3 floods a second at most, none while he stands still
-    var c = navIdx(px, pz);
-    if (navFieldSerial !== navSerial) { navFlood(navField, px, pz); navFieldCell = c; navFieldAt = navT; navFieldSerial = navSerial; return; }
-    if (navFlooding || c === navFieldCell || navT - navFieldAt < NAV_EVERY) return;
-    navFloodSeed(navBack, px, pz); navBackCell = c; navFlooding = true;
+    var c = navIdx(px, pz), stale = navFieldSerial !== navSerial;
+    if (navJob) { if (!stale || navJob === 1) return; navJob = 0; navJobB = null; }   // a map this old is nobody's friend: the chase comes before somebody's walk home
+    if (!stale && (c === navFieldCell || navT - navFieldAt < NAV_EVERY)) return;
+    navFloodSeed(navBack, px, pz); navBackCell = c; navJob = 1;
   }
+  // a reviewer walking home is under no time pressure, so his field queues behind the player's on the same budget
+  // instead of flooding 13,000 cells mid-frame. -> true when it is ready; until then he simply heads for his desk.
   function navHomeField(b) {
-    if (!b.homeField) b.homeField = new Uint16Array(NAV_CELLS);
-    if (b.homeSerial !== navSerial) { navFlood(b.homeField, b.home.x, b.home.z); b.homeSerial = navSerial; }
+    if (b.homeSerial === navSerial) return true;
+    if (!navJob) { navFloodSeed(b.homeField, b.home.x, b.home.z); navJob = 2; navJobB = b; }
+    return false;
   }
   // walk a field downhill from (x, z) and keep the farthest cell still in plain sight -> navWx/navWz.
   // The pulling is done on the map (cheap); only the chosen corner is confirmed with real collide() sampling.
@@ -876,18 +907,19 @@
       if (navLos(p.x, p.z, px, pz)) { b.mode = 2; return; }
     }
     navPlayerField(px, pz);
-    if (navDescend(p.x, p.z, navField, b.careful > 0 ? 1 : 12)) { b.mode = 3; b.wx = navWx; b.wz = navWz; return; }
-    b.mode = 2;                                        // no way through on the map (or already on top of him): go straight and slide
+    if (navFieldSerial === navSerial && navDescend(p.x, p.z, navField, b.careful > 0 ? 1 : 12)) { b.mode = 3; b.wx = navWx; b.wz = navWz; return; }
+    b.mode = 2;                                        // no way through on the map (or the map is still filling, or already on top of him): go straight and slide
   }
   // running away: the open heading that gains the most distance-by-foot from him, with a little momentum
   function navFleeYaw(b, px, pz) {
-    var p = b.mesh.position, away = Math.atan2(p.x - px, p.z - pz), best = away, bs = -1e9, k, a, c1, c2, f, s;
+    var p = b.mesh.position, away = Math.atan2(p.x - px, p.z - pz), best = away, bs = -1e9, k, a, c1, c2, f, s, ready;
     navPlayerField(px, pz);
+    ready = navFieldSerial === navSerial;              // no field yet: judge the headings on open ground and momentum alone
     for (k = 0; k < 12; k++) {
       a = away + k * 0.5236; c1 = navIdx(p.x + Math.sin(a) * 1.6, p.z + Math.cos(a) * 1.6);
       if (navCell[c1] === 2) continue;
       c2 = navIdx(p.x + Math.sin(a) * 3.2, p.z + Math.cos(a) * 3.2);
-      f = navCell[c2] !== 2 && navField[c2] !== NAV_INF ? navField[c2] : navField[c1] !== NAV_INF ? navField[c1] - 8 : 0;
+      f = !ready ? 0 : navCell[c2] !== 2 && navField[c2] !== NAV_INF ? navField[c2] : navField[c1] !== NAV_INF ? navField[c1] - 8 : 0;
       s = f / 5 + 2 * Math.cos(a - away) + 1.2 * Math.cos(a - b.head);
       if (s > bs) { bs = s; best = a; }
     }
@@ -919,7 +951,8 @@
       else { want = Math.atan2(b.ex - p.x, b.ez - p.z); b.head = want; raw = collide(p.x, p.z, 0.45); if (think) b.plan = 0.2; }
     } else if (fleeing) {
       speed = 7; turn = 14;
-      if (think || b.mode !== 4) { navBudget--; b.mode = 4; b.plan = 0.2; b.fleeA = navFleeYaw(b, px, pz); }
+      if (think) { navBudget--; b.mode = 4; b.plan = 0.2; b.fleeA = navFleeYaw(b, px, pz); }
+      else if (b.mode !== 4) { b.mode = 4; b.plan = 0; b.fleeA = Math.atan2(p.x - px, p.z - pz); }   // no thinking time this step: straight away from him, and ask the map on the next one
       want = b.fleeA;
     } else if (chasing) {
       speed = d < 1.2 ? 0 : (4.6 + (i % 3) * 0.4) * (1 + 0.5 * dread);
@@ -946,12 +979,15 @@
     } else {
       speed = 1.8; b.wander -= h; if (think && b.plan < 0) b.plan = 0.25;
       rl = Math.hypot(b.home.x - p.x, b.home.z - p.z);
-      if (b.goHome ? rl < 10 : rl > 16) { b.goHome = !b.goHome; think = true; }
+      if (b.goHome ? rl < 10 : rl > 16) { b.goHome = !b.goHome; b.plan = 0; think = navBudget > 0; }
       if (b.goHome) {                                  // strayed: walk home by the map rather than into the back of the Library
-        if (think || b.mode !== 5) {
+        if (think) {
           navBudget--; b.mode = 5; b.plan = 0.4; b.wx = b.home.x; b.wz = b.home.z;
-          if (!navLos(p.x, p.z, b.wx, b.wz)) { navHomeField(b); if (navDescend(p.x, p.z, b.homeField, b.careful > 0 ? 1 : 10)) { b.wx = navWx; b.wz = navWz; } }
-        }
+          if (!navLos(p.x, p.z, b.wx, b.wz)) {
+            if (navHomeField(b)) { if (navDescend(p.x, p.z, b.homeField, b.careful > 0 ? 1 : 10)) { b.wx = navWx; b.wz = navWz; } }
+            else b.plan = 0.15;                        // his field is still flooding: head for the desk and ask again shortly
+          }
+        } else if (b.mode !== 5) { b.mode = 5; b.plan = 0; b.wx = b.home.x; b.wz = b.home.z; }
         want = Math.atan2(b.wx - p.x, b.wz - p.z); if (Math.hypot(b.wx - p.x, b.wz - p.z) < 0.45) b.plan = 0;
       } else {
         if (b.mode !== 6) { b.mode = 6; b.yaw = b.head; }
@@ -994,8 +1030,8 @@
     } else { b.stuckT = 0; b.stuckN = 0; b.sx = p.x; b.sz = p.z; }
   }
   function updateBaddies(dt) {
-    if (navBuiltFor !== colliders.length) navBuild();
     if (!(dt > 0)) return;
+    if (navBuiltFor !== colliders.length) navBuild();   // lazily: nobody is walking anywhere on a frame that lasts no time, and a visitor who never starts the game never pays for a map
     var px = player.position.x, pz = player.position.z, n, s, k, b, m, v;
     navT += dt;
     // where he is heading, for cutting him off (teleports and knockbacks are not running)
@@ -1004,7 +1040,7 @@
     navLastPx = px; navLastPz = pz;
     if (fp) { v = viewDir(); k = Math.hypot(v.x, v.z) || 1; navAimX = v.x / k; navAimZ = v.z / k; }
     if (navT - navSlotAt >= NAV_EVERY) { navSlotAt = navT; navSlots(px, pz); }
-    if (navFlooding && navFloodRun(navBack, Math.max(3500, dt * 210000))) navFieldSwap();   // ~0.2 ms of flood a frame, done within four
+    if (navJob) navJobRun(Math.max(3500, dt * 210000));   // ~0.2 ms of flood a frame, whoever it belongs to: done within four
     n = Math.max(1, Math.min(30, Math.ceil(dt * 18))); navBudget = 2 * n;                     // at most two reviewers re-plan per step: no thundering herd   // big frames (timescale, tab switches) are sub-stepped: under half a unit a step, nothing tunnels
     for (k = 0; k < BADDIES.length; k++) {
       b = BADDIES[k]; m = b.mesh;
