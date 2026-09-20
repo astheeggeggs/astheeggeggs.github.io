@@ -251,10 +251,18 @@
     var keys = { l: false, r: false, u: false, d: false, fire: false, focus: false }, touch = { on: false, id: -1, lx: 0, ly: 0, count: 0, t0: 0 };
     var lockI = new Int8Array(5), lockD = new Float32Array(5);
     var WEAP = [{ name: 'RED POWER SHOT', col: '#ff5a4a' }, { name: 'BLUE THUNDER', col: '#5ab8ff' }, { name: 'GREEN SNIPER', col: '#4ade80' }];
+    var hiSaved = 0;
+    function saveHi() {                                                   // the bezel advertises a hi-score all game, so bank it as it happens
+      if (!G || JUMP === 'ending') return;                                // the dev jump fakes a score: never let it poison a real one
+      if (!(G.hi > hiSaved)) return;
+      hiSaved = G.hi;
+      try { localStorage.setItem('quest.shmup.hi', String(G.hi)); } catch (e) {}
+    }
     function newGame() {
-      var hi = 158000; try { hi = Math.max(hi, parseInt(localStorage.getItem('quest.shmup.hi'), 10) || 0); } catch (e) {}
+      var stored = 0; try { stored = parseInt(localStorage.getItem('quest.shmup.hi'), 10) || 0; } catch (e) {}
+      hiSaved = stored; var hi = Math.max(158000, stored);
       G = { mode: 'play', t: 0, stage: 1, st: 0, si: 0, script: STAGE1, hold: false, score: 0, hi: hi, lives: 3, bombs: 3, chain: 0, maxChain: 0, gauge: 0, cites: 0, continues: 0, kills: 0,
-        weapon: 0, level: 1, speed: 0, extend: 0, paused: false, flash: 1, shake: 0, cardT: 0, cardDur: 1, cardTitle: '', cardSub: '', warnT: 0, boss: null, contT: 0,
+        weapon: 0, level: 1, speed: 0, extend: 0, paused: false, wipe: 0, flash: 1, shake: 0, cardT: 0, cardDur: 1, cardTitle: '', cardSub: '', warnT: 0, boss: null, contT: 0,
         who: '', say: '', sayT: 0, sayN: 0, endT: 0, scroll: 0, girderY: -200, girderSide: 0, girderOn: false, tauntT: 0, tauntI: 0 };
       clearPools(); P.x = W / 2; P.y = H + 30; P.inv = 3; P.dead = 0; P.bombT = 0; P.holdT = 0; P.shotT = 0; P.laser = false;
     }
@@ -317,6 +325,7 @@
       G.lives--; G.shake = 0.8; P.dead = 1.3; P.laser = false;
       if (G.level > 1) { G.level--; pickup('P', P.x, P.y - 10); }
       if (G.lives < 0) { G.lives = 0; G.mode = 'continue'; G.contT = 9.99; P.dead = 1e9; }
+      saveHi();
     }
     function respawn() { P.x = W / 2; P.y = H + 24; P.inv = 3; P.dead = 0; P.holdT = 0; G.bombs = Math.max(G.bombs, 3); }
     function updatePlayer(dt) {
@@ -327,7 +336,7 @@
       if (firing) P.holdT += dt; else P.holdT = 0;
       if (P.shotT > 0) P.shotT -= dt;
       P.laser = touch.on || (keys.fire && P.holdT > 0.2);
-      var ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0), iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0), sp = (152 + G.speed * 24) * ((P.laser || keys.focus) ? 0.5 : 1);
+      var ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0), iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0), sp = (152 + G.speed * 26) * ((P.laser || keys.focus) ? 0.5 : 1);
       if (ix && iy) sp *= 0.7071;
       if (P.y > H - 56 && P.inv > 2) { P.y -= 110 * dt; ix = 0; iy = 0; }                   // fly in from below after a respawn
       P.x = clamp(P.x + ix * sp * dt, 9, W - 9); P.y = clamp(P.y + iy * sp * dt, 18, Math.max(H - 12, P.y));
@@ -544,7 +553,7 @@
       [11.5, 'box', 180, 'down', 1, 0, 0, 'W'],
       [13, 'query', 90, 'hover', 1, 0, 0, '', 90], [13.6, 'query', 270, 'hover', 1, 0, 0, '', 90],
       [15, 'msg', 'COPYEDITOR', 'WE HAVE CHANGED EVERY "WHICH" TO "THAT". AND BACK AGAIN.'],
-      [16, 'pen', 40, 'dive', 4, 0.28, 22], [17.5, 'pen', 320, 'dive', 4, 0.28, -22],
+      [16, 'pen', 40, 'dive', 4, 0.28, 22], [17.5, 'pen', 320, 'dive', 4, 0.28, -22], [18.5, 'box', 200, 'down', 1, 0, 0, 'S'],
       [20, 'bracket', 70, 'hover', 1, 0, 0, '', 80], [20, 'bracketR', 290, 'hover', 1, 0, 0, '', 80],
       [22, 'staple', 0, 'arcR', 8, 0.2, 0, '', 120], [24, 'box', 110, 'down', 1, 0, 0, 'P'], [25, 'pen', 180, 'sine', 6, 0.3, 0],
       [27, 'bubble', 180, 'hover', 1, 0, 0, '', 100], [29, 'staple', 0, 'arcL', 8, 0.2, 0, '', 70],
@@ -567,14 +576,14 @@
       [11, 'sat', 180, 'drift', 1, 0, 0, '', 80], [13, 'pen', 50, 'dive', 5, 0.25, 18], [14, 'pen', 310, 'dive', 5, 0.25, -18],
       [15, 'msg', 'PUBLISHER', 'THE OPEN ACCESS FEE IS 9,500 POUNDS. PER FIGURE.'],
       [17, 'fee', 180, 'fall', 10, 0.15, 0], [18.5, 'paywall', 60, 'down'], [18.5, 'paywall', 180, 'down'], [18.5, 'paywall', 300, 'down'],
-      [22, 'proof', 180, 'hover', 1, 0, 0, '', 110], [24, 'staple', 0, 'arcR', 8, 0.18, 0, '', 150], [25, 'staple', 0, 'arcL', 8, 0.18, 0, '', 110],
+      [20.5, 'box', 250, 'down', 1, 0, 0, 'S'], [22, 'proof', 180, 'hover', 1, 0, 0, '', 110], [24, 'staple', 0, 'arcR', 8, 0.18, 0, '', 150], [25, 'staple', 0, 'arcL', 8, 0.18, 0, '', 110],
       [27, 'sat', 90, 'drift', 1, 0, 0, '', 70], [27.5, 'sat', 270, 'drift', 1, 0, 0, '', 100], [29, 'box', 120, 'down', 1, 0, 0, 'W'],
       [31, 'fee', 30, 'fall', 9, 0.16, 36], [32, 'fee', 330, 'fall', 9, 0.16, -36],
       [34, 'proof', 100, 'hover', 1, 0, 0, '', 100], [35, 'proof', 260, 'hover', 1, 0, 0, '', 100],
       [37, 'msg', 'PUBLISHER', 'YOUR PAPER IS UNDER EMBARGO UNTIL YOU HAVE FORGOTTEN IT.'],
       [38, 'paywall', 60, 'down'], [38, 'paywall', 300, 'down'], [39, 'query', 180, 'hover', 1, 0, 0, '', 90], [40, 'pen', 180, 'sine', 8, 0.25, 0],
       [42, 'box', 240, 'down', 1, 0, 0, 'B'], [43, 'bubble', 90, 'hover', 1, 0, 0, '', 90], [43.5, 'bubble', 270, 'hover', 1, 0, 0, '', 90],
-      [46, 'sat', 180, 'drift', 1, 0, 0, '', 120], [47, 'fee', 100, 'fall', 8, 0.15, 0], [48, 'fee', 260, 'fall', 8, 0.15, 0],
+      [44.5, 'box', 150, 'down', 1, 0, 0, 'S'], [46, 'sat', 180, 'drift', 1, 0, 0, '', 120], [47, 'fee', 100, 'fall', 8, 0.15, 0], [48, 'fee', 260, 'fall', 8, 0.15, 0],
       [50, 'bracket', 60, 'hover', 1, 0, 0, '', 80], [50, 'bracketR', 300, 'hover', 1, 0, 0, '', 80], [51, 'pen', 40, 'dive', 6, 0.22, 20], [52, 'pen', 320, 'dive', 6, 0.22, -20],
       [54, 'box', 180, 'down', 1, 0, 0, '1'], [55, 'proof', 180, 'hover', 1, 0, 0, '', 120], [56, 'sat', 70, 'drift', 1, 0, 0, '', 70], [56, 'sat', 290, 'drift', 1, 0, 0, '', 70],
       [58, 'paywall', 60, 'down'], [58, 'paywall', 180, 'down'], [58, 'paywall', 300, 'down'], [60, 'box', 100, 'down', 1, 0, 0, 'P'],
@@ -604,7 +613,7 @@
     /* ------------------------------------------------------------ simulation step (called with small fixed-ish dt) */
     var NSTAR = 120, stx = new Float32Array(NSTAR), sty = new Float32Array(NSTAR), stl = new Uint8Array(NSTAR);
     function updateBullets(dt) {
-      var i, dx, dy, r, vul = P.dead <= 0 && P.inv <= 0 && G.mode === 'play';
+      var i, dx, dy, r, vul = !GOD && P.dead <= 0 && P.inv <= 0 && P.bombT <= 0 && G.mode === 'play';   // an ignored hit must leave the bullet flying
       for (i = 0; i < NB; i++) {
         if (!bal[i]) continue;
         bx[i] += bvx[i] * dt; by[i] += bvy[i] * dt;
@@ -648,6 +657,7 @@
       if (G.chain > 0) { G.gauge -= dt / 2.6; if (G.gauge <= 0) chainBreak(); }
     }
     function doContinue() {
+      saveHi();
       if (G.mode === 'continue') { G.mode = 'play'; G.score = 0; G.continues++; G.lives = 3; G.bombs = 3; respawn(); sfx.start(); floatText('RESUBMITTED', W / 2, H / 2, '#34d399'); }
       else if (G.mode === 'gameover' && G.contT > 1) {                                // the count ran out: the stage starts again, nothing is lost but pride
         var st = G.stage; clearPools(); G.mode = 'play'; G.score = 0; G.continues++; G.lives = 3; G.bombs = 3; G.chain = 0; G.gauge = 0; G.boss = null; G.hold = false; G.warnT = 0;
@@ -661,9 +671,9 @@
       if (G.mode === 'ending') return;
       G.mode = 'ending'; G.endT = 0; G.flash = 1; G.boss = null; G.warnT = 0; G.sayT = 0; cancelBullets(false);
       for (var i = 0; i < NE; i++) EN[i].on = false;
-      try { localStorage.setItem('quest.shmup.hi', String(G.hi)); } catch (e) {}
+      saveHi();
       api.music('silence'); api.stinger('ending');
-      if (bombBtn) bombBtn.hidden = true; if (pauseBtn) pauseBtn.hidden = true;
+      if (bombBtn) bombBtn.hidden = true; if (pauseBtn) pauseBtn.hidden = true; if (exitBtn) exitBtn.hidden = true;
       var c = G.continues, L = api.links || {}, year = new Date().getFullYear();
       var quip = c === 0 ? 'ACCEPTED WITHOUT A SINGLE RESUBMISSION. NOBODY WILL BELIEVE YOU.' : c < 3 ? 'ACCEPTED AFTER ' + c + ' RESUBMISSION' + (c > 1 ? 'S' : '') + '. ABOUT AVERAGE, FRANKLY.' : 'ACCEPTED AFTER ' + c + ' RESUBMISSIONS. PERSISTENCE IS ALSO A METHOD.';
       endEl = document.createElement('div'); endEl.className = 'qs-end';
@@ -678,14 +688,33 @@
       h += '</div><div class="qs-end__btns"><button type="button" data-qs="again">▶ PLAY AGAIN</button><button type="button" data-qs="site">BACK TO THE SITE ↓</button></div></div>';
       endEl.innerHTML = h; overlay.appendChild(endEl);
       endEl.querySelector('[data-qs="again"]').addEventListener('click', function () { try { api.restart(); } catch (e) {} });
-      endEl.querySelector('[data-qs="site"]').addEventListener('click', function () {
-        setFixed(false);                                                              // hand the page back, keep the ending where the game was
-        var el = document.getElementById('boring'); if (el && el.scrollIntoView) { try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { el.scrollIntoView(); } }
-      });
+      endEl.querySelector('[data-qs="site"]').addEventListener('click', finishToSite);
+    }
+
+    function toBoring() {
+      var el = document.getElementById('boring');
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { try { el.scrollIntoView(); } catch (e2) {} } }
+    }
+    function finishToSite() {                                                         // the ending is over: give the page, the keyboard and the CPU back
+      finished = true;
+      setFixed(false);                                                                // hand the page back, keep the ending where the game was
+      listen(false);                                                                  // no more preventDefault: the reader owns the arrow keys again
+      sleepLoop(true);                                                                // no more rAF, no more firework bangs behind the site
+      toBoring();
+      if (endEl) setTimeout(function () {                                             // in the 4:3 phone box the full panel does not fit: compact it
+        try { if (endEl && endEl.scrollHeight > endEl.clientHeight + 4) endEl.className = 'qs-end is-back'; } catch (e) {}
+      }, 90);
+    }
+    function exitToSite() {                                                           // mid-game escape hatch, mainly for the page-locked phone layout
+      if (!G || finished) return;
+      if (G.mode !== 'ending') { G.paused = true; autoPaused = false; }               // a deliberate pause: it must not auto-resume behind their back
+      setFixed(false);
+      dirty = true; wake();
+      toBoring();
     }
 
     /* ------------------------------------------------------------ drawing: the playfield (360 x H logical pixels) */
-    var overlay = null, styleEl = null, scr = null, sx = null, pf = null, g = null, endEl = null, bombBtn = null, pauseBtn = null;
+    var overlay = null, styleEl = null, scr = null, sx = null, pf = null, g = null, endEl = null, bombBtn = null, pauseBtn = null, exitBtn = null;
     var narrow = false, fixedOn = false, bandSay = false, dpr = 1, U = 1, pfX = 0, pfY = 0, pfW = 0, pfH = 0, scrW = 0, scrH = 0, gFont = 0, zig = new Float32Array(16);
     function txt(s, x, y, size, col, align) {
       if (gFont !== size) { g.font = size + 'px ' + FONT; gFont = size; }
@@ -780,7 +809,9 @@
       for (i = 0; i < NT; i++) { o = TX[i]; if (o.on) txt(o.s, o.x | 0, o.y | 0, 8, o.life < 0.3 && ((t * 20) | 0) % 2 ? '#9aa3b8' : o.col); }
       g.setTransform(1, 0, 0, 1, 0, 0);
       if (G.boss && G.boss.on) {
-        e = G.boss; y = narrow ? 30 : 8; txt(e.def.name, 10, y, 8, '#fff', 'left'); var np = e.def.phases.length - 1 - e.phase; for (k = 0; k < np; k++) { g.fillStyle = '#fcd34d'; g.fillRect(W - 16 - k * 8, y + 1, 6, 6); }
+        e = G.boss; y = narrow ? 40 : 8;                                  // narrow: clear of the score / chain block above
+        if (narrow) { g.fillStyle = 'rgba(5,6,15,.62)'; g.fillRect(0, y - 4, W, 24); }
+        txt(e.def.name, 10, y, 8, '#fff', 'left'); var np = e.def.phases.length - 1 - e.phase; for (k = 0; k < np; k++) { g.fillStyle = '#fcd34d'; g.fillRect(W - 16 - k * 8, y + 1, 6, 6); }
         g.fillStyle = '#11131c'; g.fillRect(9, y + 10, W - 18, 7); g.fillStyle = '#3b0d16'; g.fillRect(10, y + 11, W - 20, 5); g.fillStyle = e.hp / e.mhp < 0.25 && fr ? '#fff' : (e.phase === e.def.phases.length - 1 ? '#ff4fa3' : '#e3625b'); g.fillRect(10, y + 11, Math.max(0, (W - 20) * e.hp / e.mhp) | 0, 5);
       }
       if (G.warnT > 0) {
@@ -798,13 +829,19 @@
         if (G.mode === 'continue') { txt('CONTINUE?', W / 2, H / 2 - 90, 24, '#fff'); txt(String(Math.max(0, Math.ceil(G.contT) - 1)), W / 2, H / 2 - 44, 64, '#fcd34d'); if (fr || G.contT % 1 > 0.3) txt(narrow ? 'TAP TO RESUBMIT' : 'PRESS FIRE TO RESUBMIT', W / 2, H / 2 + 44, 8, '#34d399'); txt('THE SCORE RESETS. THE REVIEWS DO NOT.', W / 2, H / 2 + 66, 8, '#9aa3b8'); }
         else { txt('GAME OVER', W / 2, H / 2 - 60, 32, '#e6e6e6'); txt('DESK REJECTED', W / 2, H / 2 - 8, 16, '#ff6b7a'); if (G.contT > 1 && ((t * 2) | 0) % 2) txt(narrow ? 'TAP TO TRY ANOTHER JOURNAL' : 'PRESS FIRE TO TRY ANOTHER JOURNAL', W / 2, H / 2 + 40, 8, '#34d399'); }
       }
-      if (G.paused) { g.fillStyle = 'rgba(5,6,15,.72)'; g.fillRect(0, 0, W, H); txt('PAUSED', W / 2, H / 2 - 30, 32, '#fff'); txt(narrow ? 'TAP TO RESUME' : 'P OR ESC TO RESUME', W / 2, H / 2 + 20, 8, '#fcd34d'); txt('OUT TO LUNCH. BACK IN 6-8 WEEKS.', W / 2, H / 2 + 40, 8, '#9aa3b8'); }
+      if (G.paused && G.mode !== 'ending') {
+        g.fillStyle = 'rgba(5,6,15,.72)'; g.fillRect(0, 0, W, H); txt('PAUSED', W / 2, H / 2 - 30, 32, '#fff');
+        txt(narrow ? 'TAP TO RESUME' : 'CLICK OR PRESS P TO RESUME', W / 2, H / 2 + 20, 8, '#fcd34d');
+        txt('EXIT LEAVES THE GAME AND RETURNS', W / 2, H / 2 + 40, 8, '#9aa3b8'); txt('YOU TO THE SITE. IT KEEPS YOUR PLACE.', W / 2, H / 2 + 52, 8, '#9aa3b8');
+        txt('OUT TO LUNCH. BACK IN 6-8 WEEKS.', W / 2, H / 2 + 76, 8, '#4a5470');
+      }
     }
     function drawHudNarrow(fr) {
       var k, y = H - 12;
       txt(fmt(G.score), 6, 6, 8, '#fff', 'left'); txt('HI ' + fmt(G.hi), W - 6, 6, 8, '#9aa3b8', 'right');
       if (G.chain > 0) { txt(G.chain + ' HIT', 6, 18, 8, '#fcd34d', 'left'); g.fillStyle = '#11131c'; g.fillRect(6, 28, 62, 4); g.fillStyle = G.gauge < 0.3 && fr ? '#fff' : '#34d399'; g.fillRect(7, 29, (60 * G.gauge) | 0, 2); }
-      for (k = 0; k < Math.min(G.lives - 1, 6); k++) g.drawImage(ICON.life, 6 + k * 11, y - 1);
+      if (G.lives > 0) { for (k = 0; k < Math.min(G.lives, 6); k++) g.drawImage(ICON.life, 6 + k * 11, y - 1); }
+      else txt('LAST ONE', 6, y - 1, 8, '#ff6b7a', 'left');
       for (k = 0; k < Math.min(G.bombs, 6); k++) g.drawImage(ICON.bomb, 6 + k * 11, y - 11);
       txt('RBG'.charAt(G.weapon) + ' LV' + G.level, W - 6, y, 8, WEAP[G.weapon].col, 'right');
       if (G.sayT > 0 && G.sayLines && !bandSay) { var n = Math.floor(G.sayN), yy = H - 58 - G.sayLines.length * 10; txt(G.who, W / 2, yy, 8, '#fcd34d'); for (k = 0; k < G.sayLines.length && n > 0; k++) { yy += 11; txt(G.sayLines[k].slice(0, n), W / 2, yy, 8, '#fff'); n -= G.sayLines[k].length; } }
@@ -835,10 +872,21 @@
       '.qs-end__btns{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;}' +
       '.qs-end__btns button{font:inherit;font-family:' + FONT + ';font-size:10px;color:#11131c;background:#fcd34d;' +
       'border:2px solid #05060f;box-shadow:4px 4px 0 #05060f;padding:13px 14px;cursor:pointer;}' +
-      '.qs-end__btns button:active{transform:translate(2px,2px);box-shadow:2px 2px 0 #05060f;}';
+      '.qs-end__btns button:active{transform:translate(2px,2px);box-shadow:2px 2px 0 #05060f;}' +
+      '.qs-end.is-back{padding:8px;}' +
+      '.qs-end.is-back .qs-end__stamp{font-size:clamp(13px,4.2vw,24px);}' +
+      '.qs-end.is-back .qs-end__cite{margin:8px 0 10px;line-height:1.6;}' +
+      '.qs-end.is-back .qs-end__quip{display:none;}' +
+      '.qs-end.is-back .qs-end__stats{gap:6px 14px;margin-bottom:10px;}' +
+      '.qs-end.is-back .qs-end__stats span{gap:5px;}' +
+      '.qs-end.is-back .qs-end__stats b{font-size:10px;}' +
+      '.qs-end.is-back .qs-end__links{margin:10px 0 10px;gap:6px;}' +
+      '.qs-end.is-back .qs-end__links a{padding:6px 7px;font-size:7px;}' +
+      '.qs-end.is-back .qs-end__btns{gap:8px;}' +
+      '.qs-end.is-back .qs-end__btns button{padding:8px 9px;font-size:8px;box-shadow:3px 3px 0 #05060f;}';
 
     var raf = 0, lastT = 0, acc = 0, STEP = 1 / 60, MAXSTEP = 40, frameN = 0, lastCW = 0, lastCH = 0;
-    var autoPaused = false, crashed = false, released = false, scrollY0 = 0, bodySave = null, htmlSave = '';
+    var autoPaused = false, offScreen = false, crashed = false, released = false, finished = false, dirty = true, idleT = 0, scrollY0 = 0, bodySave = null, htmlSave = '';
     var spritesBuilt = false, pFont = 0, tgtName = '', tgtLines = null, sayKey = '', sayPanel = null;
     var STAGE_NAME = ['', 'COPYEDITING', 'PROOFS / PRODUCTION'];
     var LEGEND = ['Z/SPC  FIRE', 'HOLD   LASER', 'X      BOMB', 'SHIFT  FOCUS', 'P/ESC  PAUSE', 'M      MUSIC'];
@@ -884,14 +932,17 @@
       bombBtn.setAttribute('aria-label', 'Use a bomb');
       pauseBtn = document.createElement('button'); pauseBtn.type = 'button'; pauseBtn.className = 'qs-btn'; pauseBtn.textContent = '❚❚';
       pauseBtn.setAttribute('aria-label', 'Pause');
-      overlay.appendChild(bombBtn); overlay.appendChild(pauseBtn);
-      bombBtn.addEventListener('pointerdown', btnBomb); pauseBtn.addEventListener('pointerdown', btnPause);
-      bombBtn.addEventListener('click', swallow); pauseBtn.addEventListener('click', swallow);
+      exitBtn = document.createElement('button'); exitBtn.type = 'button'; exitBtn.className = 'qs-btn'; exitBtn.textContent = 'EXIT';
+      exitBtn.setAttribute('aria-label', 'Leave the game and go back to the site'); exitBtn.hidden = true;
+      overlay.appendChild(bombBtn); overlay.appendChild(pauseBtn); overlay.appendChild(exitBtn);
+      bombBtn.addEventListener('pointerdown', btnBomb); pauseBtn.addEventListener('pointerdown', btnPause); exitBtn.addEventListener('pointerdown', btnExit);
+      bombBtn.addEventListener('click', swallow); pauseBtn.addEventListener('click', swallow); exitBtn.addEventListener('click', swallow);
       (api.view || api.root || document.body).appendChild(overlay);
     }
     function swallow(e) { e.preventDefault(); e.stopPropagation(); }
     function btnBomb(e) { swallow(e); if (G && G.mode === 'play' && !G.paused) useBomb(); }
-    function btnPause(e) { swallow(e); if (!G) return; if (G.mode === 'continue' || G.mode === 'gameover') doContinue(); else setPaused(!G.paused); }
+    function btnPause(e) { swallow(e); if (!G) return; if (G.mode === 'continue' || G.mode === 'gameover') doContinue(); else if (G.paused) resumeFromUser(); else setPaused(true); wake(); }
+    function btnExit(e) { swallow(e); exitToSite(); }
 
     /* one screen canvas, the logical playfield blown up with nearest-neighbour, panels either side */
     function layout() {
@@ -915,6 +966,7 @@
       pfX = Math.round((scrW - pfW) / 2);
       pfY = Math.round((scrH - pfH) * (narrow && scrH - pfH > 40 * dpr ? 0.34 : 0.5));   // on a phone, leave the thumbs some room
       bandSay = narrow && (scrH - pfY - pfH) > 52 * dpr;      // a taunt over the playfield is a taunt over a bullet
+      dirty = true;
       placeButtons();
     }
     function placeButtons() {
@@ -924,9 +976,17 @@
       bombBtn.style.width = s + 'px'; bombBtn.style.height = s + 'px'; bombBtn.style.borderRadius = '50%'; bombBtn.style.fontSize = fs + 'px';
       bombBtn.style.left = Math.round(x + w - s - (below ? 18 : 10)) + 'px';
       bombBtn.style.top = Math.round(below ? y + h + (band - s) / 2 : y + h - s - (narrow ? 38 : 14)) + 'px';
-      pauseBtn.style.width = '34px'; pauseBtn.style.height = '28px'; pauseBtn.style.fontSize = '9px'; pauseBtn.style.borderRadius = '0';
-      if (narrow) { pauseBtn.style.left = Math.round(pfY / dpr > 34 ? x + w - 34 : x + w - 44) + 'px'; pauseBtn.style.top = Math.round(pfY / dpr > 34 ? y - 32 : y + 40) + 'px'; }
-      else { pauseBtn.style.left = Math.round(scrW / dpr - 46) + 'px'; pauseBtn.style.top = '10px'; }   // out in the bezel, clear of the boss bar
+      var ps = narrow ? 44 : 34, pt;                                                  // a thumb needs 44 px, and room for its shadow
+      pauseBtn.style.width = ps + 'px'; pauseBtn.style.height = (narrow ? 44 : 28) + 'px'; pauseBtn.style.fontSize = (narrow ? 11 : 9) + 'px'; pauseBtn.style.borderRadius = '0';
+      exitBtn.style.height = (narrow ? 44 : 26) + 'px'; exitBtn.style.width = (narrow ? 64 : 62) + 'px'; exitBtn.style.fontSize = (narrow ? 10 : 8) + 'px'; exitBtn.style.borderRadius = '0';
+      if (narrow) {
+        pt = y + (pfY / dpr > ps + 12 ? -(ps + 8) : 8);
+        pauseBtn.style.left = Math.round(x + w - ps - 10) + 'px'; pauseBtn.style.top = Math.round(pt) + 'px';
+        exitBtn.style.left = Math.round(Math.max(4, x + w - ps - 10 - 72)) + 'px'; exitBtn.style.top = Math.round(pt) + 'px';
+      } else {
+        pauseBtn.style.left = Math.round(scrW / dpr - 46) + 'px'; pauseBtn.style.top = '10px';           // out in the bezel, clear of the boss bar
+        exitBtn.style.left = Math.round(scrW / dpr - 74) + 'px'; exitBtn.style.top = '46px';
+      }
     }
     function checkSize() {
       if (!overlay) return;
@@ -1037,7 +1097,7 @@
       sx.fillStyle = '#1b2238';
       sx.fillRect(pfX - b, pfY - b, pfW + b * 2, b); sx.fillRect(pfX - b, pfY + pfH, pfW + b * 2, b);
       sx.fillRect(pfX - b, pfY, b, pfH); sx.fillRect(pfX + pfW, pfY, b, pfH);
-      if (G.flash > 0.004) { sx.globalAlpha = Math.min(1, G.flash); sx.fillStyle = '#ffffff'; sx.fillRect(pfX, pfY, pfW, pfH); sx.globalAlpha = 1; }
+      if (G.flash > 0.004 && !G.paused) { sx.globalAlpha = Math.min(1, G.flash); sx.fillStyle = '#ffffff'; sx.fillRect(pfX, pfY, pfW, pfH); sx.globalAlpha = 1; }   // a frozen frame must stay readable
       if (bandSay && G.sayT > 0 && G.sayLines) {
         var fb = Math.max(8, Math.round(9 * dpr)), yb = pfY + pfH + Math.round(14 * dpr), nb = Math.floor(G.sayN), kb;
         ptxt(G.who, Math.round(12 * dpr), yb, fb, '#fcd34d', 'left'); yb += Math.round(fb * 1.9);
@@ -1047,6 +1107,13 @@
     }
 
     /* ------------------------------------------------------------ the frame driver */
+    function paint() {
+      if (!G || !scr) return;
+      var showExit = !finished && G.mode !== 'ending' && (G.paused || G.mode === 'continue' || G.mode === 'gameover');
+      if (exitBtn && exitBtn.hidden === showExit) exitBtn.hidden = !showExit;
+      try { drawField(); compose(); } catch (err) { oops(err); }
+      dirty = false;
+    }
     function frame(ts) {
       raf = requestAnimationFrame(frame);
       if (!self.active || !G || !scr) return;
@@ -1054,37 +1121,66 @@
       var dtr = lastT ? (ts - lastT) / 1000 : 0; lastT = ts;
       if (!(dtr > 0)) dtr = 0; else if (dtr > 0.1) dtr = 0.1;
       if ((frameN++ % 12) === 0) { checkVis(); checkSize(); }
-      if (G.wipe > 0) G.wipe = Math.max(0, G.wipe - dtr * 1.3);
-      if (!G.paused) {
-        acc += dtr * tscale();
-        var n = 0;
-        while (acc >= STEP && n < MAXSTEP) { acc -= STEP; n++; try { step(STEP); } catch (err) { oops(err); acc = 0; break; } }
-        if (acc > 0.75) acc = 0;
-      } else acc = 0;
-      try { drawField(); compose(); } catch (err) { oops(err); }
+      if (G.paused) {                                                       // paused or scrolled away: one last frame, then stop burning the machine
+        acc = 0; lastT = 0;
+        if (dirty) paint();
+        sleepLoop(false);
+        return;
+      }
+      if (G.wipe > 0) { G.wipe = Math.max(0, G.wipe - dtr * 1.3); dirty = true; }
+      acc += dtr * tscale();
+      var n = 0;
+      while (acc >= STEP && n < MAXSTEP) { acc -= STEP; n++; try { step(STEP); } catch (err) { oops(err); acc = 0; break; } }
+      if (acc > 0.75) acc = 0;
+      paint();
+    }
+    function wake() {                                                       // anything that could need a frame calls this; it is free if we are awake
+      if (!self.active || finished || !G) return;
+      if (idleT) { clearInterval(idleT); idleT = 0; }
+      if (!raf) { lastT = 0; acc = 0; raf = requestAnimationFrame(frame); }
+    }
+    function sleepLoop(forGood) {                                           // stop the rAF loop; a slow timer watches for the game coming back
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (idleT) { clearInterval(idleT); idleT = 0; }
+      if (!forGood && self.active && !finished) idleT = setInterval(idleTick, 400);
+    }
+    function idleTick() {
+      if (!self.active || !G || finished) { if (idleT) { clearInterval(idleT); idleT = 0; } return; }
+      checkVis(); checkSize();
+      if (!G.paused || dirty) wake();
     }
     function setPaused(v) {
       if (!G || G.mode === 'ending') return;
       v = !!v; if (v === G.paused) return;
-      G.paused = v; autoPaused = false; sfx.pause();
+      G.paused = v; autoPaused = false; dirty = true; sfx.pause();
+      if (!v) wake();
+    }
+    function resumeFromUser() {                                             // they came back: on a phone that means the full screen again
+      if (!G || finished) return;
+      if (released) { if ((window.innerWidth || 1024) < 700 && G.mode !== 'ending') setFixed(true); else { released = false; layout(); } }
+      setPaused(false); wake();
     }
     function checkVis() {                                                   // a game nobody is looking at should not run
-      if (!G || G.mode === 'ending') return;
+      if (!G) return;
       var gone = !!document.hidden;
       if (!gone && !fixedOn && api.root && api.root.getBoundingClientRect) {
         var r = api.root.getBoundingClientRect(), vh = window.innerHeight || 800;
         var vis = Math.min(r.bottom, vh) - Math.max(r.top, 0);
         gone = vis < Math.min(r.height, vh) * 0.35;
       }
-      if (gone && !G.paused) { G.paused = true; autoPaused = true; }
-      else if (!gone && G.paused && autoPaused) { G.paused = false; autoPaused = false; }
+      offScreen = gone;
+      if (gone && !G.paused) { G.paused = true; autoPaused = true; dirty = true; onBlur(); }   // let go of any held key: the reader has the page now
+      else if (!gone && G.paused && autoPaused) { G.paused = false; autoPaused = false; dirty = true; wake(); }
     }
 
     /* ------------------------------------------------------------ input */
     var MOVEK = { ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r', ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd' };
     var FIREK = { KeyZ: 1, Space: 1, KeyJ: 1 }, BOMBK = { KeyX: 1, KeyK: 1, KeyB: 1 };
+    function grabbing() {                                                   // only swallow keys while the shooter really has the screen
+      return !!(self.active && G && !released && !finished && !offScreen);
+    }
     function onKey(e) {
-      if (!self.active || !G) return;
+      if (!grabbing()) return;
       var t = e.target;
       if (t && t.tagName && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
       var down = e.type === 'keydown', c = e.code, used = true;
@@ -1092,10 +1188,10 @@
       else if (FIREK[c]) { keys.fire = down; if (down && !e.repeat) firePressed(); }
       else if (BOMBK[c]) { if (down && !e.repeat && !G.paused) useBomb(); }
       else if (c === 'ShiftLeft' || c === 'ShiftRight') keys.focus = down;
-      else if (c === 'KeyP' || c === 'Escape') { if (down && !e.repeat) { if (G.mode === 'continue' || G.mode === 'gameover') doContinue(); else setPaused(!G.paused); } }
+      else if (c === 'KeyP' || c === 'Escape') { if (down && !e.repeat) { if (G.mode === 'continue' || G.mode === 'gameover') doContinue(); else if (G.paused) resumeFromUser(); else setPaused(true); } }
       else if (c === 'KeyM') { if (down && !e.repeat) toggleMusic(); }
       else used = false;
-      if (used) { e.preventDefault(); }                                     // the page must not scroll under the shooter
+      if (used) { e.preventDefault(); wake(); }                             // the page must not scroll under the shooter
     }
     function firePressed() {
       if (G.mode === 'continue' || G.mode === 'gameover') { doContinue(); return; }
@@ -1111,13 +1207,15 @@
       } catch (e) {}
     }
     function ptDown(e) {
-      if (!self.active || !G) return;
+      if (!self.active || !G || finished) return;
       var t = e.target;
       if (t !== scr && t !== overlay) return;                               // the buttons and the ending screen look after themselves
       e.preventDefault();
       try { scr.focus(); } catch (err) {}
       if (G.mode === 'ending') return;
-      if (G.paused) { setPaused(false); return; }
+      wake();
+      if (G.paused) { resumeFromUser(); return; }
+      if (released) resumeFromUser();                                       // a deliberate tap on the game takes the screen back
       if (G.mode === 'continue' || G.mode === 'gameover') { doContinue(); return; }
       if (touch.id === -1) {
         touch.id = e.pointerId; touch.on = true; touch.lx = e.clientX; touch.ly = e.clientY; touch.t0 = nowSec(); touch.count = 1;
@@ -1125,7 +1223,7 @@
       } else { touch.count++; useBomb(); }                                  // second finger down: bomb
     }
     function ptMove(e) {
-      if (!self.active || !G || e.pointerId !== touch.id) return;
+      if (!self.active || !G || finished || e.pointerId !== touch.id) return;
       var k = pfW > 0 ? (W * dpr / pfW) : 1;
       if (G.mode === 'play' && P.dead <= 0) {
         P.x = clamp(P.x + (e.clientX - touch.lx) * k, 9, W - 9);
@@ -1139,14 +1237,19 @@
       touch.id = -1; touch.on = false; touch.count = 0;
     }
     function onBlur() { keys.l = keys.r = keys.u = keys.d = keys.fire = keys.focus = false; touch.on = false; touch.id = -1; touch.count = 0; }
-    function onVis() { if (document.hidden) { onBlur(); if (G && !G.paused && G.mode !== 'ending') { G.paused = true; autoPaused = true; } } lastT = 0; }
-    function onResize() { layout(); }
+    function onVis() {
+      if (document.hidden) { onBlur(); saveHi(); if (G && !G.paused) { G.paused = true; autoPaused = true; dirty = true; } }
+      else { checkVis(); wake(); }
+      lastT = 0;
+    }
+    function onLeave() { saveHi(); }
+    function onResize() { layout(); dirty = true; wake(); }
     function onScroll() { checkVis(); }                                     // scrolled away mid-fight? pause at once, do not wait for a frame
 
     function listen(on) {
       var m = on ? 'addEventListener' : 'removeEventListener';
       window[m]('keydown', onKey, true); window[m]('keyup', onKey, true);
-      window[m]('blur', onBlur); window[m]('resize', onResize); window[m]('orientationchange', onResize);
+      window[m]('blur', onBlur); window[m]('resize', onResize); window[m]('orientationchange', onResize); window[m]('pagehide', onLeave);
       window[m]('scroll', onScroll, { passive: true });
       window[m]('pointermove', ptMove, { passive: false }); window[m]('pointerup', ptUp); window[m]('pointercancel', ptUp);
       document[m]('visibilitychange', onVis);
@@ -1157,15 +1260,15 @@
     /* ------------------------------------------------------------ test hooks: ?shmupstage=2|mid|boss|ending  ?shmupgod=1 */
     function applyJump() {
       if (!JUMP) return;
-      if (JUMP === '2') { G.stage = 2; G.script = STAGE2; G.si = 0; G.st = 0; G.level = 2; G.speed = 1; }
+      if (JUMP === '2') { G.stage = 2; G.script = STAGE2; G.si = 0; G.st = 0; G.level = 2; G.speed = 2; }
       else if (JUMP === 'mid') {
-        G.st = 59.9; G.si = 0; G.level = 3; G.speed = 1;
+        G.st = 59.9; G.si = 0; G.level = 3; G.speed = 2;
         while (G.si < STAGE1.length && STAGE1[G.si][0] <= G.st) G.si++;
       } else if (JUMP === 'boss') {
-        G.stage = 2; G.script = STAGE2; G.si = STAGE2.length; G.st = 0; G.level = 4; G.speed = 2; G.bombs = 3;
+        G.stage = 2; G.script = STAGE2; G.si = STAGE2.length; G.st = 0; G.level = 4; G.speed = 3; G.bombs = 3;
         G.hold = true; G.warnT = 4.4; sfx.klaxon(); api.music('silence');
       } else if (JUMP === 'ending') {
-        G.score = 1284730; G.hi = Math.max(G.hi, G.score); G.maxChain = 412; G.cites = 933; G.continues = 2; G.stage = 2;
+        G.score = 1284730; G.hi = Math.max(G.hi, G.score); G.maxChain = 412; G.cites = 933; G.continues = 2; G.stage = 2; G.level = 4; G.speed = 3;
         showEnding();
       }
     }
@@ -1174,7 +1277,7 @@
     function start(opts) {
       if (self.active) return;
       try {
-        crashed = false; released = false; autoPaused = false;
+        crashed = false; released = false; finished = false; autoPaused = false; offScreen = false; dirty = true;
         if (!spritesBuilt) { buildSprites(); spritesBuilt = true; }
         audioInit();
         buildDom();
@@ -1194,16 +1297,18 @@
     }
     function stop() {
       self.active = false;
+      saveHi();
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (idleT) { clearInterval(idleT); idleT = 0; }
       listen(false);
       applyFixed(false);
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
-      overlay = styleEl = scr = sx = g = endEl = bombBtn = pauseBtn = null;
+      overlay = styleEl = scr = sx = g = endEl = bombBtn = pauseBtn = exitBtn = null;
       try { if (out) out.disconnect(); } catch (e) {}
       out = null; gates = {};                                               // the AudioContext belongs to the host: never close it
       try { clearPools(); } catch (e) {}
-      G = null; tgtName = ''; tgtLines = null; sayKey = ''; sayPanel = null; released = false;
+      G = null; tgtName = ''; tgtLines = null; sayKey = ''; sayPanel = null; released = false; finished = false; dirty = true;
     }
 
     return self;
