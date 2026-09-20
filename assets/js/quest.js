@@ -415,8 +415,11 @@
   var hudAcc = root.querySelector('[data-hud="accepted"]'), cross = root.querySelector('.q-cross');
   // ---- endgame state + test hooks (?endgame=1 ?bosshp=5 ?skipintro=1 ?god=1 ?shmup=1 ?timescale=4)
   function qp(name, dflt) { var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : dflt; }
-  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)) };
+  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)) };
   var endgame = false, pendingEndgame = false, boss = null, shmup = null;
+  // the fountain hides a secret level; its prize is extra hearts for the boss
+  var cave = null, caveOn = false, caveTaken = false;
+  try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
   var fireRate = 0.32, shotSpeed = 30, shotGrav = 9, fireHeld = false, hurtCool = 0, envLocked = false, hudOn = true, shakeAmp = 0, shakeT = 0, shakeDur = 1;
 
   /* ------------------------------------------------------------ input */
@@ -468,6 +471,7 @@
     if (running) return;
     running = true; start.hidden = true; el.focus(); blip(440, .06);
     if (window.Riff && musicWanted) { try { Riff.play('quest'); } catch (e) {} }
+    if (PARAMS.cave) { setTimeout(enterCave, 300); return; }
     if (PARAMS.shmup) { setTimeout(launchShmup, 300); return; }
     if (PARAMS.endgame) { setTimeout(startEndgame, 300); return; }
     // a returning player who already holds every fact goes straight to the reckoning
@@ -1157,6 +1161,9 @@
       camera.rotation.z += (Math.random() - 0.5) * sa * 0.04;
     }
 
+    if (cave && !caveOn && !endgame && !over && !dialogOpen &&
+        player.position.x * player.position.x + player.position.z * player.position.z < 18.5) enterCave();
+
     // prompt
     var near = nearbyTarget();
     if (fp && near && near.kind === 'baddie') near = null;
@@ -1192,6 +1199,7 @@
       if (name === 'boss') { R.setDread(1); if (R.boss) R.boss(true); if (musicWanted && !R.playing) R.play('quest'); return; }
       if (name === 'space') { if (R.boss) R.boss(false); if (musicWanted) R.play('space'); return; }
       if (name === 'quest') { if (R.boss) R.boss(false); if (musicWanted) R.play('quest'); return; }
+      if (name === 'cave') { if (R.boss) R.boss(false); if (musicWanted && R.play) R.play('cave'); return; }
     } catch (e) { console.error(e); }
   }
   var api = {
@@ -1214,10 +1222,11 @@
     params: PARAMS,
     links: { publications: '/publications/', research: '/research/', code: '/code/', scholar: 'https://scholar.google.com/citations?user=-OiUY4kAAAAJ&hl=en', email: 'mailto:duncan.palmer@stats.ox.ac.uk' },
     onBossDefeated: function () { launchShmup(); },
-    restart: function () { try { localStorage.removeItem('quest.found'); } catch (e) {} location.hash = '#play'; location.reload(); }
+    restart: function () { try { localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); } catch (e) {} location.hash = '#play'; location.reload(); }
   };
   try { boss = window.QuestBoss ? window.QuestBoss(api) : null; } catch (e) { console.error(e); boss = null; }
   try { shmup = window.QuestShmup ? window.QuestShmup(api) : null; } catch (e) { console.error(e); shmup = null; }
+  try { cave = window.QuestCave ? window.QuestCave(api) : null; } catch (e) { console.error(e); cave = null; }
 
   function startEndgame() {
     if (endgame) return;
@@ -1247,6 +1256,32 @@
     setHud(false); root.classList.add('is-space');
     try { shmup.start({}); } catch (e) { console.error(e); }
   }
+  function enterCave() {
+    if (!cave || caveOn || endgame || over) return;
+    caveOn = true;
+    if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
+    fireHeld = false; for (var ck in keys) keys[ck] = false;
+    setHud(false); root.classList.add('is-space');
+    try { cave.start({ onDone: leaveCave }); } catch (e) { console.error(e); caveOn = false; setHud(true); root.classList.remove('is-space'); }
+  }
+  function leaveCave(res) {
+    if (!caveOn) return;
+    caveOn = false;
+    try { cave.stop(); } catch (e) {}
+    root.classList.remove('is-space'); setHud(true);
+    api.teleport(0, 7);                                   // climbs out at the fountain's edge, clear of the trigger
+    var got = res && res.hearts ? res.hearts | 0 : 0;
+    if (got > 0 && !caveTaken) {
+      caveTaken = true; MAX_HITS += got; drawHearts();
+      if (hudHitsWrap) hudHitsWrap.hidden = false;
+      try { localStorage.setItem('quest.cave', JSON.stringify({ hearts: got, credits: res.credits | 0 })); } catch (e) {}
+      showToast('CLOUD COMPUTE SECURED  ·  +' + got + (got > 1 ? ' HEARTS' : ' HEART'));
+    } else if (!caveTaken) {
+      showToast('THE UNDERSPEND WAS CLAWED BACK.');
+    }
+    try { music('quest'); } catch (e) {}
+  }
+
   var resetLink = document.querySelector('[data-quest-reset]');
   if (resetLink) resetLink.addEventListener('click', function (e) { e.preventDefault(); api.restart(); });
 
@@ -1261,7 +1296,7 @@
     requestAnimationFrame(loop);
     var dt = Math.min(0.05, clock.getDelta()) * PARAMS.timescale;
     checkVisible();
-    if (shmup && shmup.active) return;          // the 2D shooter has the screen; stop paying for WebGL
+    if ((shmup && shmup.active) || (cave && cave.active)) return;   // a 2D overlay has the screen; stop paying for WebGL
     if (!visible && rendered++ > 2) return;
     if (running) update(dt); else { camYaw += dt * 0.15; update(0); }
     renderer.render(scene, camera);
