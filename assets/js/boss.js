@@ -33,7 +33,7 @@
     function angDiff(a, b) { var d = a - b; return Math.atan2(Math.sin(d), Math.cos(d)); }
     function guard(fn) { try { return fn(); } catch (e) { if (window.console) console.error(e); } }
     function say(fn, arg) { try { api[fn](arg); } catch (e) {} }
-    var V1 = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3(), Q1 = new THREE.Quaternion();
+    var V1 = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3(), V4 = new THREE.Vector3(), Q1 = new THREE.Quaternion();
 
     /* ------------------------------------------------------------ sfx (all synthesised) */
     var sfxBus = null, sfxComp = null, noiseBuf = null, liveSfx = [], sfxGate = {};
@@ -118,7 +118,7 @@
       '.qb-card{position:absolute;inset:0;z-index:8;background:#010504;cursor:pointer;overflow:hidden;transform-origin:50% 50%}',
       '.qb-card canvas{width:100%;height:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges}',
       '.qb-card.is-off{transition:transform .2s ease-in,filter .2s;transform:scale(1,.004);filter:brightness(4)}',
-      '.qb-hp{position:absolute;left:50%;bottom:1.1rem;transform:translateX(-50%);width:min(72%,760px);z-index:3;pointer-events:none;font-family:' + FONT + ';color:#e8e2d0;opacity:0;transition:opacity .9s,bottom .25s}',
+      '.qb-hp{position:absolute;left:50%;bottom:1.1rem;transform:translateX(-50%);width:min(72%,760px);z-index:5;pointer-events:none;font-family:' + FONT + ';color:#e8e2d0;opacity:0;transition:opacity .9s,bottom .25s}',
       '.qb-hp.is-on{opacity:1}.qb-hp.is-up{bottom:9.2rem}',
       '.qb-hp__row{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;font-size:.62rem;letter-spacing:.08em;text-shadow:2px 2px 0 #000;margin-bottom:.45rem}',
       '.qb-hp__h{font-size:.5rem;color:#fcd34d;white-space:nowrap}',
@@ -126,15 +126,28 @@
       '.qb-hp__bar i{position:absolute;left:0;top:0;bottom:0;width:100%}',
       '.qb-hp__ghost{background:#e9c341}.qb-hp__fill{background:linear-gradient(#d0222f,#7a0d16)}',
       '.qb-hp.is-hit .qb-hp__fill{background:#fff}',
-      '@media (hover:none),(max-width:700px){.qb-hp,.qb-hp.is-up{bottom:auto;top:5.8rem;width:80%}.qb-hp__row{font-size:.45rem}.qb-hp__h{font-size:.4rem}.qb-hp__bar{height:7px}}',
       '.qb-banner{position:absolute;left:0;right:0;top:46%;transform:translateY(-50%);z-index:5;pointer-events:none;text-align:center;padding:1.4rem 0 1.2rem;font-family:' + FONT + ';font-size:clamp(.8rem,3.4vw,2.3rem);letter-spacing:.14em;color:#f3d469;text-shadow:3px 3px 0 #000,0 0 26px rgba(243,212,105,.65);background:linear-gradient(90deg,rgba(0,0,0,0),rgba(0,0,0,.8) 16%,rgba(0,0,0,.8) 84%,rgba(0,0,0,0));opacity:0}',
       '.qb-banner small{display:block;margin-top:1rem;font-size:.32em;color:#e8e2d0;letter-spacing:.22em;text-shadow:2px 2px 0 #000}',
       '.qb-count{position:absolute;inset:0;z-index:5;display:grid;place-items:center;pointer-events:none;font-family:' + FONT + ';font-size:clamp(3rem,14vw,9rem);color:#fff;text-shadow:6px 6px 0 #000,0 0 40px rgba(255,120,40,.8)}',
-      '.qb-cap{position:absolute;left:0;right:0;bottom:4.4rem;z-index:5;text-align:center;pointer-events:none;font-family:' + FONT + ';font-size:clamp(.45rem,1.3vw,.7rem);letter-spacing:.1em;color:#fff;text-shadow:2px 2px 0 #000}',
+      '.qb-cap{position:absolute;left:0;right:0;bottom:4.4rem;z-index:7;text-align:center;pointer-events:none;font-family:' + FONT + ';font-size:clamp(.45rem,1.3vw,.7rem);letter-spacing:.1em;color:#fff;text-shadow:2px 2px 0 #000}',
       '.qb-cap small{display:block;margin-top:.55rem;font-size:.8em;opacity:.7}',
-      '@media (hover:none),(max-width:700px){.qb-cap{bottom:1.1rem;padding:0 5.2rem}}',
-      '.qb-flash{position:absolute;inset:0;z-index:12;background:#fff;opacity:0;pointer-events:none}'
+      '.qb-flash{position:absolute;inset:0;z-index:12;background:#fff;opacity:0;pointer-events:none}',
+      // The blast-off is a cinematic: the host hides its HUD for it but not the touch pad, which is its own layer.
+      '.qb-cine .q-pad,.qb-cine .q-act{display:none!important}',
+      // Touch layout, last so it wins. A phone view is only about 260 px tall: the quest HUD ends around y 46
+      // and the d-pad starts around y 105, so the bar and the attack caption have to live inside that band, and
+      // the host toast is moved into the clear corner above the A/B buttons instead of sitting on the H-INDEX.
+      '@media (hover:none),(max-width:700px){',
+      '.qb-hp,.qb-hp.is-up{bottom:auto;top:4.25rem;width:92%;z-index:6}',
+      '.qb-hp__row{font-size:.42rem;gap:.5rem;margin-bottom:.15rem}.qb-hp__h{font-size:.36rem}.qb-hp__bar{height:5px}',
+      '.qb-cap{top:5.5rem;bottom:auto;padding:0 .5rem;font-size:.4rem;line-height:1.2}',
+      '.qb-cap small{display:none}',
+      '.qb-on .q-toast{top:6.3rem;left:auto;right:.6rem;transform:none;max-width:52%;font-size:.42rem;line-height:1.6;padding:.35rem .5rem}',
+      // the blast-off takes the pad away, so the caption gets the room back and keeps its skip hint
+      '.qb-cine .qb-cap{top:auto;bottom:2.4rem;font-size:.5rem}.qb-cine .qb-cap small{display:block;margin-top:.45rem}',
+      '}'
     ].join('\n');
+    function rootClass(name, on) { guard(function () { if (api.root && api.root.classList) api.root.classList.toggle(name, !!on); }); }
     function el(tag, cls, html) { var e = document.createElement(tag); e.className = cls; if (html) e.innerHTML = html; api.view.appendChild(e); return e; }
     function rm(name) { var e = dom[name]; if (e && e.parentNode) e.parentNode.removeChild(e); dom[name] = null; }
     function ensureStyle() {
@@ -375,10 +388,22 @@
       var i = api.colliders.indexOf(bossCol); if (i >= 0) api.colliders.splice(i, 1);
       boss = null;
     }
-    var bossCol = { x: 0, z: 0, r: COL_R };
+    /* The boss blocks the player, but it must NOT go into api.colliders: the host tests every live rebuttal
+       against that list by its end point alone (quest.js updateShots), so a 3.4-unit circle round the boss
+       swallows shots in the very frame they would have reached the H-INDEX - the badge sits inside it whenever
+       the rig leans back. We keep the boss solid ourselves instead, by pushing the player out each frame. */
+    var bossCol = { x: 0, z: 0, r: COL_R }, bossSolid = false;
     function setBossCollider(on) {
-      var i = api.colliders.indexOf(bossCol);
-      if (on && i < 0) api.colliders.push(bossCol); else if (!on && i >= 0) api.colliders.splice(i, 1);
+      bossSolid = !!on;
+      var i = api.colliders.indexOf(bossCol); if (i >= 0) api.colliders.splice(i, 1);
+    }
+    function pushPlayerOut() {
+      if (!bossSolid || !boss || boss.exploded || self.cinematic) return;
+      var p = api.player.position, dx = p.x - bossCol.x, dz = p.z - bossCol.z, d = Math.hypot(dx, dz);
+      if (d >= COL_R) return;
+      if (d < 1e-3) { dx = Math.sin(boss.yaw); dz = Math.cos(boss.yaw); d = 1; }
+      var nx = bossCol.x + dx / d * COL_R, nz = bossCol.z + dz / d * COL_R;
+      if (!api.collide(nx, nz, 0.5)) { p.x = nx; p.z = nz; }
     }
 
     /* ------------------------------------------------------------ particles: one unit box, a handful of shared materials */
@@ -458,8 +483,11 @@
       var grp = p.group; if (!grp || p.__burst) return; p.__burst = true;
       dropCollider(p.collider); if (p.marker) p.marker.visible = false;
       (p.bushes || []).forEach(function (b) { b.scale.set(1.25, 0.14, 1.25); b.position.y = 0.08; });
-      var d0 = Math.hypot(p.x, p.z) || 1, rx = p.x / d0, rz = p.z / d0, wallMat = null, roofMat = null;
+      var d0 = Math.hypot(p.x, p.z) || 1, rx = p.x / d0, rz = p.z / d0, wallMat = null, roofMat = null, use = {};
       grp.children.forEach(function (c) { var P = c.geometry && c.geometry.parameters; if (c.geometry && c.geometry.type === 'ConeGeometry') roofMat = c.material; else if (P && P.width === p.w && P.height === p.h && P.depth === p.d) wallMat = c.material; });
+      // How many children share each material. The host gives every pane of a building ONE winMat (and keeps
+      // writing to it in applyDread), so anything used more than once here is not ours to retire.
+      grp.children.forEach(function (c) { if (c.material && c.material.uuid) use[c.material.uuid] = (use[c.material.uuid] || 0) + 1; });
       wallMat = wallMat || api.flat(p.wall); roofMat = roofMat || api.flat(p.roof);
       function fling(m, r, ownGeo, ownMat) {
         var lx = m.position.x - p.x, lz = m.position.z - p.z, ll = Math.hypot(lx, lz) || 1, out = rand(7, 15);
@@ -470,8 +498,12 @@
         if (isBox && ((P.height === 0.3 && c.position.y === 0.15) || (P.height === 0.2 && c.position.y === 0.1))) return;   // plinth and steps survive as the foundation
         grp.remove(c);
         var isBody = c.material === wallMat && isBox && P.width === p.w, shared = c.material === wallMat || c.material === roofMat;
+        // ours to retire only if nothing else in the building still renders it AND the host is not still driving
+        // it: every glowing material here (the window panes) lives in quest.js's winMats and applyDread writes
+        // to it for the rest of the session, shared between every pane of the building.
+        var mine = !shared && !!c.material && use[c.material.uuid] === 1 && !(c.material.emissive && c.material.emissive.getHex() !== 0);
         var vol = isBox ? P.width * P.height * P.depth : 1, tiny = (isBox && (vol < 0.2 || P.width === 1.25)) || (g && g.type === 'SphereGeometry');
-        if (isBody || tiny || instant) { if (g && !c.isSprite) g.dispose(); if (!shared && c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }
+        if (isBody || tiny || instant) { if (g && !c.isSprite) g.dispose(); if (mine) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }
         if (isBody && !instant) {
           var nx = clamp(Math.round(p.w / 3.5), 2, 4), ny = clamp(Math.round(p.h / 3), 2, 3), nz = clamp(Math.round(p.d / 3.5), 2, 3), cw = p.w / nx, ch = p.h / ny, cd = p.d / nz;
           var cg = new THREE.BoxGeometry(cw * 0.95, ch * 0.95, cd * 0.95); town.geos.push(cg);
@@ -481,7 +513,7 @@
           }
         } else if (!isBody && !tiny && !instant) {
           c.position.x += p.x; c.position.z += p.z; scene.add(c);
-          fling(c, isBox ? Math.min(P.width, P.height, P.depth) * 0.5 : 0.6, true, !shared);
+          fling(c, isBox ? Math.min(P.width, P.height, P.depth) * 0.5 : 0.6, true, mine);
         }
       });
       // low rubble where it stood: walk-over, shoot-over, no colliders
@@ -574,7 +606,8 @@
       town.geos.forEach(function (g) { g.dispose(); }); town.geos.length = 0;
     }
     /* ------------------------------------------------------------ sequencer state, skipping, banners */
-    var phase = '', pT = 0, total = 0, maxHp = 100, fired = false, env = null;
+    var phase = '', pT = 0, total = 0, maxHp = 100, fired = false, env = null, musicOn = false;
+    function music(name) { musicOn = (name === 'boss'); say('music', name); }
     var omen = null, out = null, F = null;
     function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     function setPhase(name) { phase = name; pT = 0; guard(function () { enterPhase(name); }); }
@@ -873,7 +906,7 @@
       null,
       { idle: 2.00, wind: 0.95, rec: 1.50, open: 0.50, orbs: 4, orbSpd: 15.0, rain: 5, rings: 1, walk: 3.2, turn: 1.05, spread: 0.22, gap: 0.15 },
       { idle: 1.25, wind: 0.85, rec: 1.15, open: 0.60, orbs: 6, orbSpd: 16.5, rain: 7, rings: 2, walk: 3.8, turn: 1.35, spread: 0.26, gap: 0.13 },
-      { idle: 0.85, wind: 0.75, rec: 0.90, open: 0.70, orbs: 8, orbSpd: 18.0, rain: 9, rings: 2, walk: 4.4, turn: 1.70, spread: 0.32, gap: 0.12 }
+      { idle: 1.00, wind: 0.75, rec: 0.90, open: 0.70, orbs: 8, orbSpd: 18.0, rain: 9, rings: 2, walk: 4.4, turn: 1.70, spread: 0.32, gap: 0.12 }
     ];
     var ATTACK_CAP = {
       volley: ['MAJOR REVISIONS', 'point by point, at speed'],
@@ -884,7 +917,7 @@
     var BODY_LINES = ['NO EFFECT. AIM FOR THE H-INDEX.', 'TENURE ABSORBS IT. AIM FOR THE H-INDEX.', 'THE H-INDEX. NOTHING ELSE COUNTS.'];
     var BLOCK_LINES = ['THE BOARD BLOCKS IT. WAIT FOR THE OPENING.', 'GUARDED. SHOOT WHEN IT WINDS UP.'];
     function fightInit() {
-      F = { mode: 'idle', t: 0, dur: 1.2, atk: 'volley', last: '', phase: 1, step: 0, sched: [], falls: [],
+      F = { mode: 'idle', t: 0, dur: 1.2, atk: 'volley', last: '', combo: null, phase: 1, step: 0, sched: [], falls: [],
             bodyHits: 0, taught: 0, blocked: 0, blockTaught: 0, ghost: 1, hitFlash: 0,
             px: api.player.position.x, pz: api.player.position.z, pvx: 0, pvz: 0, ann: -9 };
       if (boss) boss.guard = 1;
@@ -905,40 +938,57 @@
     }
     function penTip() { if (boss && boss.penTip) boss.penTip.getWorldPosition(V2); else V2.set(boss.x, 10, boss.z); return V2; }
 
+    var COMBO = { volley: 'stomp', stomp: 'rain', rain: 'volley', sweep: 'stomp' };
     function startAttack(name) {
       var P = PH[F.phase];
       F.atk = name; F.last = name; F.mode = 'windup'; F.t = 0; F.dur = Math.max(0.7, P.wind); F.step = 0; F.sched.length = 0;
-      var cap = ATTACK_CAP[name]; if (cap) showCap(cap[0], cap[1]);
+      F.combo = (F.phase >= 3 && Math.random() < 0.7) ? COMBO[name] : null;     // desperation: two patterns at once
+      var cap = ATTACK_CAP[name], cap2 = F.combo && ATTACK_CAP[F.combo];
+      if (cap) showCap(cap2 ? cap[0] + ' + ' + cap2[0] : cap[0], cap2 ? 'the editor has stopped being polite' : cap[1]);
       SFX.charge(F.dur);
       if (name === 'volley') setPose('volleyUp', 4.5);
       else if (name === 'stomp') { setPose(Math.random() < 0.5 ? 'stompUp' : 'stompUpL', 4.0); addRing(boss.x, boss.z, 1.0, 5.6, 7.4, false, 0xff3344); }
       else if (name === 'rain') setPose('rainUp', 4.0);
       else setPose('sweepBack', 4.0);
+      if (F.combo === 'stomp' && name !== 'stomp') addRing(boss.x, boss.z, 1.0, 5.6, 7.4, false, 0xff3344);   // the layered stomp gets its own tell
+    }
+    function schedFor(name, t0, out) {           // one pattern's shots, appended to `out`; returns when it ends
+      var P = PH[F.phase], p = api.player.position, i, a, r;
+      if (name === 'volley') {
+        for (i = 0; i < P.orbs; i++) out.push({ t: t0 + i * (0.5 / P.orbs), k: 'orb', a: P.orbs < 2 ? 0 : (i / (P.orbs - 1) - 0.5) * 2 * P.spread });
+        return t0 + 0.62;
+      }
+      if (name === 'stomp') {
+        for (i = 0; i < P.rings; i++) out.push({ t: t0 + 0.08 + i * 0.6, k: 'ring' });
+        return t0 + 0.85;
+      }
+      if (name === 'rain') {
+        for (i = 0; i < P.rain; i++) {
+          a = rand(0, 6.283); r = rand(0, 2.6 + i * 0.85);
+          out.push({ t: t0 + i * P.gap, k: 'mark', x: clamp(p.x + Math.cos(a) * r + F.pvx * 0.3, -ARENA_R, ARENA_R), z: clamp(p.z + Math.sin(a) * r + F.pvz * 0.3, -ARENA_R, ARENA_R) });
+        }
+        return t0 + P.rain * P.gap + 0.12;
+      }
+      // the sweep: an arc of manuscripts thrown along the ring the player is standing on, so it arrives at chest
+      // height there instead of sailing over his head. Step in or out of the ring and the whole arc misses.
+      var base = Math.atan2(p.x - boss.x, p.z - boss.z), sd = Math.random() < 0.5 ? 1 : -1;
+      var R = clamp(Math.hypot(p.x - boss.x, p.z - boss.z) + 0.5, 9, 40);
+      for (i = 0; i < 13; i++) out.push({ t: t0 + i * 0.08, k: 'fan', a: base + sd * (-0.85 + i * (1.7 / 12)), R: R });
+      return t0 + 1.15;
     }
     function fireAttack() {
-      var P = PH[F.phase], name = F.atk, i;
+      var name = F.atk;
       F.mode = 'fire'; F.t = 0; F.step = 0; F.sched.length = 0;
-      if (name === 'volley') {
-        F.dur = 0.62; setPose('volleyGo', 9);
-        for (i = 0; i < P.orbs; i++) F.sched.push({ t: i * (0.5 / P.orbs), k: 'orb', a: P.orbs < 2 ? 0 : (i / (P.orbs - 1) - 0.5) * 2 * P.spread });
-      } else if (name === 'stomp') {
-        F.dur = 0.85; setPose('stompDown', 14);
-        for (i = 0; i < P.rings; i++) F.sched.push({ t: 0.08 + i * 0.6, k: 'ring' });
-      } else if (name === 'rain') {
-        F.dur = P.rain * P.gap + 0.12; setPose('rainUp', 5);
-        var p = api.player.position;
-        for (i = 0; i < P.rain; i++) {
-          var a = rand(0, 6.283), r = rand(0, 2.6 + i * 0.85);
-          F.sched.push({ t: i * P.gap, k: 'mark', x: clamp(p.x + Math.cos(a) * r + F.pvx * 0.3, -ARENA_R, ARENA_R), z: clamp(p.z + Math.sin(a) * r + F.pvz * 0.3, -ARENA_R, ARENA_R) });
-        }
-      } else {
-        F.dur = 1.15; setPose('sweepGo', 7);
-        var base = Math.atan2(api.player.position.x - boss.x, api.player.position.z - boss.z), sd = Math.random() < 0.5 ? 1 : -1;
-        for (i = 0; i < 13; i++) F.sched.push({ t: i * 0.08, k: 'fan', a: base + sd * (-0.85 + i * (1.7 / 12)) });
-      }
+      if (name === 'volley') setPose('volleyGo', 9);
+      else if (name === 'stomp') setPose('stompDown', 14);
+      else if (name === 'rain') setPose('rainUp', 5);
+      else setPose('sweepGo', 7);
+      F.dur = schedFor(name, 0, F.sched);
+      if (F.combo) F.dur = Math.max(F.dur, schedFor(F.combo, 0.25, F.sched));
+      F.sched.sort(function (a, b) { return a.t - b.t; });
     }
     function runSchedule() {
-      var P = PH[F.phase], s, tip, tgt, ca, sa, dx, dz;
+      var P = PH[F.phase], s, tip, tgt, ca, sa, dx, dz, pp, R, ty, fl, gx, gz;
       while (F.step < F.sched.length && F.sched[F.step].t <= F.t) {
         s = F.sched[F.step++];
         if (s.k === 'orb') {
@@ -946,8 +996,12 @@
           ca = Math.cos(s.a); sa = Math.sin(s.a); dx = tgt.x - tip.x; dz = tgt.z - tip.z;
           shootOrb(tip.x, tip.y, tip.z, tip.x + dx * ca - dz * sa, tgt.y + rand(-0.3, 0.7), tip.z + dx * sa + dz * ca, P.orbSpd);
         } else if (s.k === 'fan') {
-          tip = penTip();
-          shootOrb(tip.x, tip.y, tip.z, boss.x + Math.sin(s.a) * 40, 1.75, boss.z + Math.cos(s.a) * 40, 14.5);
+          tip = penTip(); pp = api.player.position;
+          R = s.R || clamp(Math.hypot(pp.x - boss.x, pp.z - boss.z) + 0.5, 9, 40);
+          ty = pp.y + 1.35;
+          gx = boss.x + Math.sin(s.a) * R; gz = boss.z + Math.cos(s.a) * R;
+          fl = Math.hypot(Math.hypot(gx - tip.x, gz - tip.z), tip.y - ty) / 14.5;   // from the PEN, not the boss's axis
+          shootOrb(tip.x, tip.y, tip.z, gx, ty + 0.4 * fl * fl, gz, 14.5);          // lobbed: p.grav is 0.8
         } else if (s.k === 'ring') {
           api.shake(1.1, 0.45); SFX.thud(0.95);
           burst('dust', boss.x, 0.4, boss.z, 10, { spd: 16, up: 5, life: 1.2, s0: 0.6, s1: 2.6, drag: 1.6, jit: 2 });
@@ -1035,7 +1089,11 @@
       setHpBar(b.hp, maxHp, F.ghost);
       if (F.hitFlash > 0) { F.hitFlash -= h; if (F.hitFlash <= 0 && dom.hp) dom.hp.classList.remove('is-hit'); }
       if (F.badgeFlash > 0) { F.badgeFlash -= h; if (F.badgeFlash <= 0) drawBadge(b, b.hp, false); }
-      if (dom.hp && dom.dlg) dom.hp.classList.toggle('is-up', !dom.dlg.hidden);
+      // the opening caption waits for the editor to stop talking, so the two beats do not stack up
+      if (F.capMsg) {
+        F.capWait -= h;
+        if (F.capWait <= 0 || !dom.dlg || dom.dlg.hidden) { showCap(F.capMsg[0], F.capMsg[1]); F.capMsg = null; }
+      }
     }
     /* ------------------------------------------------------------ taking fire: a swept test, then the consequences
        The host hands us prev -> pos for every live rebuttal every frame. At 70 u/s and a timescaled frame that
@@ -1087,11 +1145,15 @@
       var bx = pos.x, by = pos.y, bz = pos.z, t, hx, hy, hz;
       // the H-INDEX first: its sphere sits inside the body, so the body must never shadow it
       boss.badge.getWorldPosition(V1);
+      boss.badge.getWorldQuaternion(Q1);
+      V4.set(0, 0, 1).applyQuaternion(Q1);                     // the badge's own forward normal, leans and all
       t = segSphere(ax, ay, az, bx, by, bz, V1.x, V1.y, V1.z, WEAK_R);
       if (t >= 0) {
         hx = lerp(ax, bx, t); hy = lerp(ay, by, t); hz = lerp(az, bz, t);
-        // ... and only from the front: you cannot shoot a man's h-index through his back
-        if ((hx - boss.x) * Math.sin(boss.yaw) + (hz - boss.z) * Math.cos(boss.yaw) > 0.9) {
+        // ... and only from the front: you cannot shoot a man's h-index through his back. Measured against the
+        // badge itself, never a fixed offset from the boss's axis - the rig rocks back when it roars and when it
+        // flinches, which used to swing the badge behind such a line and bounce perfectly aimed shots.
+        if ((hx - V1.x) * V4.x + (hy - V1.y) * V4.y + (hz - V1.z) * V4.z > -0.55) {
           if (boss.guard < 0.45) weakHit(hx, hy, hz); else blockHit(hx, hy, hz);
           return boss.guard < 0.45 ? 'weak' : 'body';
         }
@@ -1192,7 +1254,7 @@
       if (T >= 0.5 && !b.roared) { b.roared = true; setPose('roar', 4.5); SFX.roar(); }
       if (T >= 1.2 && !b.announced) {
         b.announced = true;
-        say('music', 'boss'); showHpBar(maxHp, maxHp);
+        music('boss'); showHpBar(maxHp, maxHp);
         bossSay('"Thank you for your submission. I have read it myself. Unfortunately."');
       }
       if (T >= LAND_LEN) { setPose('guard', 3); setBossCollider(true); setPhase('fight'); }
@@ -1273,6 +1335,7 @@
       self.cinematic = true;
       env = null; saveEnv();                       // fade out of the sky as it stands now, not as it was at start()
       say('setHud', false); say('lockEnvironment', true);
+      rootClass('qb-cine', true);                  // setHud() leaves the touch pad alone; the launch needs the screen
       prjClear(); if (F) F.falls.length = 0;
       var p = api.player.position;
       buildRocket(p.x, p.z);
@@ -1356,9 +1419,11 @@
 
     /* ------------------------------------------------------------ phases */
     function enterPhase(name) {
-      if (name === 'card') { openCard(); return; }
+      if (name === 'card') { self.cinematic = true; openCard(); return; }   // the host freezes him behind the dossier
       if (name === 'omen') {
-        killCard(); say('music', 'silence'); SFX.omen(OMEN_LEN); omenInit();
+        self.cinematic = false;                    // the card had the player frozen; he gets his legs back for the drop
+        if (dom.card) killCard();                  // a card that closed itself is left to finish its 0.26 s CRT collapse
+        music('silence'); SFX.omen(OMEN_LEN); omenInit();
         var p = api.player.position;
         if (Math.hypot(p.x, p.z) < 13) guard(function () { api.teleport(VANTAGE.x, VANTAGE.z); });
         showCap('THE EDITOR IS HANDLING THIS PERSONALLY', 'look up');
@@ -1390,11 +1455,13 @@
       if (name === 'fight') {
         if (!F) fightInit();
         if (boss) setBossCollider(true);
-        showCap('SHOOT THE H-INDEX', 'nothing else counts');
+        F.capMsg = ['SHOOT THE H-INDEX', 'nothing else counts']; F.capWait = 9.0;
         return;
       }
       if (name === 'death') {
         setBossCollider(false); prjClear();
+        music('silence');                          // the score drops out; the victory stinger lands on nothing
+        rootClass('qb-cine', true);                // and the touch pad gets off the banner and the blast-off
         if (F) { F.falls.length = 0; F.banner = false; }
         if (boss) { boss.guard = 0; setPose('dying', 2.2); boss.walking = 0; boss.hp = 0; }
         rm('cap');
@@ -1434,7 +1501,9 @@
         ensureStyle(); fxInit(); prjInit(); saveEnv();
         maxHp = Math.max(1, Math.min(9999, parseInt(opts.hp, 10) || 100));
         total = 0; pT = 0; fired = false; out = null; boss = null; F = null; phase = '';
-        self.active = true; self.cinematic = false;
+        self.active = true; self.cinematic = false; musicOn = false;
+        dom.dlg = api.root.querySelector('.q-dialog');
+        rootClass('qb-on', true); rootClass('qb-cine', false);
         window.addEventListener('keydown', onSkipKey, true);
         api.view.addEventListener('pointerdown', onSkip);
         if (opts.retry) {
@@ -1443,9 +1512,10 @@
           setPose('guard', 9); for (var k in boss.cur) boss.cur[k] = boss.tgt[k];
           boss.yaw = Math.atan2(api.player.position.x, api.player.position.z);
           fightInit();
-          say('music', 'boss'); showHpBar(maxHp, maxHp);
+          music('boss'); showHpBar(maxHp, maxHp);
           bossSay('"We received your revised manuscript. Our concerns remain."');
           setPhase('fight');
+          guard(function () { api.lookAt(boss.x, 9, boss.z); });   // the REJECTED! tilt left the camera in the rubble
         } else if (opts.skipIntro) setPhase('omen');
         else setPhase('card');
       });
@@ -1463,6 +1533,8 @@
       guard(killSfx);
       guard(restoreEnv);
       guard(function () { camera.rotation.z = 0; camera.up.set(0, 1, 0); });
+      rootClass('qb-on', false); rootClass('qb-cine', false);
+      if (musicOn) music('silence');               // never leave the boss layer grinding after we are gone
       say('setHud', true); say('lockEnvironment', false);
       self.active = false; self.cinematic = false;
       phase = ''; pT = 0; out = null; F = null; fired = false;
@@ -1472,7 +1544,8 @@
       var h = dt > 0.5 ? 0.5 : dt < 0 ? 0 : dt;
       total += h; pT += h;
       guard(function () {
-        fxStep(h); townStep(h); capStep(h);
+        fxStep(h); townStep(h); capStep(h); pushPlayerOut();
+        if (dom.hp && dom.dlg) dom.hp.classList.toggle('is-up', !dom.dlg.hidden);   // every phase, not just the fight
         if (boss) { if (!boss.exploded) applyPose(h, total); boss.g.updateMatrixWorld(true); }
         if (phase === 'card') { drawCard(pT); if (pT >= CARD_LEN) { closeCard(); setPhase('omen'); } return; }
         if (phase === 'omen') { omenStep(h, pT); if (pT >= OMEN_LEN) setPhase('drop'); return; }
