@@ -11,7 +11,9 @@
 
   window.QuestBoss = function (api) {
     var THREE = api.THREE, scene = api.scene, camera = api.camera;
-    var self = { active: false, cinematic: false, start: start, stop: stop, update: update, hitTest: hitTest };
+    // `ended` goes up the moment the H-INDEX hits zero: the host reads it to clear anything still in flight,
+    // so no plasma ball goes on glowing through MANUSCRIPT ACCEPTED.
+    var self = { active: false, cinematic: false, ended: false, start: start, stop: stop, update: update, hitTest: hitTest };
 
     /* ------------------------------------------------------------ constants */
     var S = 5.6;                        // model units (a 3.16-unit box man) → world: about 17.7 units tall
@@ -23,7 +25,13 @@
     var VANTAGE = { x: 4, z: 24 };
     var WAVE = 26;                      // landing shockwave speed (u/s): buildings burst as it reaches them
     var DEEP = { base: 70, wave: 'sawtooth', spread: 0.2 };
+    var SAGE_VOICE = { base: 172, wave: 'triangle', spread: 0.55 };
     var FONT = '"Press Start 2P", monospace';
+    /* The BFG the emeritus professor keeps in the rubble. It is a gift, not a cheat code: what it removes is
+       frustration, not the fight. The blast radius means you do not have to thread the badge, it goes straight
+       through the editorial board, and it lands like a bomb — but five off the H-INDEX is twenty good shots,
+       so the editor still gets his phases and you still have to keep out of the way while you take them. */
+    var BFG = { rate: 1.0, speed: 34, dmg: 5, bodyDmg: 1, R: 3.4 };
 
     /* ------------------------------------------------------------ utils */
     function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -106,6 +114,21 @@
       shatter: function () { for (var i = 0; i < 9; i++) tone({ f0: rand(1400, 4200), f1: rand(700, 1500), dur: rand(0.12, 0.4), type: 'triangle', gain: 0.07, delay: i * 0.035 }); noise({ f0: 6000, f1: 1500, dur: 0.6, type: 'highpass', gain: 0.14 }); },
       boom: function () { tone({ f0: 80, f1: 22, dur: 1.4, type: 'sine', gain: 0.6, attack: 0.005 }); keep(noise({ f0: 900, f1: 40, dur: 2.0, gain: 0.5 })); },
       count: function (go) { tone({ f0: go ? 880 : 440, dur: go ? 0.5 : 0.16, type: 'square', gain: 0.1 }); },
+      // the BFG landing on the H-INDEX: the ping the paper ball gets, an octave down and with a hole under it
+      plasma: function (k) {
+        var f = 330 * Math.pow(2, clamp(k, 0, 1) * 1.6);
+        tone({ f0: f, f1: f * 1.01, dur: 0.4, type: 'triangle', gain: 0.24 }); tone({ f0: f * 1.5, dur: 0.22, type: 'sine', gain: 0.1 });
+        tone({ f0: 150, f1: 34, dur: 0.75, type: 'sine', gain: 0.4, attack: 0.004 });
+        keep(noise({ f0: 2600, f1: 90, dur: 0.8, gain: 0.3 }));
+      },
+      blast: function () {
+        if (!gate('blast', 0.06)) return;
+        tone({ f0: 120, f1: 30, dur: 0.5, type: 'sine', gain: 0.3, attack: 0.004 }); noise({ f0: 1800, f1: 120, dur: 0.45, gain: 0.2 });
+      },
+      getItem: function () {                                   // the item-get: four notes and a held fifth
+        [523, 659, 784, 1047].forEach(function (f, i) { tone({ f0: f, dur: 0.16, type: 'square', gain: 0.11, delay: i * 0.11 }); });
+        tone({ f0: 1568, dur: 0.6, type: 'square', gain: 0.12, delay: 0.44 }); tone({ f0: 784, dur: 0.6, type: 'triangle', gain: 0.07, delay: 0.44 });
+      },
       rocket: function (dur) { keep(noise({ f0: 120, f1: 2400, dur: dur, gain: 0.5, attack: 1.2, hold: dur * 0.8 })); keep(tone({ f0: 45, f1: 160, dur: dur, type: 'sawtooth', gain: 0.18, attack: 1.0 })); },
       type: function () { if (gate('type', 0.045)) blipSafe(1320, 0.03, 'square'); }
     };
@@ -132,6 +155,18 @@
       '.qb-cap{position:absolute;left:0;right:0;bottom:4.4rem;z-index:7;text-align:center;pointer-events:none;font-family:' + FONT + ';font-size:clamp(.45rem,1.3vw,.7rem);letter-spacing:.1em;color:#fff;text-shadow:2px 2px 0 #000}',
       '.qb-cap small{display:block;margin-top:.55rem;font-size:.8em;opacity:.7}',
       '.qb-flash{position:absolute;inset:0;z-index:12;background:#fff;opacity:0;pointer-events:none}',
+      // the old man in the rubble: his floating prompt, which is also the tap target on a phone
+      '.qb-talk{position:absolute;z-index:7;transform:translate(-50%,-50%);padding:.45rem .62rem;border:2px solid #7cf9b0;background:rgba(3,22,13,.88);color:#dcffe9;font-family:' + FONT + ';font-size:.52rem;line-height:1;letter-spacing:.12em;text-shadow:2px 2px 0 #000;box-shadow:3px 3px 0 #000;white-space:nowrap;cursor:pointer;pointer-events:auto;-webkit-user-select:none;user-select:none;touch-action:manipulation;animation:qb-talkb 1s steps(2,end) infinite}',
+      '@keyframes qb-talkb{50%{border-color:#2f8a5c;color:#8fe9b6}}',
+      // Pinned instead of floating on a phone. A 390-wide view is 348x260: the d-pad owns x 35-177 / y 177-319
+      // and the A/B buttons x 231-355 / y 240-315, so a prompt that follows him lands squarely on UP. This
+      // corner - hard right, just above B - is the only hole big enough, and it stays tappable.
+      '.qb-talk.is-pin{left:auto!important;top:auto!important;right:.6rem;bottom:6.1rem;transform:none;font-size:.46rem;padding:.4rem .55rem;max-width:56%}',
+      // the off-screen pointer: he is behind you, and nothing else in a flattened town is that green
+      '.qb-ind{position:absolute;z-index:6;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:.24rem;pointer-events:none;padding:.3rem .42rem;background:rgba(3,22,13,.82);border:2px solid #2f8a5c;box-shadow:3px 3px 0 #000;font-family:' + FONT + ';font-size:.44rem;letter-spacing:.14em;color:#8fffc0;text-shadow:2px 2px 0 #000;white-space:nowrap;animation:qb-indb 1.1s steps(2,end) infinite}',
+      '.qb-ind i{display:block;width:0;height:0;border-left:.42rem solid transparent;border-right:.42rem solid transparent;border-bottom:.62rem solid #8fffc0;filter:drop-shadow(2px 2px 0 #000)}',
+      '@keyframes qb-indb{50%{opacity:.42}}',
+      '.qb-on.is-over .qb-talk,.qb-cine .qb-talk,.qb-on.is-over .qb-ind,.qb-cine .qb-ind{display:none!important}',
       // The blast-off is a cinematic: the host hides its HUD for it but not the touch pad, which is its own layer.
       '.qb-cine .q-pad,.qb-cine .q-act{display:none!important}',
       // Touch layout, last so it wins. A phone view is only about 260 px tall: the quest HUD ends around y 46
@@ -141,6 +176,11 @@
       '.qb-hp,.qb-hp.is-up{bottom:auto;top:4.25rem;width:92%;z-index:6}',
       '.qb-hp__row{font-size:.42rem;gap:.5rem;margin-bottom:.15rem}.qb-hp__h{font-size:.36rem}.qb-hp__bar{height:5px}',
       '.qb-cap{top:5.5rem;bottom:auto;padding:0 .5rem;font-size:.4rem;line-height:1.2}',
+      '.qb-talk{font-size:.46rem;padding:.5rem .6rem;letter-spacing:.1em}',
+      // a compass strip on a phone, not a stacked sign: the only clear band is the 19 px between the H-INDEX
+      // bar and the top of the d-pad, so it lies down on its side and keeps its own backing plate
+      '.qb-ind{flex-direction:row;gap:.24rem;font-size:.34rem;padding:.08rem .26rem;border-width:1px;box-shadow:2px 2px 0 #000;letter-spacing:.1em}',
+      '.qb-ind i{border-left-width:.22rem;border-right-width:.22rem;border-bottom-width:.36rem}',
       '.qb-cap small{display:none}',
       '.qb-on .q-toast{top:6.3rem;left:auto;right:.6rem;transform:none;max-width:52%;font-size:.42rem;line-height:1.6;padding:.35rem .5rem}',
       // the blast-off takes the pad away, so the caption gets the room back and keeps its skip hint
@@ -411,7 +451,7 @@
     function fxInit() {
       function basic(c) { return new THREE.MeshBasicMaterial({ color: c, fog: false }); }
       FX = { geo: new THREE.BoxGeometry(1, 1, 1), pool: [], live: [], cap: 230, made: 0,
-        mats: { dust: api.flat(0x8a7a66), smoke: api.flat(0x5a5560), soot: api.flat(0x2a262c), water: api.flat(0x7fb8f0), fire: basic(0xff8a2a), flame: basic(0xffe27a), spark: basic(0xfff2b0), gold: basic(0xfcd34d), red: basic(0xff3344), white: basic(0xffffff) } };
+        mats: { dust: api.flat(0x8a7a66), smoke: api.flat(0x5a5560), soot: api.flat(0x2a262c), water: api.flat(0x7fb8f0), fire: basic(0xff8a2a), flame: basic(0xffe27a), spark: basic(0xfff2b0), gold: basic(0xfcd34d), red: basic(0xff3344), white: basic(0xffffff), plasma: basic(0x5cff8a), plasmaDim: basic(0x18b551) } };
     }
     function fxSpawn(kind, x, y, z, vx, vy, vz, o) {
       if (!FX) return null;
@@ -605,6 +645,285 @@
       town.debris.forEach(freeDebris); town.debris.length = 0;
       town.geos.forEach(function (g) { g.dispose(); }); town.geos.length = 0;
     }
+    /* ------------------------------------------------------------ the professor emeritus
+       The old man in the cave, relocated to a flattened university town. He appears when the dust settles,
+       holds out a piece of decommissioned departmental equipment, and is entirely unbothered by the
+       seventeen-metre editor behind him. Take it or do not: the paper balls still work. */
+    var sage = null, gaveGun = false, VS = new THREE.Vector3();
+    var SAGE_TITLE = 'PROFESSOR EMERITUS';
+    var SAGE_LINE = "IT'S DANGEROUS TO GO ALONE! TAKE THIS.";
+    var SAGE_CODA = 'IT WAS COSTED INTO A 2011 EQUIPMENT GRANT. NOBODY EVER CAME TO COLLECT IT. DO TRY TO CITE ME.';
+    var SAGE_AGAIN = [
+      'ONE SHOT. ONE REBUTTAL. MIND THE RECOIL.',
+      'I AM EMERITUS. I NO LONGER ATTEND MEETINGS, AND I NO LONGER DIE.',
+      'AIM FOR THE H-INDEX. IT IS THE ONLY NUMBER HE HAS.',
+      'I REVIEWED FOR HIM ONCE. IN 1994. I AM STILL AWAITING A DECISION.'
+    ];
+    function glowTex() {
+      var c = document.createElement('canvas'); c.width = c.height = 64;
+      var x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 2, 32, 32, 32);
+      g.addColorStop(0, 'rgba(190,255,215,0.95)'); g.addColorStop(0.45, 'rgba(70,235,140,0.35)'); g.addColorStop(1, 'rgba(30,200,110,0)');
+      x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+      var t = new THREE.CanvasTexture(c); return t;
+    }
+    function buildGunProp(parent) {                    // the same box cannon the player ends up holding, held out flat
+      var g = new THREE.Group();
+      function lam(c) { var m = new THREE.MeshLambertMaterial({ color: c }); m.emissive = new THREE.Color(c).multiplyScalar(0.4); return m; }
+      function box(w, h, d, mat, x, y, z) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; }
+      var shell = lam(0x7c8c6e), shell2 = lam(0x566349), trim = lam(0xa9b69f), dark = lam(0x2b3327), copper = lam(0xc08a46);
+      box(0.3, 0.24, 0.78, shell, 0, 0, 0);
+      box(0.36, 0.07, 0.5, shell2, 0, 0.14, -0.06);
+      box(0.46, 0.38, 0.2, shell, 0, 0, -0.5);
+      box(0.5, 0.06, 0.23, trim, 0, 0.19, -0.5); box(0.5, 0.06, 0.23, trim, 0, -0.19, -0.5);
+      box(0.2, 0.2, 0.05, dark, 0, 0, -0.61);
+      var eyeMat = new THREE.MeshBasicMaterial({ color: 0x5cff8a, fog: false });
+      var eye = box(0.15, 0.15, 0.04, eyeMat, 0, 0, -0.64); eye.castShadow = false;
+      box(0.2, 0.2, 0.18, shell2, 0, 0, 0.44); box(0.12, 0.12, 0.07, copper, 0, 0, 0.55);
+      box(0.05, 0.06, 0.44, copper, 0.18, 0.07, 0.07); box(0.05, 0.06, 0.44, copper, -0.18, 0.07, 0.07);
+      if (parent) parent.add(g);
+      g.userData.eyeMat = eyeMat;
+      return g;
+    }
+    function buildSage(x, z) {
+      var man = null;
+      guard(function () { man = api.boxMan({ suit: 0x6f6148, hair: 0xf1ede2, tie: 0x7d2b33, glasses: true }); });
+      if (!man) return null;
+      var g = new THREE.Group(); g.add(man);
+      // the town is a burnt red silhouette by now; he is lit from inside so he reads as the one thing still alive
+      man.traverse(function (m) { if (m.material && m.material.emissive) m.material.emissive.copy(m.material.color).multiplyScalar(0.42); });
+      function lam(c, e) { var m = new THREE.MeshLambertMaterial({ color: c }); m.emissive = new THREE.Color(e === undefined ? c : e); if (e === undefined) m.emissive.multiplyScalar(0.42); return m; }
+      function box(w, h, d, mat, px, py, pz, parent) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(px, py, pz); m.castShadow = true; (parent || man).add(m); return m; }
+      var tweed = lam(0x5b4f39), tweed2 = lam(0x4a4030), white = lam(0xf1ede2), glass = lam(0xbfe6ff, 0x24343f), frame = lam(0x231c16), horn = lam(0xd8c7a0);
+      // ancient cardigan: two hanging front panels, a shawl collar, three buttons down the middle
+      box(0.28, 1.06, 0.1, tweed, -0.32, 1.35, 0.24); box(0.28, 1.06, 0.1, tweed, 0.32, 1.35, 0.24);
+      box(0.94, 0.16, 0.6, tweed2, 0, 1.86, 0.05);
+      var bt; for (bt = 0; bt < 3; bt++) box(0.07, 0.07, 0.05, horn, 0, 1.62 - bt * 0.3, 0.29);
+      box(0.96, 0.14, 0.56, tweed2, 0, 0.82, 0);                       // the hem, worn flat
+      [man.userData.la, man.userData.ra].forEach(function (arm) {      // elbow patches, of course
+        if (arm) { var p = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.3), tweed2); p.position.set(0, -0.52, 0); arm.add(p); }
+      });
+      // wild white hair: the standard block, plus tufts that have given up
+      box(0.24, 0.3, 0.5, white, -0.5, 2.6, -0.05).rotation.z = 0.5;
+      box(0.24, 0.3, 0.5, white, 0.5, 2.6, -0.05).rotation.z = -0.5;
+      box(0.5, 0.26, 0.26, white, 0.1, 2.86, -0.1).rotation.x = 0.4;
+      box(0.34, 0.3, 0.14, white, 0, 2.03, 0.36);                      // and a beard
+      // thick glasses: real bottle ends, over the host's thin ones
+      [-0.2, 0.2].forEach(function (ex) { box(0.3, 0.28, 0.12, glass, ex, 2.36, 0.46); box(0.34, 0.06, 0.14, frame, ex, 2.51, 0.46); box(0.34, 0.06, 0.14, frame, ex, 2.21, 0.46); });
+      box(0.16, 0.06, 0.1, frame, 0, 2.36, 0.48);
+      if (man.userData.la) man.userData.la.rotation.x = -1.28;
+      if (man.userData.ra) man.userData.ra.rotation.x = -1.28;
+      var gun = buildGunProp(g); gun.position.set(0, 1.62, 0.82); gun.rotation.y = Math.PI / 2; gun.rotation.z = 0.12;   // held out flat across both hands
+      // a soft glow on the ground so he reads across a flattened town, and a sign so you know he wants you
+      var glowMat = new THREE.MeshBasicMaterial({ map: glowTex(), transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      var glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glowMat); glow.rotation.x = -Math.PI / 2; glow.position.y = 0.07; glow.scale.setScalar(4.6); g.add(glow);
+      var aura = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glowMat); aura.position.set(0, 1.5, -0.4); aura.scale.setScalar(5.2); g.add(aura);
+      var lamp = new THREE.PointLight(0x9fffc8, 1.5, 11, 1.6); lamp.position.set(0, 1.9, 0.9); g.add(lamp);
+      var marker = null;
+      guard(function () { marker = api.labelSprite('OFFICE HOURS', '#0b2b1c', '#8fffc0'); });
+      if (marker) { marker.scale.set(4.6, 0.86, 1); marker.position.y = 4.6; g.add(marker); }
+      var arrowMat = new THREE.MeshBasicMaterial({ color: 0x8fffc0, fog: false });
+      var arrow = new THREE.Group();
+      var head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), arrowMat); head.rotation.z = Math.PI / 4; arrow.add(head);
+      var stem = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.42, 0.2), arrowMat); stem.position.y = 0.4; arrow.add(stem);
+      arrow.position.y = 3.8; g.add(arrow);
+      g.position.set(x, 0, z);
+      scene.add(g);
+      return { g: g, man: man, gun: gun, glow: glow, aura: aura, glowMat: glowMat, marker: marker, arrow: arrow, lamp: lamp,
+               eyeMat: gun.userData.eyeMat, x: x, z: z, yaw: 0, t: 0, talkCool: 0, again: 0, inRange: false, col: null, followT: null };
+    }
+    /* At the edge of vision, not behind you. The old version put him perpendicular to the player's bearing from
+       the town centre, which measured 84 degrees off the line to the editor: completely off screen, so nobody
+       ever found him. This one works off the firing line itself - the line from the player to the boss - and
+       lands him 35-40 degrees round it, which with a 55-degree vertical FOV is just inside the frame while you
+       are looking at the badge. Twelve to fifteen units out: close enough to walk to, far enough that the
+       editor's stride (it holds 13-22 units from the player, inside a 27-unit ring) never comes down on him. */
+    // 32 degrees. The view is 55 degrees vertical, so a phone in portrait has about 35 degrees of horizontal
+    // half-angle and a desktop about 39: at 32 he is inside the frame on both while you are sighting the badge.
+    var SAGE_OFF = 0.56;                 // opening out to 45 if every spot at that angle is taken
+    function sageSpot() {
+      var p = api.player.position;
+      var bx = boss ? boss.x : 0, bz = boss ? boss.z : 0;
+      var aim = Math.atan2(bx - p.x, bz - p.z);            // the firing line, as a yaw
+      var side = (p.x * bz - p.z * bx) >= 0 ? 1 : -1;      // prefer the side with more arena behind it
+      var k, sd, d, a, x, z;
+      for (k = 0; k < 8; k++) {
+        for (sd = 0; sd < 2; sd++) {
+          a = aim + (sd ? -side : side) * (SAGE_OFF + k * 0.033);
+          for (d = 12; d <= 15.1; d += 1.05) {
+            x = p.x + Math.sin(a) * d; z = p.z + Math.cos(a) * d;
+            if (Math.hypot(x, z) > ARENA_R - 5) continue;                  // inside the ring you are held in
+            if (Math.hypot(x - bx, z - bz) < 9.5) continue;                // out from under the editor
+            if (api.collide(x, z, 1.1)) continue;
+            return { x: x, z: z };
+          }
+        }
+      }
+      var fx = p.x + Math.sin(aim + side * SAGE_OFF) * 13, fz = p.z + Math.cos(aim + side * SAGE_OFF) * 13, s = null;
+      guard(function () { s = api.safeSpot(fx, fz); });
+      return s || { x: fx, z: fz };
+    }
+    function spawnSage() {
+      if (sage || gaveGun) return;
+      var s = sageSpot();
+      sage = buildSage(s.x, s.z);
+      if (!sage) return;
+      sage.yaw = Math.atan2(api.player.position.x - s.x, api.player.position.z - s.z);
+      sage.col = { x: s.x, z: s.z, r: 0.75 }; api.colliders.push(sage.col);
+      burst('dust', s.x, 0.6, s.z, 8, { spd: 4, up: 3, life: 1.3, s0: 0.5, s1: 2.0, drag: 1.8, jit: 0.8 });
+      tone({ f0: 660, dur: 0.14, type: 'triangle', gain: 0.08 }); tone({ f0: 990, dur: 0.22, type: 'triangle', gain: 0.07, delay: 0.12 });
+      say('showToast', 'SOMEBODY IS STILL STANDING IN THE RUBBLE');
+      sageCall(9);                       // and he shouts, so there is a direction to turn towards
+    }
+    // His voice with no caption attached: the Banjo-Kazooie burble, used as a sound cue when he turns up
+    // behind you. Wall-clock, like the coda, because it is a noise and not part of the simulation.
+    var callT = null;
+    function sageCall(n) {
+      if (callT) { clearInterval(callT); callT = null; }
+      var i = 0, N = n || 7, syl = 'hoaeimu';
+      callT = setInterval(function () {
+        if (!self.active || !sage) { clearInterval(callT); callT = null; return; }
+        guard(function () { api.speak(SAGE_VOICE, syl.charAt(i % syl.length)); });
+        if (++i >= N) { clearInterval(callT); callT = null; }
+      }, 95);
+    }
+    function callKill() { if (callT) { clearInterval(callT); callT = null; } }
+    function sageSay(text) { guard(function () { api.notice({ title: SAGE_TITLE, text: text, voice: SAGE_VOICE }); }); }
+    // isOver(): on the REJECTED! screen F and Space resubmit, and standing next to him must not eat that key
+    function sageReady() {
+      if (!sage || !sage.inRange || sage.talkCool > 0 || !self.active || phase !== 'fight' || self.cinematic) return false;
+      var over = false; guard(function () { over = api.isOver(); });
+      return !over;
+    }
+    /* The only thing worth swallowing a key press for is the gift itself. Once he has handed it over, F and the
+       A button go back to firing the weapon he just gave you - standing near an old man must never jam the gun -
+       and his remaining opinions are on the prompt, which you click or tap. */
+    function sageGift() { return !gaveGun && !!dom.talk && sageReady(); }
+    function giveGun() {
+      if (gaveGun) return;
+      gaveGun = true;
+      guard(function () { api.setWeapon({ kind: 'bfg', rate: BFG.rate, speed: BFG.speed, gravity: 0 }); });
+      var s = sage;
+      if (s) {
+        if (s.gun) s.gun.visible = false;
+        if (s.marker) s.marker.visible = false;
+        if (s.arrow) s.arrow.visible = false;
+        if (s.man && s.man.userData.la) s.man.userData.la.rotation.x = -0.25;
+        if (s.man && s.man.userData.ra) s.man.userData.ra.rotation.x = -0.25;
+        burst('plasma', s.x, 1.7, s.z, 18, { spd: 9, up: 8, life: 0.8, s0: 0.35, s1: 0.05, grav: 10, jit: 0.6 });
+        fxSpawn('white', s.x, 1.7, s.z, 0, 0, 0, { life: 0.3, s0: 0.8, s1: 5.5 });
+      }
+      SFX.getItem();
+      guard(function () { api.shake(0.25, 0.3); });
+      say('showToast', 'BFG-9000 ACQUIRED  ·  SEE SUPPLEMENTARY METHODS');
+    }
+    function sageTalk() {
+      if (!sageReady()) return;
+      sage.talkCool = 0.7;
+      if (gaveGun) { sageSay(SAGE_AGAIN[sage.again++ % SAGE_AGAIN.length]); return; }
+      sageSay(SAGE_LINE);
+      giveGun();
+      // the coda waits in wall-clock time: the caption types itself out at 24 ms a character whatever the timescale
+      if (sage.followT) clearTimeout(sage.followT);
+      sage.followT = setTimeout(function () { if (sage) { sage.followT = null; if (self.active) sageSay(SAGE_CODA); } }, 3400);
+    }
+    function sageStep(h, t) {
+      var s = sage; if (!s) return;
+      s.t += h;
+      if (s.talkCool > 0) s.talkCool -= h;
+      var p = api.player.position, dx = p.x - s.x, dz = p.z - s.z, d = Math.hypot(dx, dz);
+      if (d < 14) s.yaw += angDiff(Math.atan2(dx, dz), s.yaw) * (1 - Math.exp(-3 * h));
+      s.g.position.y = 0.04 + Math.sin(s.t * 1.7) * 0.07;
+      s.g.rotation.y = s.yaw + Math.sin(s.t * 0.8) * 0.06;
+      var pulse = 0.5 + 0.5 * Math.sin(s.t * 2.2);
+      s.glowMat.opacity = 0.3 + 0.22 * pulse;
+      s.glow.scale.setScalar(4.4 + pulse * 0.6);
+      if (s.lamp) s.lamp.intensity = 1.2 + pulse * 0.7;
+      if (s.marker && s.marker.visible) s.marker.position.y = 4.6 + Math.sin(s.t * 2.4) * 0.16;
+      if (s.arrow && s.arrow.visible) { s.arrow.position.y = 3.8 + Math.sin(s.t * 2.4 + 0.5) * 0.2; s.arrow.rotation.y += h * 1.5; }
+      if (s.gun && s.gun.visible) { s.gun.position.y = 1.62 + Math.sin(s.t * 1.9) * 0.05; s.eyeMat.color.setRGB(0.25, 0.6 + 0.35 * Math.abs(Math.sin(s.t * 2.6)), 0.35); }
+      indStep(s);
+      // the prompt: only when he is worth talking to, and only when he is actually on screen
+      // just below eye level, not the marker over his head: at three units the marker is off the top of the
+      // screen, and on a phone the top band already holds the H-INDEX bar and the attack caption
+      VS.set(s.x, 2.15, s.z).project(camera);
+      var seen = VS.z <= 1 && Math.abs(VS.x) < 1 && Math.abs(VS.y) < 1;
+      // inRange drives every talk path, so it has to mean "you can see who you are talking to". Left true while
+      // he was behind you, F used to open a conversation with a man off the back of the screen.
+      var want = seen && d < 3.2 && phase === 'fight' && !self.cinematic;
+      s.inRange = want;
+      if (!want) { if (dom.talk) rm('talk'); return; }
+      var pin = narrowView(), label = (pin ? 'A' : 'F / CLICK') + (gaveGun ? ': SPEAK' : ': TAKE IT');
+      if (!dom.talk) {
+        dom.talk = el('div', 'qb-talk', label);
+        dom.talk.addEventListener('pointerdown', onSagePrompt);
+        dom.talkLabel = label;
+      } else if (dom.talkLabel !== label) { dom.talk.textContent = label; dom.talkLabel = label; }
+      // on a phone it is parked in the one corner the touch controls do not use; elsewhere it floats by his head
+      dom.talk.classList.toggle('is-pin', pin);
+      if (pin) { dom.talk.style.left = ''; dom.talk.style.top = ''; }
+      else {
+        dom.talk.style.left = clamp((VS.x + 1) / 2 * 100, 14, 86) + '%';
+        dom.talk.style.top = clamp((1 - VS.y) / 2 * 100, 32, 74) + '%';
+      }
+    }
+    function narrowView() {
+      var w = 0; guard(function () { w = api.view.clientWidth || 0; });
+      if (w && w < 700) return true;
+      try { return !!(window.matchMedia && window.matchMedia('(hover:none)').matches); } catch (e) { return false; }
+    }
+    /* The off-screen indicator, the same trick the cave plays with THE UNDERSPEND: while he is alive, still
+       holding it and outside the frame, a chevron rides the edge of the view pointing at him. It is his green,
+       it carries his sign, it never takes a tap, and it goes the instant he is on screen or has handed it over. */
+    function indStep(s) {
+      var ok = s && !gaveGun && self.active && phase === 'fight' && !self.cinematic;
+      if (ok) { var ov = false; guard(function () { ov = api.isOver(); }); ok = !ov; }
+      if (!ok) { if (dom.ind) rm('ind'); return; }
+      VS.set(s.x, 1.9, s.z).project(camera);
+      var behind = VS.z > 1, vx = behind ? -VS.x : VS.x, vy = behind ? -VS.y : VS.y;
+      if (!behind && Math.abs(vx) < 0.93 && Math.abs(vy) < 0.93) { if (dom.ind) rm('ind'); return; }   // on screen
+      var dx = vx, dy = -vy;                                     // screen space, y downwards
+      if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) dy = 1;
+      // the band the chevron is allowed to ride. On a phone the d-pad owns everything below y ~0.40 of the
+      // view on the left and the A/B buttons the bottom right, so it stays in the strip above them.
+      var nar = narrowView(), hx = nar ? 0.40 : 0.44, y0 = nar ? -0.135 : -0.34, y1 = nar ? -0.135 : 0.30;
+      var tx = dx > 0 ? hx / dx : dx < 0 ? -hx / dx : 1e9;
+      var ty = dy > 0 ? y1 / dy : dy < 0 ? y0 / dy : 1e9;
+      var tt = tx; if (ty > 0 && ty < tt) tt = ty;
+      var px = clamp(0.5 + dx * tt, 0.5 - hx, 0.5 + hx), py = clamp(0.5 + dy * tt, 0.5 + y0, 0.5 + y1);
+      if (!dom.ind) dom.ind = el('div', 'qb-ind', '<i></i><span>OFFICE HOURS</span>');
+      // .q-view does not clip, so the label has to keep itself inside the frame: on a phone the band alone
+      // would hang half of OFFICE HOURS out over the page
+      var vw = api.view.clientWidth || 1, vh = api.view.clientHeight || 1;
+      var mx = (dom.ind.offsetWidth / 2 + 4) / vw, my = (dom.ind.offsetHeight / 2 + 4) / vh;
+      dom.ind.style.left = (clamp(px, mx, 1 - mx) * 100).toFixed(2) + '%';
+      dom.ind.style.top = (clamp(py, my, 1 - my) * 100).toFixed(2) + '%';
+      var arrow = dom.ind.firstChild;
+      if (arrow && arrow.style) arrow.style.transform = 'rotate(' + (Math.atan2(dx, -dy) * 180 / Math.PI).toFixed(1) + 'deg)';
+    }
+    function onSagePrompt(e) { if (e) { e.preventDefault(); e.stopPropagation(); } guard(sageTalk); }
+    function onSagePad(e) {                 // the touch A button, intercepted before the host turns it into a shot
+      if (!sageGift() || !e || !e.target || !e.target.closest) return;
+      if (!e.target.closest('[data-pad="act"]')) return;
+      e.preventDefault(); e.stopPropagation(); guard(sageTalk);
+    }
+    function killSage() {
+      callKill();
+      var s = sage; if (!s) { rm('talk'); rm('ind'); return; }
+      sage = null;
+      if (s.followT) { clearTimeout(s.followT); s.followT = null; }
+      if (dom.talk) { dom.talk.removeEventListener('pointerdown', onSagePrompt); rm('talk'); }
+      rm('ind');
+      dom.talkLabel = undefined;
+      var i = api.colliders.indexOf(s.col); if (i >= 0) api.colliders.splice(i, 1);
+      if (s.g.parent) s.g.parent.remove(s.g);
+      // not disposeTree: THREE.Sprite shares one BufferGeometry across every sprite on the page, and his
+      // marker is a sprite. Materials and canvas textures are ours; the geometry is not.
+      s.g.traverse(function (m) {
+        if (m.geometry && m.geometry.dispose && !m.isSprite) m.geometry.dispose();
+        if (m.material) { if (m.material.map && m.material.map.dispose) m.material.map.dispose(); if (m.material.dispose) m.material.dispose(); }
+      });
+    }
+
     /* ------------------------------------------------------------ sequencer state, skipping, banners */
     var phase = '', pT = 0, total = 0, maxHp = 100, fired = false, env = null, musicOn = false;
     function music(name) { musicOn = (name === 'boss'); say('music', name); }
@@ -622,6 +941,10 @@
     function onSkipKey(e) {
       if (!e || e.repeat) return;
       if (e.code !== 'KeyF' && e.code !== 'Space' && e.code !== 'Enter') return;
+      if (e.code === 'KeyF' && sageGift()) {       // taking it beats firing into the rubble; afterwards, F fires
+        e.stopPropagation(); if (e.preventDefault) e.preventDefault();
+        guard(sageTalk); return;
+      }
       if (!canSkip()) return;
       e.stopPropagation();          // window capture: the host must not also fire or jump on this one
       onSkip(e);
@@ -887,14 +1210,14 @@
     }
     function shieldStep(t) {
       var b = boss; if (!b || !b.covers) return;
-      var g = b.guard === undefined ? 1 : b.guard;
-      b.shield.visible = g > 0.02;
+      var g = b.guard === undefined ? 1 : b.guard, bl = b.blast || 0;
+      b.shield.visible = g > 0.02 || bl > 0.02;
       for (var i = 0; i < b.covers.length; i++) {
-        var a = t * 1.5 + i * 2.0944, r = lerp(1.35, 0.3, g), m = b.covers[i];
-        m.position.set(Math.cos(a) * r, Math.sin(a) * r * 0.85, Math.sin(a * 1.7) * 0.1);
-        m.rotation.set(Math.sin(a * 0.9) * 0.3, a * 0.7, a * 0.4);
+        var a = t * 1.5 + i * 2.0944, r = lerp(1.35, 0.3, g) + bl * bl * 3.2, m = b.covers[i];
+        m.position.set(Math.cos(a) * r, Math.sin(a) * r * 0.85 + bl * 1.2, Math.sin(a * 1.7) * 0.1 + bl * 2.2);
+        m.rotation.set(Math.sin(a * 0.9) * 0.3 + bl * 7, a * 0.7 + bl * 11, a * 0.4 + bl * 9);
         m.scale.setScalar(0.35 + 0.95 * g);
-        m.material.opacity = g;
+        m.material.opacity = Math.max(0, g * (1 - bl) + bl * 0.55 * (1 - bl));
       }
       b.haloMat.opacity = (1 - g) * (0.55 + 0.45 * Math.sin(t * 7));
     }
@@ -918,7 +1241,7 @@
     var BLOCK_LINES = ['THE BOARD BLOCKS IT. WAIT FOR THE OPENING.', 'GUARDED. SHOOT WHEN IT WINDS UP.'];
     function fightInit() {
       F = { mode: 'idle', t: 0, dur: 1.2, atk: 'volley', last: '', combo: null, phase: 1, step: 0, sched: [], falls: [],
-            bodyHits: 0, taught: 0, blocked: 0, blockTaught: 0, ghost: 1, hitFlash: 0,
+            bodyHits: 0, taught: 0, blocked: 0, blockTaught: 0, ghost: 1, hitFlash: 0, guardStun: 0, taughtBfg: 0,
             px: api.player.position.x, pz: api.player.position.z, pvx: 0, pvz: 0, ann: -9 };
       if (boss) boss.guard = 1;
     }
@@ -1059,8 +1382,10 @@
           if (Math.random() < 0.6) burst('dust', b.x + rand(-2, 2), 0.2, b.z + rand(-2, 2), 2, { spd: 3, up: 2, life: 0.9, s0: 0.5, s1: 1.9, drag: 2 });
         }
       } else b.walking = Math.max(0, b.walking - h * 4);
-      // the guard: shut while it waits, open while it swings
-      b.guard += ((wantOpen() ? 0 : 1) - b.guard) * (1 - Math.exp(-7 * h));
+      // the guard: shut while it waits, open while it swings — and blown wide open by a plasma ball
+      if (F.guardStun > 0) F.guardStun -= h;
+      if (b.blast > 0) b.blast = Math.max(0, b.blast - h * 1.5);
+      b.guard += (((wantOpen() || F.guardStun > 0) ? 0 : 1) - b.guard) * (1 - Math.exp(-7 * h));
       shieldStep(t);
       // the charging nib
       var ch = F.mode === 'windup' ? smooth(F.t / Math.max(0.01, F.dur)) : F.mode === 'fire' ? Math.max(0, 1 - F.t * 3) : 0;
@@ -1116,14 +1441,28 @@
       var hy = y - HEAD_Y;
       return d2 + hy * hy < HEAD_R * HEAD_R;
     }
-    function weakHit(x, y, z) {
+    function weakHit(x, y, z, big) {
       var b = boss;
-      b.hp = Math.max(0, b.hp - 1); b.flinch = 1;
-      drawBadge(b, b.hp, true); F.badgeFlash = 0.08;
-      SFX.ping(1 - b.hp / maxHp);
-      burst('gold', x, y, z, 5, { spd: 7, up: 5, life: 0.45, s0: 0.28, s1: 0.04, grav: 16 });
-      fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.12, s0: 0.5, s1: 2.2 });
-      if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = 0.07; }
+      b.hp = Math.max(0, b.hp - (big ? BFG.dmg : 1)); b.flinch = 1;
+      drawBadge(b, b.hp, true); F.badgeFlash = big ? 0.2 : 0.08;
+      if (big) {
+        // five off the h-index, the board scattered, and a hole in the middle of the fight
+        SFX.plasma(1 - b.hp / maxHp);
+        burst('plasma', x, y, z, 16, { spd: 15, up: 11, life: 0.85, s0: 0.5, s1: 0.06, grav: 14, jit: 0.4 });
+        burst('plasmaDim', x, y, z, 8, { spd: 9, up: 7, life: 1.2, s0: 0.7, s1: 2.4, drag: 1.5, jit: 0.5 });
+        burst('gold', x, y, z, 8, { spd: 11, up: 8, life: 0.6, s0: 0.35, s1: 0.05, grav: 16 });
+        fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.26, s0: 1.4, s1: 7.5 });
+        addRing(b.x, b.z, 1.2, 30, 18, false, 0x5cff8a);
+        b.blast = 1; F.guardStun = Math.max(F.guardStun, 1.2);
+        if (b.covers) b.covers.forEach(function (m) { m.getWorldPosition(V2); burst('white', V2.x, V2.y, V2.z, 2, { spd: 7, up: 5, life: 0.4, s0: 0.25, s1: 0.03, grav: 12 }); });
+        guard(function () { api.shake(0.75, 0.4); });
+        if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = 0.2; }
+      } else {
+        SFX.ping(1 - b.hp / maxHp);
+        burst('gold', x, y, z, 5, { spd: 7, up: 5, life: 0.45, s0: 0.28, s1: 0.04, grav: 16 });
+        fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.12, s0: 0.5, s1: 2.2 });
+        if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = 0.07; }
+      }
       setHpBar(b.hp, maxHp, F.ghost);
       if (b.hp <= 0) setPhase('death');
     }
@@ -1133,20 +1472,44 @@
       F.blocked++;
       if (F.blockTaught < BLOCK_LINES.length && (F.blocked === 6 || F.blocked === 40)) say('showToast', BLOCK_LINES[F.blockTaught++]);
     }
-    function bodyHit(x, y, z) {
+    function bodyHit(x, y, z, big) {
+      if (big) {
+        // tenure absorbs paper. It does not entirely absorb this.
+        var b = boss;
+        b.hp = Math.max(0, b.hp - BFG.bodyDmg); b.flinch = 0.7;
+        drawBadge(b, b.hp, false); setHpBar(b.hp, maxHp, F.ghost);
+        SFX.blast();
+        burst('plasma', x, y, z, 12, { spd: 13, up: 9, life: 0.7, s0: 0.45, s1: 0.05, grav: 16 });
+        burst('soot', x, y, z, 8, { spd: 9, up: 8, life: 1.3, s0: 0.5, s1: 2.2, drag: 1.4 });
+        burst('flame', x, y, z, 5, { spd: 10, up: 10, life: 0.5, s0: 0.5, s1: 0.06, grav: 18 });
+        fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.18, s0: 1.0, s1: 5.0 });
+        guard(function () { api.shake(0.45, 0.28); });
+        F.bodyHits++;
+        if (!F.taughtBfg) { F.taughtBfg = 1; say('showToast', 'BODY SHOT. THE H-INDEX IS WORTH FIVE OF THOSE.'); }
+        if (b.hp <= 0) setPhase('death');
+        return;
+      }
       SFX.clank();
       burst('spark', x, y, z, 3, { spd: 8, up: 5, life: 0.3, s0: 0.2, s1: 0.03, grav: 20 });
       F.bodyHits++;
       if (F.taught < BODY_LINES.length && (F.bodyHits === 2 || F.bodyHits === 9 || F.bodyHits === 26)) say('showToast', BODY_LINES[F.taught++]);
     }
-    function hitTest(pos, prev) {
+    function hitTest(pos, prev, kind) {
       if (!self.active || phase !== 'fight' || !boss || boss.hp <= 0 || !pos) return null;
+      // `kind` comes from the host for every shot. No fallback: an omitted kind is a paper ball, never ten
+      // times the damage on the strength of a flag that only says the gun exists somewhere in the level.
+      var big = kind === 'bfg';
       var ax = prev ? prev.x : pos.x, ay = prev ? prev.y : pos.y, az = prev ? prev.z : pos.z;
       var bx = pos.x, by = pos.y, bz = pos.z, t, hx, hy, hz;
       // the H-INDEX first: its sphere sits inside the body, so the body must never shadow it
       boss.badge.getWorldPosition(V1);
       boss.badge.getWorldQuaternion(Q1);
       V4.set(0, 0, 1).applyQuaternion(Q1);                     // the badge's own forward normal, leans and all
+      if (big) {
+        // a blast radius, not a pinhole: pass anywhere near the badge and it still counts, guard or no guard
+        t = segSphere(ax, ay, az, bx, by, bz, V1.x, V1.y, V1.z, BFG.R);
+        if (t >= 0) { weakHit(lerp(ax, bx, t), lerp(ay, by, t), lerp(az, bz, t), true); return 'weak'; }
+      }
       t = segSphere(ax, ay, az, bx, by, bz, V1.x, V1.y, V1.z, WEAK_R);
       if (t >= 0) {
         hx = lerp(ax, bx, t); hy = lerp(ay, by, t); hz = lerp(az, bz, t);
@@ -1163,7 +1526,7 @@
       var n = clamp(Math.ceil(len / 0.45), 1, 90), i, k;
       for (i = 0; i <= n; i++) {
         k = i / n; hx = ax + dx * k; hy = ay + dy * k; hz = az + dz * k;
-        if (inBody(hx, hy, hz)) { bodyHit(hx, hy, hz); return 'body'; }
+        if (inBody(hx, hy, hz)) { bodyHit(hx, hy, hz, big); return 'body'; }
       }
       return null;
     }
@@ -1456,9 +1819,12 @@
         if (!F) fightInit();
         if (boss) setBossCollider(true);
         F.capMsg = ['SHOOT THE H-INDEX', 'nothing else counts']; F.capWait = 9.0;
+        // the dust settles and there is somebody still standing in it, holding something
+        if (!gaveGun) guard(spawnSage);
         return;
       }
       if (name === 'death') {
+        self.ended = true;
         setBossCollider(false); prjClear();
         music('silence');                          // the score drops out; the victory stinger lands on nothing
         rootClass('qb-cine', true);                // and the touch pad gets off the banner and the blast-off
@@ -1501,11 +1867,14 @@
         ensureStyle(); fxInit(); prjInit(); saveEnv();
         maxHp = Math.max(1, Math.min(9999, parseInt(opts.hp, 10) || 100));
         total = 0; pT = 0; fired = false; out = null; boss = null; F = null; phase = '';
-        self.active = true; self.cinematic = false; musicOn = false;
+        self.active = true; self.cinematic = false; self.ended = false; musicOn = false;
         dom.dlg = api.root.querySelector('.q-dialog');
         rootClass('qb-on', true); rootClass('qb-cine', false);
         window.addEventListener('keydown', onSkipKey, true);
         api.view.addEventListener('pointerdown', onSkip);
+        if (api.root && api.root.addEventListener) api.root.addEventListener('pointerdown', onSagePad, true);
+        // a restarted fight does not confiscate the gun: losing it to a rejection would be cruel
+        if (gaveGun) api.setWeapon({ kind: 'bfg', rate: BFG.rate, speed: BFG.speed, gravity: 0 });
         if (opts.retry) {
           destroyTown(true); finishDestruction();
           spawnBoss(maxHp); setBossCollider(true);
@@ -1521,9 +1890,14 @@
       });
     }
     function stop() {
-      guard(function () { window.removeEventListener('keydown', onSkipKey, true); api.view.removeEventListener('pointerdown', onSkip); });
+      guard(function () {
+        window.removeEventListener('keydown', onSkipKey, true); api.view.removeEventListener('pointerdown', onSkip);
+        if (api.root && api.root.removeEventListener) api.root.removeEventListener('pointerdown', onSagePad, true);
+      });
+      guard(killSage);
+      guard(function () { api.setWeapon({ kind: 'paper' }); });   // nobody carries a BFG round the ordinary town
       guard(killCard); guard(hideHpBar);
-      guard(function () { rm('banner'); rm('count'); rm('cap'); rm('flash'); dom.capT = 0; });
+      guard(function () { rm('banner'); rm('count'); rm('cap'); rm('flash'); rm('ind'); dom.capT = 0; });
       guard(function () { if (dom.style && dom.style.parentNode) dom.style.parentNode.removeChild(dom.style); dom.style = null; });
       guard(omenKill); guard(rocketKill); guard(starsKill);
       guard(prjKill);
@@ -1536,7 +1910,7 @@
       rootClass('qb-on', false); rootClass('qb-cine', false);
       if (musicOn) music('silence');               // never leave the boss layer grinding after we are gone
       say('setHud', true); say('lockEnvironment', false);
-      self.active = false; self.cinematic = false;
+      self.active = false; self.cinematic = false; self.ended = false;
       phase = ''; pT = 0; out = null; F = null; fired = false;
     }
     function update(dt, t) {
@@ -1544,7 +1918,7 @@
       var h = dt > 0.5 ? 0.5 : dt < 0 ? 0 : dt;
       total += h; pT += h;
       guard(function () {
-        fxStep(h); townStep(h); capStep(h); pushPlayerOut();
+        fxStep(h); townStep(h); capStep(h); pushPlayerOut(); sageStep(h, total);
         if (dom.hp && dom.dlg) dom.hp.classList.toggle('is-up', !dom.dlg.hidden);   // every phase, not just the fight
         if (boss) { if (!boss.exploded) applyPose(h, total); boss.g.updateMatrixWorld(true); }
         if (phase === 'card') { drawCard(pT); if (pT >= CARD_LEN) { closeCard(); setPhase('omen'); } return; }

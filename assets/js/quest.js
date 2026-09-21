@@ -372,7 +372,11 @@
   var bfgGlowMat = null, bfgHalo = null, bfgLamp = null;
   var WPOSE = {
     paper: { x: 0.3, y: -0.16, z: -0.62, s: 0.42, rx: 0, ry: 0, ky: 0.07, kz: 0.15, krot: 0.6, bob: 1, tight: 0 },
-    bfg:   { x: 0.03, y: -0.27, z: -0.78, s: 0.22, rx: 0.11, ry: 0.20, ky: 0.06, kz: 0.24, krot: 0.8, bob: 0.5, tight: 1 }
+    // The BFG is only ever seen from one angle - stood in the rubble, pitched up at the badge - and at the old
+    // +0.11 rad it presented its top rail and read as a pale olive board. Nose well up and canted across the
+    // view instead: the barrel runs up out of the bottom-right corner and ends in the muzzle block, which is
+    // the thing the eye lands on.
+    bfg:   { x: 0.20, y: -0.28, z: -0.84, s: 0.215, rx: 0.44, ry: 0.28, ky: 0.06, kz: 0.24, krot: 0.8, bob: 0.5, tight: 1 }
   };
   (function () {
     var lit = function (c) { return new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.45 }); };
@@ -393,7 +397,9 @@
     var skin = lit(0xf6d3b0), cuff = lit(0x6f7787), copper = lit(0xc08a46);
     box(0.78, 0.6, 1.9, shell, 0, -0.04, -0.1);                                   // receiver
     box(0.9, 0.16, 1.2, shell2, 0, 0.28, -0.22);                                  // hump along the top
-    var v; for (v = 0; v < 5; v++) box(1.0, 0.1, 0.09, dark, 0, 0.3, -0.62 + v * 0.2);   // vents
+    // Ribs, not stripes. At y 0.3 the vents were buried inside the hump, which is why the whole top of the gun
+    // came out as one unbroken pale board from the only angle anybody looks at it. They stand proud of it now.
+    var v; for (v = 0; v < 5; v++) box(1.04, 0.16, 0.1, dark, 0, 0.38, -0.62 + v * 0.2);   // vents
     for (v = -1; v <= 1; v += 2) { box(0.1, 0.5, 0.86, shell2, v * 0.46, -0.02, -0.28); box(0.14, 0.14, 1.1, copper, v * 0.44, 0.16, 0.18); }  // fins and cooling pipes
     box(1.12, 0.92, 0.5, shell, 0, -0.02, -1.22);                                 // the muzzle block: deliberately too big
     box(1.2, 0.14, 0.56, trim, 0, 0.44, -1.22); box(1.2, 0.14, 0.56, trim, 0, -0.48, -1.22);
@@ -403,10 +409,15 @@
     // the core at the back of the receiver (which he sees the whole time). All three brighten as it winds up.
     bfgGlowMat = new THREE.MeshBasicMaterial({ color: 0x2f6b3f, fog: false });
     box(0.46, 0.46, 0.06, bfgGlowMat, 0, -0.02, -1.49);
-    box(0.34, 0.06, 0.96, bfgGlowMat, 0, 0.345, -0.22);                           // the seam between the vents
+    // The business end, stacked so it reads from BEHIND - the only place the man holding it stands. Nearest
+    // him a pale lip, then a glowing collar a finger's width proud of it, then the muzzle block itself: a
+    // bright rim, a green rim, and a fat block, which is what a cannon looks like from the wrong end.
+    box(1.24, 1.04, 0.07, trim, 0, -0.02, -1.0);
+    box(1.34, 1.14, 0.06, bfgGlowMat, 0, -0.02, -0.93);
+    box(0.3, 0.1, 1.06, bfgGlowMat, 0, 0.44, -0.22);                              // the lit seam down the spine
     box(0.36, 0.36, 0.06, bfgGlowMat, 0, -0.04, 1.29);                            // the core, facing the player
     bfgHalo = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ color: 0x5cff8a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
-    bfgHalo.position.set(0, -0.02, -1.53); wBfg.add(bfgHalo);
+    bfgHalo.position.set(0, -0.02, -0.86); wBfg.add(bfgHalo);   // behind the collar, where it can be seen
     box(0.5, 0.52, 0.44, shell2, 0, -0.04, 0.96); box(0.42, 0.42, 0.16, copper, 0, -0.04, 1.22);   // battery pack at the back
     box(0.26, 0.42, 0.3, dark, 0.02, -0.5, 0.42);                                 // pistol grip
     box(0.22, 0.2, 0.28, skin, 0.02, -0.72, 0.42); box(0.26, 0.24, 0.34, cuff, 0.02, -0.78, 0.7);        // right hand on the grip
@@ -419,6 +430,15 @@
   var bfgGeo = new THREE.IcosahedronGeometry(0.5, 1), bfgMat = new THREE.MeshBasicMaterial({ color: 0xcaffd8, fog: false });
   var bfgSkinGeo = new THREE.IcosahedronGeometry(0.72, 1), bfgSkinMat = new THREE.MeshBasicMaterial({ color: 0x3dff7a, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
   var bfgAuraGeo = new THREE.IcosahedronGeometry(1.0, 0), bfgAuraMat = new THREE.MeshBasicMaterial({ color: 0x18d95a, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  // One PointLight for every plasma ball there will ever be. A light per shot swung the scene's light count
+  // between one and four, and three.js recompiles every material the first time it sees each count, so the
+  // opening shots of the fight each cost a stutter. This one is made once, when the gun arrives, and follows
+  // whichever ball is newest.
+  var plasmaLamp = null;
+  function plasmaLight() {
+    if (!plasmaLamp) { plasmaLamp = new THREE.PointLight(0x3dff7a, 0, 30, 1.8); plasmaLamp.position.set(0, -60, 0); scene.add(plasmaLamp); }
+    return plasmaLamp;
+  }
   var sparkGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2), sparkMat = new THREE.MeshBasicMaterial({ color: 0x7dff9e, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
   var sparks = [], sparkPool = [], SPARK_CAP = 70;
   var player = boxMan({});
@@ -641,6 +661,7 @@
     if (kind === 'bfg') paperBallistics = { rate: fireRate, speed: shotSpeed, gravity: shotGrav };
     else if (paperBallistics) { fireRate = paperBallistics.rate; shotSpeed = paperBallistics.speed; shotGrav = paperBallistics.gravity; paperBallistics = null; }
     weaponKind = kind; bfgCharge = -1; weapon.userData.recoil = 0;
+    if (kind === 'bfg') plasmaLight(); else if (plasmaLamp) plasmaLamp.intensity = 0;
     wPaper.visible = kind === 'paper'; wBfg.visible = kind === 'bfg';
     if (bfgHalo) bfgHalo.material.opacity = 0;
     if (bfgLamp) bfgLamp.intensity = 0;
@@ -680,9 +701,9 @@
     var d = viewDir().clone(), m = new THREE.Mesh(bfgGeo, bfgMat);
     m.position.copy(camera.position).add(d.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, -0.28, 0));
     m.add(new THREE.Mesh(bfgSkinGeo, bfgSkinMat)); m.add(new THREE.Mesh(bfgAuraGeo, bfgAuraMat));
-    var lamp = new THREE.PointLight(0x3dff7a, 4.2, 30, 1.8); m.add(lamp);
+    plasmaLight();
     scene.add(m);
-    shots.push({ m: m, v: d.multiplyScalar(shotSpeed), life: 3.6, spin: 1.5, prev: m.position.clone(), bfg: true, lamp: lamp, trail: 0 });
+    shots.push({ m: m, v: d.multiplyScalar(shotSpeed), life: 3.6, spin: 1.5, prev: m.position.clone(), bfg: true, trail: 0 });
     bfgBurst(m.position.x, m.position.y, m.position.z, 8, 7, 0.35);
     bfgTone(180, 46, 0.55, 'sawtooth', 0.1); bfgTone(74, 30, 0.9, 'square', 0.07); bfgTone(1500, 320, 0.18, 'triangle', 0.05);
     shakeAmp = 0.42; shakeT = shakeDur = 0.22;
@@ -714,13 +735,13 @@
       var sh = shots[i], m = sh.m;
       sh.prev.copy(m.position);
       sh.v.y -= shotGrav * dt; m.position.addScaledVector(sh.v, dt); m.rotation.x += dt * 12; m.rotation.z += dt * 9; sh.life -= dt;
-      var gone = false;
-      if (boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev, sh.bfg ? 'bfg' : 'paper')) gone = true; } catch (err) { console.error(err); } }   // the boss module applies its own damage and feedback
+      // the editor is down, or the blast-off has the screen: a plasma ball must not go on glowing through it
+      var gone = !!(boss && boss.active && (boss.ended || boss.cinematic));
+      if (!gone && boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev, sh.bfg ? 'bfg' : 'paper')) gone = true; } catch (err) { console.error(err); } }   // the boss module applies its own damage and feedback
       gone = gone || sh.life <= 0 || m.position.y < 0.05 || collide(m.position.x, m.position.z, 0.05);
       if (!gone && sh.bfg) {                     // the plasma ball trails sparks and lights what it passes
         sh.trail += dt;
         while (sh.trail > 0.035) { sh.trail -= 0.035; bfgSpark(m.position.x + (Math.random() - 0.5) * 0.5, m.position.y + (Math.random() - 0.5) * 0.5, m.position.z + (Math.random() - 0.5) * 0.5, 2.5, 0.45); }
-        if (sh.lamp) sh.lamp.intensity = 3.6 + Math.sin(sh.life * 40) * 0.8;
         var grow = Math.min(1, (3.6 - sh.life) / 0.14);      // swells out of the muzzle instead of filling the view
         m.scale.setScalar((0.3 + 0.7 * grow) * (1 + Math.sin(sh.life * 26) * 0.07));
       }
@@ -732,6 +753,13 @@
         if (sh.bfg) { bfgBurst(m.position.x, m.position.y, m.position.z, 12, 11, 0.5); bfgTone(140, 40, 0.4, 'square', 0.06); }
         scene.remove(m); shots.splice(i, 1);
       }
+    }
+    // the shared plasma light rides the newest ball in flight, and goes out when there is none
+    if (plasmaLamp) {
+      var newest = null;
+      for (var q = shots.length - 1; q >= 0; q--) if (shots[q].bfg) { newest = shots[q]; break; }
+      if (newest) { plasmaLamp.position.copy(newest.m.position); plasmaLamp.intensity = 3.6 + Math.sin(newest.life * 40) * 0.8; }
+      else plasmaLamp.intensity = 0;
     }
     sparkStep(dt);
     if (fireCool > 0) fireCool -= dt;
@@ -749,9 +777,11 @@
     weapon.rotation.set(W.rx - r * W.krot, W.ry, 0);
     if (weaponKind === 'bfg') {                              // the core and the vents brighten through the wind-up
       var ch = bfgCharge >= 0 ? Math.min(1, bfgCharge / BFG_WIND) : Math.max(0, r - 0.55) * 2.2;
-      var g2 = Math.max(0.12 + 0.05 * Math.sin(clock.elapsedTime * 3), ch);
+      // it idles lit, not dark: the collar round the muzzle block is the one piece of the aperture the man
+      // holding it can see, and at the old floor it read as paint rather than as something switched on
+      var g2 = Math.max(0.38 + 0.09 * Math.sin(clock.elapsedTime * 3), ch);
       if (bfgGlowMat) bfgGlowMat.color.setRGB(0.18 + 0.8 * g2 * g2, 0.35 + 0.65 * g2, 0.22 + 0.5 * g2 * g2);
-      if (bfgHalo) { bfgHalo.material.opacity = 0.15 + 0.85 * ch; bfgHalo.scale.setScalar(0.7 + ch * 0.9); }
+      if (bfgHalo) { bfgHalo.material.opacity = 0.3 + 0.7 * ch; bfgHalo.scale.setScalar(0.95 + ch * 0.85); }
       if (bfgLamp) bfgLamp.intensity = 0.35 + 5 * ch;
     }
   }
@@ -1298,7 +1328,7 @@
       camera.rotation.z += (Math.random() - 0.5) * sa * 0.04;
     }
 
-    if (cave && !caveOn && !endgame && !over && !dialogOpen) {
+    if (cave && running && !caveOn && !endgame && !over && !dialogOpen) {
       var fd2 = player.position.x * player.position.x + player.position.z * player.position.z;
       if (fd2 > 49) caveArmed = true;                      // he spawns 4 units out; walk away first
       else if (caveArmed && fd2 < 16.8) enterCave();       // then walking back into it drops you in
