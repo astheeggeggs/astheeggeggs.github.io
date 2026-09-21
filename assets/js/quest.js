@@ -365,16 +365,62 @@
   }
   scene.add(camera);
   var weapon = new THREE.Group(); camera.add(weapon); weapon.visible = false;
+  // Two weapons live in the same group and take turns: the crumpled rebuttal, and the thing the emeritus
+  // professor keeps in the rubble. api.setWeapon({kind}) swaps them; WPOSE holds each one's hold and recoil.
+  var wPaper = new THREE.Group(), wBfg = new THREE.Group();
+  weapon.add(wPaper); weapon.add(wBfg); wBfg.visible = false;
+  var bfgGlowMat = null, bfgHalo = null, bfgLamp = null;
+  var WPOSE = {
+    paper: { x: 0.3, y: -0.16, z: -0.62, s: 0.42, rx: 0, ry: 0, ky: 0.07, kz: 0.15, krot: 0.6, bob: 1, tight: 0 },
+    bfg:   { x: 0.03, y: -0.27, z: -0.78, s: 0.22, rx: 0.11, ry: 0.20, ky: 0.06, kz: 0.24, krot: 0.8, bob: 0.5, tight: 1 }
+  };
   (function () {
     var lit = function (c) { return new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.45 }); };
-    var hand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.2, 0.3), lit(0xf6d3b0)); hand.position.set(0, -0.08, 0.05); weapon.add(hand);
-    var sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.24, 0.35), lit(0x6f7787)); sleeve.position.set(0, -0.12, 0.32); weapon.add(sleeve);
-    var paper = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.44, 0.02), lit(0xf4f6fb)); paper.position.set(0.02, 0.2, -0.1); paper.rotation.x = -0.25; weapon.add(paper);
+    var hand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.2, 0.3), lit(0xf6d3b0)); hand.position.set(0, -0.08, 0.05); wPaper.add(hand);
+    var sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.24, 0.35), lit(0x6f7787)); sleeve.position.set(0, -0.12, 0.32); wPaper.add(sleeve);
+    var paper = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.44, 0.02), lit(0xf4f6fb)); paper.position.set(0.02, 0.2, -0.1); paper.rotation.x = -0.25; wPaper.add(paper);
     for (var k = 0; k < 6; k++) { var ln = new THREE.Mesh(new THREE.BoxGeometry(0.22 - (k % 2) * 0.06, 0.02, 0.005), lit(k ? 0x9aa3b8 : 0xb91c1c)); ln.position.set(0.0, 0.15 - k * 0.055, 0.013); paper.add(ln); }
     weapon.scale.set(0.42, 0.42, 0.42);
     weapon.position.set(0.3, -0.16, -0.62);
   })();
+  // THE BFG: a green-grey box cannon, both hands on it, a wide muzzle and an aperture that lights up as it winds.
+  (function () {
+    // held up against a first-person view, a Lambert box is whatever the sky happens to be: self-lit, like the
+    // paper ball, so the thing reads the same in a red dread sky as it does in space.
+    var lit = function (c) { var m = new THREE.MeshLambertMaterial({ color: c }); m.emissive = new THREE.Color(c); m.emissiveIntensity = 0.62; return m; };
+    function box(w, h, d, mat, x, y, z, p) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); (p || wBfg).add(m); return m; }
+    var shell = lit(0x7c8c6e), shell2 = lit(0x566349), trim = lit(0xa9b69f), dark = lit(0x2b3327);
+    var skin = lit(0xf6d3b0), cuff = lit(0x6f7787), copper = lit(0xc08a46);
+    box(0.78, 0.6, 1.9, shell, 0, -0.04, -0.1);                                   // receiver
+    box(0.9, 0.16, 1.2, shell2, 0, 0.28, -0.22);                                  // hump along the top
+    var v; for (v = 0; v < 5; v++) box(1.0, 0.1, 0.09, dark, 0, 0.3, -0.62 + v * 0.2);   // vents
+    for (v = -1; v <= 1; v += 2) { box(0.1, 0.5, 0.86, shell2, v * 0.46, -0.02, -0.28); box(0.14, 0.14, 1.1, copper, v * 0.44, 0.16, 0.18); }  // fins and cooling pipes
+    box(1.12, 0.92, 0.5, shell, 0, -0.02, -1.22);                                 // the muzzle block: deliberately too big
+    box(1.2, 0.14, 0.56, trim, 0, 0.44, -1.22); box(1.2, 0.14, 0.56, trim, 0, -0.48, -1.22);
+    for (v = -1; v <= 1; v += 2) box(0.16, 0.7, 0.56, trim, v * 0.56, -0.02, -1.22);
+    box(0.62, 0.62, 0.1, dark, 0, -0.02, -1.44);                                  // aperture recess
+    // one shared glow material: the muzzle aperture (which the player never sees), a strip down the vents and
+    // the core at the back of the receiver (which he sees the whole time). All three brighten as it winds up.
+    bfgGlowMat = new THREE.MeshBasicMaterial({ color: 0x2f6b3f, fog: false });
+    box(0.46, 0.46, 0.06, bfgGlowMat, 0, -0.02, -1.49);
+    box(0.34, 0.06, 0.96, bfgGlowMat, 0, 0.345, -0.22);                           // the seam between the vents
+    box(0.36, 0.36, 0.06, bfgGlowMat, 0, -0.04, 1.29);                            // the core, facing the player
+    bfgHalo = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ color: 0x5cff8a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    bfgHalo.position.set(0, -0.02, -1.53); wBfg.add(bfgHalo);
+    box(0.5, 0.52, 0.44, shell2, 0, -0.04, 0.96); box(0.42, 0.42, 0.16, copper, 0, -0.04, 1.22);   // battery pack at the back
+    box(0.26, 0.42, 0.3, dark, 0.02, -0.5, 0.42);                                 // pistol grip
+    box(0.22, 0.2, 0.28, skin, 0.02, -0.72, 0.42); box(0.26, 0.24, 0.34, cuff, 0.02, -0.78, 0.7);        // right hand on the grip
+    box(0.24, 0.22, 0.3, skin, -0.48, -0.42, -0.62); box(0.28, 0.26, 0.36, cuff, -0.56, -0.5, -0.36);    // left hand under the barrel
+    box(0.2, 0.3, 0.26, dark, -0.48, -0.24, -0.62);                               // the foregrip it is holding
+    bfgLamp = new THREE.PointLight(0x4dff8a, 0, 6, 2); bfgLamp.position.set(0, -0.02, -1.7); wBfg.add(bfgLamp);
+  })();
   var shotGeo = new THREE.IcosahedronGeometry(0.13, 0), shotMat = new THREE.MeshLambertMaterial({ color: 0xf4f6fb, emissive: 0xf4f6fb, emissiveIntensity: 0.5 });
+  // the plasma ball: fat, slow, expensive-looking. One shared geometry/material set, three meshes per shot.
+  var bfgGeo = new THREE.IcosahedronGeometry(0.5, 1), bfgMat = new THREE.MeshBasicMaterial({ color: 0xcaffd8, fog: false });
+  var bfgSkinGeo = new THREE.IcosahedronGeometry(0.72, 1), bfgSkinMat = new THREE.MeshBasicMaterial({ color: 0x3dff7a, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  var bfgAuraGeo = new THREE.IcosahedronGeometry(1.0, 0), bfgAuraMat = new THREE.MeshBasicMaterial({ color: 0x18d95a, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  var sparkGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2), sparkMat = new THREE.MeshBasicMaterial({ color: 0x7dff9e, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  var sparks = [], sparkPool = [], SPARK_CAP = 70;
   var player = boxMan({});
   player.position.set(0, 0, 4);
   scene.add(player);
@@ -418,7 +464,7 @@
   var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)) };
   var endgame = false, pendingEndgame = false, boss = null, shmup = null;
   // the fountain hides a secret level; its prize is extra hearts for the boss
-  var cave = null, caveOn = false, caveTaken = false;
+  var cave = null, caveOn = false, caveTaken = false, caveArmed = false;
   try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
   var fireRate = 0.32, shotSpeed = 30, shotGrav = 9, fireHeld = false, hurtCool = 0, envLocked = false, hudOn = true, shakeAmp = 0, shakeT = 0, shakeDur = 1;
 
@@ -464,14 +510,19 @@
   el.addEventListener('wheel', function (e) { if (!running) return; e.preventDefault(); camDist = Math.max(6, Math.min(24, camDist + e.deltaY * 0.01)); }, { passive: false });
 
   dlg.addEventListener('click', function (e) { if (e.target.tagName !== 'A') action(); });
-  start.addEventListener('click', begin);
-  start.addEventListener('keydown', function (e) { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); begin(); } });
+  // the title sequence gets first refusal on the overlay: insert coin, skip the cinematic, then start
+  function startPress() {
+    if (intro && intro.active) { try { if (intro.click()) return; } catch (e) { console.error(e); } }
+    begin();
+  }
+  start.addEventListener('click', startPress);
+  start.addEventListener('keydown', function (e) { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); startPress(); } });
 
   function begin() {
     if (running) return;
     running = true; start.hidden = true; el.focus(); blip(440, .06);
     if (window.Riff && musicWanted) { try { Riff.play('quest'); } catch (e) {} }
-    if (PARAMS.cave) { setTimeout(enterCave, 300); return; }
+    if (PARAMS.cave) { caveArmed = true; setTimeout(enterCave, 300); return; }
     if (PARAMS.shmup) { setTimeout(launchShmup, 300); return; }
     if (PARAMS.endgame) { setTimeout(startEndgame, 300); return; }
     // a returning player who already holds every fact goes straight to the reckoning
@@ -562,7 +613,7 @@
   }
   function closeDialog() { dialogOpen = false; dlg.hidden = true; if (typing) { clearInterval(typing); typing = null; } blip(330, .05); if (pendingEndgame && !endgame) { pendingEndgame = false; startEndgame(); } }
   function action() {
-    if (!running) { begin(); return; }
+    if (!running) { startPress(); return; }
     if (dialogOpen) { if (typing && current) finishTyping(current); else closeDialog(); return; }
     var t = nearbyTarget();
     if (fp) { if (t && t.kind !== 'baddie') { current = t.obj; openDialog(t); } else fire(); return; }
@@ -580,8 +631,68 @@
     hits = 0; if (hudHitsWrap) hudHitsWrap.hidden = false; drawHearts();
     if (prompt) prompt.textContent = 'F';
   }
+  /* ---- the BFG: kind switching, the wind-up, and the plasma ball -------------------------------- */
+  var weaponKind = 'paper', bfgCharge = -1, paperBallistics = null, BFG_WIND = 0.3;
+  function setWeaponKind(kind) {
+    kind = kind === 'bfg' ? 'bfg' : 'paper';
+    bfgCharge = -1;                       // any weapon call cancels a half-finished wind-up
+    if (kind === weaponKind) return;
+    // remember the ballistics the paper ball was using, so kind:'paper' puts everything back exactly
+    if (kind === 'bfg') paperBallistics = { rate: fireRate, speed: shotSpeed, gravity: shotGrav };
+    else if (paperBallistics) { fireRate = paperBallistics.rate; shotSpeed = paperBallistics.speed; shotGrav = paperBallistics.gravity; paperBallistics = null; }
+    weaponKind = kind; bfgCharge = -1; weapon.userData.recoil = 0;
+    wPaper.visible = kind === 'paper'; wBfg.visible = kind === 'bfg';
+    if (bfgHalo) bfgHalo.material.opacity = 0;
+    if (bfgLamp) bfgLamp.intensity = 0;
+    if (bfgGlowMat) bfgGlowMat.color.setHex(0x2f6b3f);
+  }
+  function bfgTone(f0, f1, dur, type, gain, delay) {
+    try {
+      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+      var t = AC.currentTime + (delay || 0), o = AC.createOscillator(), g = AC.createGain();
+      o.type = type || 'sawtooth'; o.frequency.setValueAtTime(f0, t);
+      if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + Math.min(0.05, dur * 0.4));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+  function bfgSpark(x, y, z, sp, life) {
+    var s = sparkPool.pop();
+    if (!s) { if (sparks.length >= SPARK_CAP) return; s = { m: new THREE.Mesh(sparkGeo, sparkMat) }; }
+    s.m.position.set(x, y, z); s.m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    s.vx = (Math.random() - 0.5) * sp; s.vy = (Math.random() - 0.5) * sp; s.vz = (Math.random() - 0.5) * sp;
+    s.life = s.max = life; s.s0 = 0.4 + Math.random() * 0.7;
+    s.m.scale.setScalar(s.s0); if (!s.m.parent) scene.add(s.m); sparks.push(s);
+  }
+  function bfgBurst(x, y, z, n, sp, life) { for (var i = 0; i < n; i++) bfgSpark(x, y, z, sp, life); }
+  function sparkStep(dt) {
+    for (var i = sparks.length - 1; i >= 0; i--) {
+      var s = sparks[i]; s.life -= dt;
+      if (s.life <= 0) { scene.remove(s.m); sparks.splice(i, 1); sparkPool.push(s); continue; }
+      s.m.position.x += s.vx * dt; s.m.position.y += s.vy * dt; s.m.position.z += s.vz * dt;
+      s.m.rotation.x += dt * 5; s.m.rotation.y += dt * 4;
+      s.m.scale.setScalar(Math.max(0.001, s.s0 * (s.life / s.max)));
+    }
+  }
+  function fireBfg() {
+    fireCool = fireRate; weapon.userData.recoil = 1;
+    var d = viewDir().clone(), m = new THREE.Mesh(bfgGeo, bfgMat);
+    m.position.copy(camera.position).add(d.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, -0.28, 0));
+    m.add(new THREE.Mesh(bfgSkinGeo, bfgSkinMat)); m.add(new THREE.Mesh(bfgAuraGeo, bfgAuraMat));
+    var lamp = new THREE.PointLight(0x3dff7a, 4.2, 30, 1.8); m.add(lamp);
+    scene.add(m);
+    shots.push({ m: m, v: d.multiplyScalar(shotSpeed), life: 3.6, spin: 1.5, prev: m.position.clone(), bfg: true, lamp: lamp, trail: 0 });
+    bfgBurst(m.position.x, m.position.y, m.position.z, 8, 7, 0.35);
+    bfgTone(180, 46, 0.55, 'sawtooth', 0.1); bfgTone(74, 30, 0.9, 'square', 0.07); bfgTone(1500, 320, 0.18, 'triangle', 0.05);
+    shakeAmp = 0.42; shakeT = shakeDur = 0.22;
+  }
   function fire() {
     if (!fp || dialogOpen || fireCool > 0 || over || !hudOn) return;
+    if (weaponKind === 'bfg') {                       // heavy, deliberate: it winds up first and goes off by itself
+      if (bfgCharge < 0) { bfgCharge = 0; bfgTone(120, 900, BFG_WIND, 'sawtooth', 0.055); bfgTone(300, 1800, BFG_WIND, 'square', 0.02); }
+      return;
+    }
     fireCool = fireRate; weapon.userData.recoil = 1;
     var d = viewDir().clone(), m = new THREE.Mesh(shotGeo, shotMat);
     m.position.copy(camera.position).add(d.clone().multiplyScalar(0.9)).add(new THREE.Vector3(0.15, -0.15, 0));
@@ -604,19 +715,45 @@
       sh.prev.copy(m.position);
       sh.v.y -= shotGrav * dt; m.position.addScaledVector(sh.v, dt); m.rotation.x += dt * 12; m.rotation.z += dt * 9; sh.life -= dt;
       var gone = false;
-      if (boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev)) gone = true; } catch (err) { console.error(err); } }   // the boss module applies its own damage and feedback
+      if (boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev, sh.bfg ? 'bfg' : 'paper')) gone = true; } catch (err) { console.error(err); } }   // the boss module applies its own damage and feedback
       gone = gone || sh.life <= 0 || m.position.y < 0.05 || collide(m.position.x, m.position.z, 0.05);
+      if (!gone && sh.bfg) {                     // the plasma ball trails sparks and lights what it passes
+        sh.trail += dt;
+        while (sh.trail > 0.035) { sh.trail -= 0.035; bfgSpark(m.position.x + (Math.random() - 0.5) * 0.5, m.position.y + (Math.random() - 0.5) * 0.5, m.position.z + (Math.random() - 0.5) * 0.5, 2.5, 0.45); }
+        if (sh.lamp) sh.lamp.intensity = 3.6 + Math.sin(sh.life * 40) * 0.8;
+        var grow = Math.min(1, (3.6 - sh.life) / 0.14);      // swells out of the muzzle instead of filling the view
+        m.scale.setScalar((0.3 + 0.7 * grow) * (1 + Math.sin(sh.life * 26) * 0.07));
+      }
       if (!gone) {
-        for (var k = 0; k < BADDIES.length; k++) { var b = BADDIES[k]; if (b.down > 0) continue; var bp = b.mesh.position; if (Math.hypot(m.position.x - bp.x, m.position.z - bp.z) < 1.0 && m.position.y > 0 && m.position.y < 3.2) { shotHit(b); gone = true; break; } }
+        for (var k = 0; k < BADDIES.length; k++) { var b = BADDIES[k]; if (b.down > 0) continue; var bp = b.mesh.position; if (Math.hypot(m.position.x - bp.x, m.position.z - bp.z) < (sh.bfg ? 1.8 : 1.0) && m.position.y > 0 && m.position.y < 3.2) { shotHit(b); gone = true; break; } }
         if (!gone) for (k = 0; k < NPCS.length; k++) { var n = NPCS[k]; if (Math.hypot(m.position.x - n.x, m.position.z - n.z) < 1.0 && m.position.y < 3.2) { showToast('THAT WAS A COLLEAGUE'); blip(200, .1); gone = true; break; } }
       }
-      if (gone) { scene.remove(m); shots.splice(i, 1); }
+      if (gone) {
+        if (sh.bfg) { bfgBurst(m.position.x, m.position.y, m.position.z, 12, 11, 0.5); bfgTone(140, 40, 0.4, 'square', 0.06); }
+        scene.remove(m); shots.splice(i, 1);
+      }
     }
+    sparkStep(dt);
     if (fireCool > 0) fireCool -= dt;
+    // the BFG wind-up: F starts it, it goes off on its own a beat later whether or not you are still holding
+    if (bfgCharge >= 0) {
+      if (weaponKind !== 'bfg' || over || !fp || !hudOn || dialogOpen) bfgCharge = -1;
+      else { bfgCharge += dt; if (bfgCharge >= BFG_WIND) { bfgCharge = -1; fireBfg(); } }
+    }
     // weapon bob + recoil
-    var r = weapon.userData.recoil || 0; if (r > 0) weapon.userData.recoil = r = Math.max(0, r - dt * 5);
-    weapon.position.set(0.3 + Math.sin(pstate.walkT) * 0.02 * Math.min(1, pstate.speed / 9), -0.16 + Math.abs(Math.cos(pstate.walkT)) * 0.025 * Math.min(1, pstate.speed / 9) + r * 0.07, -0.62 + r * 0.15);
-    weapon.rotation.x = -r * 0.6;
+    var r = weapon.userData.recoil || 0; if (r > 0) weapon.userData.recoil = r = Math.max(0, r - dt * (weaponKind === 'bfg' ? 2.6 : 5));
+    var W = WPOSE[weaponKind] || WPOSE.paper, sway = Math.min(1, pstate.speed / 9) * W.bob;
+    var tight = W.tight && (camera.aspect || 1.78) < 1.5 ? 1 : 0;   // a 4:3 phone view: hold the BFG smaller and further off
+    weapon.scale.setScalar(W.s * (tight ? 0.8 : 1));
+    weapon.position.set(W.x + Math.sin(pstate.walkT) * 0.02 * sway, W.y + Math.abs(Math.cos(pstate.walkT)) * 0.025 * sway + r * W.ky, W.z - tight * 0.1 + r * W.kz);
+    weapon.rotation.set(W.rx - r * W.krot, W.ry, 0);
+    if (weaponKind === 'bfg') {                              // the core and the vents brighten through the wind-up
+      var ch = bfgCharge >= 0 ? Math.min(1, bfgCharge / BFG_WIND) : Math.max(0, r - 0.55) * 2.2;
+      var g2 = Math.max(0.12 + 0.05 * Math.sin(clock.elapsedTime * 3), ch);
+      if (bfgGlowMat) bfgGlowMat.color.setRGB(0.18 + 0.8 * g2 * g2, 0.35 + 0.65 * g2, 0.22 + 0.5 * g2 * g2);
+      if (bfgHalo) { bfgHalo.material.opacity = 0.15 + 0.85 * ch; bfgHalo.scale.setScalar(0.7 + ch * 0.9); }
+      if (bfgLamp) bfgLamp.intensity = 0.35 + 5 * ch;
+    }
   }
   function rebut(b) {
     b.flee = 7; b.cool = 2; rebuttals++;
@@ -1161,8 +1298,11 @@
       camera.rotation.z += (Math.random() - 0.5) * sa * 0.04;
     }
 
-    if (cave && !caveOn && !endgame && !over && !dialogOpen &&
-        player.position.x * player.position.x + player.position.z * player.position.z < 18.5) enterCave();
+    if (cave && !caveOn && !endgame && !over && !dialogOpen) {
+      var fd2 = player.position.x * player.position.x + player.position.z * player.position.z;
+      if (fd2 > 49) caveArmed = true;                      // he spawns 4 units out; walk away first
+      else if (caveArmed && fd2 < 16.8) enterCave();       // then walking back into it drops you in
+    }
 
     // prompt
     var near = nearbyTarget();
@@ -1200,6 +1340,7 @@
       if (name === 'space') { if (R.boss) R.boss(false); if (musicWanted) R.play('space'); return; }
       if (name === 'quest') { if (R.boss) R.boss(false); if (musicWanted) R.play('quest'); return; }
       if (name === 'cave') { if (R.boss) R.boss(false); if (musicWanted && R.play) R.play('cave'); return; }
+      if (name === 'title') { if (R.boss) R.boss(false); if (musicWanted) { try { R.play('title'); } catch (e) { R.play('quest'); } } return; }
     } catch (e) { console.error(e); }
   }
   var api = {
@@ -1215,7 +1356,9 @@
     teleport: function (x, z) { var p = safeSpot(x, z); player.position.set(p.x, 0, p.z); pstate.y = 0; pstate.vy = 0; pstate.air = false; pstate.speed = 0; },
     lookAt: faceTo, shake: function (amp, secs) { shakeAmp = amp; shakeT = shakeDur = secs || 0.5; },
     setHud: setHud, lockEnvironment: function (on) { envLocked = !!on; },
-    setWeapon: function (o) { if (o.rate) fireRate = o.rate; if (o.speed) shotSpeed = o.speed; if (o.gravity !== undefined) shotGrav = o.gravity; },
+    // setWeapon({kind:'bfg'|'paper', rate, speed, gravity}). kind is applied first: 'bfg' stashes the ballistics
+    // in force, 'paper' puts them back, and anything named in the same call then overrides.
+    setWeapon: function (o) { o = o || {}; if (o.kind) setWeaponKind(o.kind); if (o.rate) fireRate = o.rate; if (o.speed) shotSpeed = o.speed; if (o.gravity !== undefined) shotGrav = o.gravity; },
     music: music, musicWanted: function () { return musicWanted; }, setMusicWanted: function (on) { musicWanted = !!on; if (!on && window.Riff) Riff.stop(); },
     stinger: function (name) { try { if (window.Riff && Riff.stinger && musicWanted) Riff.stinger(name); } catch (e) {} },
     isOver: function () { return over; },
@@ -1227,6 +1370,32 @@
   try { boss = window.QuestBoss ? window.QuestBoss(api) : null; } catch (e) { console.error(e); boss = null; }
   try { shmup = window.QuestShmup ? window.QuestShmup(api) : null; } catch (e) { console.error(e); shmup = null; }
   try { cave = window.QuestCave ? window.QuestCave(api) : null; } catch (e) { console.error(e); cave = null; }
+
+  /* ---- the title sequence lives inside the start overlay: attract, then a scored cinematic, then PRESS START ---- */
+  var intro = null;
+  try { intro = window.QuestIntro ? window.QuestIntro(api) : null; } catch (e) { console.error(e); intro = null; }
+  if (intro && start) {
+    (function () {
+      var kids = [], i;
+      for (i = 0; i < start.children.length; i++) kids.push(start.children[i]);
+      kids.forEach(function (k) { k.hidden = true; });          // the module draws its own logo and prompt
+      start.classList.add('is-intro');
+      try {
+        intro.start({
+          host: start,
+          onScore: function (name) { try { music(name === 'title' ? 'title' : name); } catch (e) {} },
+          onDone: function () { try { intro.stop(); } catch (e) {} start.classList.remove('is-intro'); begin(); }
+        });
+      } catch (e) { console.error(e); }
+      if (!intro || !intro.active) {                             // fall back to the plain overlay
+        if (intro && intro.startError) console.error('QuestIntro failed to start: ' + intro.startError);
+        try { if (intro) intro.stop(); } catch (e2) {}
+        intro = null;
+        kids.forEach(function (k) { k.hidden = false; });
+        start.classList.remove('is-intro');
+      }
+    })();
+  }
 
   function startEndgame() {
     if (endgame) return;

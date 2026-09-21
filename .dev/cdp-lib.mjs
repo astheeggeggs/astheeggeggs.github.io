@@ -37,7 +37,17 @@ export async function launch({ port, profile, width = 1280, height = 900 }) {
   return {
     errors, logs, sleep, ev, send,
     goto: async (url, wait = 3500) => { await send('Page.navigate', { url }); await sleep(wait); },
-    startGame: async () => { await ev(`document.documentElement.style.scrollBehavior='auto'; document.getElementById('quest').scrollIntoView({block:'start'}); document.querySelector('#quest .q-start').click(); 'ok'`); await sleep(600); },
+    // The title sequence (intro.js) sits on .q-start: click 1 = insert coin, 2 = skip the cinematic,
+    // 3 = press start. So click until the overlay actually goes away (one click if no intro is present).
+    startGame: async () => {
+      await ev(`document.documentElement.style.scrollBehavior='auto'; document.getElementById('quest').scrollIntoView({block:'start'}); 'ok'`);
+      for (let i = 0; i < 10; i++) {
+        await ev(`(function(){var s=document.querySelector('#quest .q-start'); if (s) s.click(); return !!s})()`);
+        await sleep(450);
+        if (await ev(`(function(){var s=document.querySelector('#quest .q-start'); return !s || s.hidden})()`)) break;
+      }
+      await sleep(600);
+    },
     keyDown: code => keyEv('keyDown', code), keyUp: code => keyEv('keyUp', code),
     tap: async (code, ms = 60) => { await keyEv('keyDown', code); await sleep(ms); await keyEv('keyUp', code); },
     mouse: (type, x, y, button = 'left') => send('Input.dispatchMouseEvent', { type, x, y, button, buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 }),   // type: mousePressed | mouseReleased | mouseMoved

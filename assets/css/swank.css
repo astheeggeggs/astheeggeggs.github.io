@@ -426,6 +426,10 @@ section { padding: clamp(2.5rem, 6vw, 4.5rem) 0; }
 .q-start .q-press { margin-top: 1.4rem; font-size: .75rem; animation: blink 1s steps(2) infinite; text-shadow: 2px 2px 0 #000; }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* the title sequence draws its own logo, city and prompt into a pixel canvas that fills the overlay */
+.q-start.is-intro { background: none; display: block; padding: 0; }
+.q-start.is-intro > canvas { display: block; width: 100%; height: 100%; }
+
 .q-prompt {
   position: absolute; z-index: 3; transform: translate(-50%, -100%); pointer-events: none;
   font-family: "Press Start 2P", var(--mono); font-size: .55rem; color: #1a1d26; background: #fcd34d;
