@@ -1482,7 +1482,7 @@
     var self = { start: start, click: click, stop: stop, phase: 'attract', active: false, beats: beats, startError: null,
                  drawErrors: 0, drawError: null,
                  _seek: seek, _setPhase: setPhase, _buffer: function () { return buf; } };
-    var opts = null, raf = 0, last = 0, T = 0, flourish = 0, doneTimer = 0, doneSent = false, scoreSent = false, onRes = null, frozen = false;
+    var opts = null, raf = 0, last = 0, T = 0, audioClock = null, audioT0 = 0, flourish = 0, doneTimer = 0, doneSent = false, scoreSent = false, onRes = null, frozen = false;
 
     function fit() {
       if (!view || !host) return;
@@ -1533,7 +1533,17 @@
       if (name !== 'attract' && name !== 'cinematic' && name !== 'title') return;
       self.phase = name; T = 0; flourish = 0;
       if (name === 'cinematic') { try { buildCast(); } catch (e) { } }
-      if (name === 'cinematic' && !scoreSent) { scoreSent = true; try { if (opts && opts.onScore) opts.onScore('title'); } catch (e) { } }
+      if (name === 'cinematic' && !scoreSent) {
+        scoreSent = true;
+        try { if (opts && opts.onScore) opts.onScore('title'); } catch (e) { }
+        // The cinematic is scored to picture: fifteen beats on bar lines at 128 BPM. Wall-clock frame
+        // deltas drift against the audio clock, and a few dropped frames would put the picture
+        // permanently behind the music, so from here the cinematic is driven BY the audio clock.
+        try {
+          var ac0 = api && api.audio && api.audio();
+          if (ac0 && typeof ac0.currentTime === 'number') { audioClock = ac0; audioT0 = ac0.currentTime; }
+        } catch (e) { audioClock = null; }
+      }
       render();
     }
 
@@ -1549,6 +1559,11 @@
       var dt = last ? (now - last) / 1000 : 1 / 60; last = now;
       if (dt > 0.25) dt = 0.25;
       if (document.hidden || frozen) return;
+      if (audioClock && self.phase === 'cinematic') {          // lock the picture to the score
+        var want = audioClock.currentTime - audioT0, drift = want - T;
+        if (drift > -2 && drift < 8) dt = drift > 0 ? drift : 0;   // a suspended or reset context falls back to dt
+        else audioT0 = audioClock.currentTime - T;
+      }
       update(dt);
       render();
     }
@@ -1558,7 +1573,7 @@
       frozen = false;
       try {
         if (self.phase === 'attract') { setPhase('cinematic'); return true; }
-        if (self.phase === 'cinematic') { setPhase('title'); return true; }
+        if (self.phase === 'cinematic') { audioClock = null; setPhase('title'); return true; }
         if (!doneSent && flourish <= 0) {
           flourish = 0.0001;
           doneTimer = setTimeout(finish, 430);   // belt and braces: a starved rAF must not delay the hand-off
