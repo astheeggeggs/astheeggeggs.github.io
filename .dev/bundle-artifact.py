@@ -7,7 +7,7 @@ import re, base64, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parent.parent; os.chdir(ROOT)
 SCHOLAR = 'https://scholar.google.com/citations?user=-OiUY4kAAAAJ&hl=en'; GH = 'https://github.com/astheeggeggs'
 html = open('_site/index.html').read(); css = open('assets/css/swank.css').read()
-js = {n: open('assets/js/%s.js' % n).read() for n in ('riff', 'boss', 'shmup', 'quest') if os.path.exists('assets/js/%s.js' % n)}
+js = {n: open('assets/js/%s.js' % n).read() for n in ('riff', 'intro', 'cave', 'boss', 'shmup', 'quest') if os.path.exists('assets/js/%s.js' % n)}
 img = 'data:image/jpeg;base64,' + base64.b64encode(open('assets/me.jpg', 'rb').read()).decode()
 body = html[html.index('<header'):html.index('</footer>') + len('</footer>')]
 body = re.sub(r'<nav class="site-nav">.*?</nav>', '<nav class="site-nav"><a href="%s" target="_blank" rel="noopener">Scholar</a><a href="%s" target="_blank" rel="noopener">GitHub</a></nav>' % (SCHOLAR, GH), body, flags=re.S)
@@ -24,10 +24,10 @@ js['quest'] = q
 for n, src in js.items():
     bad = re.findall(r"['\"]/(?:publications|research|code)/['\"]", src)
     assert not bad, '%s.js still has internal links: %r' % (n, bad)
-scripts = '\n'.join('<script>\n%s\n</script>' % js[n] for n in ('riff', 'boss', 'shmup', 'quest') if n in js)
+scripts = '\n'.join('<script>\n%s\n</script>' % js[n] for n in ('riff', 'intro', 'cave', 'boss', 'shmup', 'quest') if n in js)
 out = '''<title>Palmer's Progress</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Press+Start+2P&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Press+Start+2P&family=Luckiest+Guy&display=swap" rel="stylesheet">
 <style>
 %s
 .preview-note { font-family: var(--mono); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: #0b0c10; background: #fcd34d; text-align: center; padding: .55rem 1rem; }
