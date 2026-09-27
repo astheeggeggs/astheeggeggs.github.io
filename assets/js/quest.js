@@ -3,6 +3,13 @@
    Three.js third-person world. WASD / arrows to run, Space to jump, F to talk,
    drag to orbit the camera, Esc closes a sign. Touch pad on mobile.
    The longer you play, the less pleasant it gets. That is intentional.
+   Finish it and the ending offers a second loop, MASTER QUEST: the same town
+   mirrored left to right, nine faster reviewers who have read version 1 (never
+   quite as fast as he is, and they give him a few seconds' start), dread that
+   comes sooner, three hearts, no markers over the buildings (a building's door
+   and roof sign turn green once it has been read), its own score, a green cap
+   from Hyrule on his head, and a different boss at the end of it.
+   LOOP / MQ / mx() below decide all that.
    ============================================================================= */
 (function () {
   'use strict';
@@ -20,6 +27,15 @@
   var start = root.querySelector('.q-start');
   var prompt = root.querySelector('.q-prompt');
   var toast = root.querySelector('.q-toast');
+
+  /* ------------------------------------------------------------ which loop
+     ?loop=2 for one session, else localStorage quest.loop (set by api.startLoop2() from the shooter's first ending).
+     Decided before the town exists, because in MASTER QUEST the town is built mirrored: mx() flips every x that is
+     placed below (buildings, people, desks, props), so colliders, doors, signs and the reviewers' map all follow. */
+  function qp(name, dflt) { var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : dflt; }
+  var LOOP = 1; try { LOOP = parseInt(qp('loop') || localStorage.getItem('quest.loop') || '1', 10); } catch (e) { LOOP = 1; } if (LOOP !== 2) LOOP = 1;
+  var MQ = LOOP === 2;
+  function mx(x) { return MQ ? -x : x; }
 
   /* ------------------------------------------------------------ content */
   var PLACES = [
@@ -77,6 +93,22 @@
   var BADDIES = [
     { x: -20, z: -6 }, { x: 22, z: -4 }, { x: -14, z: 30 }, { x: 30, z: 30 }, { x: 8, z: 12 }, { x: -44, z: 4 }
   ];
+  // MASTER QUEST: the same reviewers, having read version 1, plus three more desks; then the whole town flips.
+  var DEMANDS2 = [
+    'Reviewer 2: "I reviewed this last time. It has not improved."',
+    'Reviewer 1: "The authors have addressed none of my concerns, including the ones I did not raise."',
+    'Reviewer 3: "Please repeat the analysis in a cohort that does not yet exist."',
+    'Reviewer 5: "I was not a reviewer on the first submission. I have concerns about it anyway."',
+    'Reviewer 2: "The response to reviewers is longer than the manuscript. Please shorten both."',
+    'Reviewer 4: "Minor comment: the entire premise."',
+    'Reviewer 6: "Cite my paper. I am aware that you did. Cite it again."',
+    'Reviewer 7: "The p-value is now too small. I do not believe it."',
+    'Reviewer 8: "I have read Supplementary Note 4. It has not helped."',
+    'Reviewer 9: "Reject. I will explain my reasons in my review of the resubmission."',
+    'Editor: "We have secured nine reviewers. They have met."'
+  ];
+  if (MQ) { DEMANDS = DEMANDS2; BADDIES.push({ x: 0, z: -34 }, { x: 46, z: 10 }, { x: -36, z: 36 }); }
+  PLACES.forEach(function (p) { p.x = mx(p.x); }); NPCS.forEach(function (n) { n.x = mx(n.x); }); BADDIES.forEach(function (b) { b.x = mx(b.x); });
 
   /* ------------------------------------------------------------ rng */
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -114,7 +146,7 @@
   scene.add(sun);
 
   var flat = function (c) { return new THREE.MeshLambertMaterial({ color: c }); };
-  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = 90 / 0.7, FP_AT = 0.7;      // seconds of play until the world is fully wrong
+  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = (MQ ? 57 : 90) / 0.7, FP_AT = 0.7;      // seconds of play until the world is fully wrong (first person at 90 s; 57 s in MASTER QUEST)
   var DAY = { sky: new THREE.Color(0x8ec9ff), hemiSky: new THREE.Color(0xbfe4ff), hemiGround: new THREE.Color(0x3a7a3a), sun: new THREE.Color(0xfff2d0) };
   var DUSK = { sky: new THREE.Color(0x2a0a1e), hemiSky: new THREE.Color(0x5a1a2a), hemiGround: new THREE.Color(0x140a0a), sun: new THREE.Color(0xff3b2a) };
   var fading = [];   // { mat, from, to }
@@ -141,7 +173,7 @@
   // patchy grass
   for (var i = 0; i < 90; i++) {
     var g = new THREE.Mesh(new THREE.CircleGeometry(2 + rnd() * 5, 7), flat(rnd() < 0.5 ? 0x3a8f54 : 0x47a664));
-    g.rotation.x = -Math.PI / 2; g.position.set((rnd() * 2 - 1) * WORLD, 0.01, (rnd() * 2 - 1) * WORLD); g.receiveShadow = true; scene.add(g);
+    g.rotation.x = -Math.PI / 2; g.position.set(mx((rnd() * 2 - 1) * WORLD), 0.01, (rnd() * 2 - 1) * WORLD); g.receiveShadow = true; scene.add(g);
   }
 
   // roads
@@ -149,7 +181,7 @@
     var m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), flat(0xcbb47e));
     m.rotation.x = -Math.PI / 2; m.position.set(x, 0.02, z); m.receiveShadow = true; scene.add(m);
   }
-  road(0, -10, 90, 4); road(0, 10, 90, 4); road(0, 0, 4, 24); road(-40, 0, 4, 24); road(40, 0, 4, 24);
+  road(0, -10, 90, 4); road(0, 10, 90, 4); road(0, 0, 4, 24); road(mx(-40), 0, 4, 24); road(mx(40), 0, 4, 24);
   function kerb(x, z, w, d) { var k = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, d), flat(0xb8b09a)); k.position.set(x, 0.06, z); k.receiveShadow = true; k.castShadow = true; scene.add(k); }
   [-12.2, -7.8, 7.8, 12.2].forEach(function (z) { kerb(0, z, 90, 0.35); });
   var bushGeo = new THREE.IcosahedronGeometry(0.7, 2), bushMat = fade(flat(0x2f8f4e), 0x2a1a10);
@@ -168,7 +200,7 @@
   for (i = 0; i < 40; i++) {
     var a = (i / 40) * Math.PI * 2, R = WORLD + 12 + rnd() * 8;
     var hill = new THREE.Mesh(new THREE.IcosahedronGeometry(9 + rnd() * 9, 2), flat(rnd() < .5 ? 0x2f7d4a : 0x35895a));
-    hill.scale.y = 0.6 + rnd() * 0.6; hill.position.set(Math.cos(a) * R, -2, Math.sin(a) * R); hill.castShadow = true; scene.add(hill);
+    hill.scale.y = 0.6 + rnd() * 0.6; hill.position.set(mx(Math.cos(a) * R), -2, Math.sin(a) * R); hill.castShadow = true; scene.add(hill);
   }
 
   // trees
@@ -205,7 +237,7 @@
     return false;
   }
   for (i = 0; i < 170; i++) {
-    var tx = (rnd() * 2 - 1) * WORLD, tz = (rnd() * 2 - 1) * WORLD;
+    var tx = mx((rnd() * 2 - 1) * WORLD), tz = (rnd() * 2 - 1) * WORLD;
     if (!blocked(tx, tz, 2.5)) tree(tx, tz);
   }
   // flowers
@@ -213,7 +245,7 @@
   var flowerMats = [fade(flat(0xf5e663), 0x3a2a10), fade(flat(0xf78fb3), 0x3a1018), fade(flat(0xffffff), 0x2a2020), fade(flat(0x8ad4ff), 0x1a1a2a), fade(flat(0xfb7185), 0x3a0a10)];
   var stemMat = flat(0x2f7d4a);
   for (i = 0; i < 260; i++) {
-    tx = (rnd() * 2 - 1) * WORLD; tz = (rnd() * 2 - 1) * WORLD;
+    tx = mx((rnd() * 2 - 1) * WORLD); tz = (rnd() * 2 - 1) * WORLD;
     if (blocked(tx, tz, 1)) continue;
     var fl = new THREE.Group();
     var st = new THREE.Mesh(stemGeo, stemMat); st.position.y = 0.2; fl.add(st);
@@ -223,7 +255,7 @@
   // rocks
   var rockGeo = new THREE.DodecahedronGeometry(0.6, 1), rockMat = flat(0x8b8f9a);
   for (i = 0; i < 40; i++) {
-    tx = (rnd() * 2 - 1) * WORLD; tz = (rnd() * 2 - 1) * WORLD;
+    tx = mx((rnd() * 2 - 1) * WORLD); tz = (rnd() * 2 - 1) * WORLD;
     if (blocked(tx, tz, 1.5)) continue;
     var rk = new THREE.Mesh(rockGeo, rockMat); var rs = 0.5 + rnd(); rk.scale.set(rs, rs * 0.6, rs); rk.position.set(tx, 0.1, tz); rk.rotation.set(rnd(), rnd(), rnd()); rk.castShadow = true; scene.add(rk);
     colliders.push({ x: tx, z: tz, r: 0.6 * rs });
@@ -235,11 +267,11 @@
   function lamp(x, z) {
     var g = new THREE.Group();
     var po = new THREE.Mesh(postGeo, postMat); po.position.y = 1.6; po.castShadow = true; g.add(po);
-    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 0.08), postMat); arm.position.set(0.3, 3.1, 0); g.add(arm);
-    var la = new THREE.Mesh(lampGeo, lampMat); la.position.set(0.62, 3.0, 0); g.add(la);
+    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 0.08), postMat); arm.position.set(mx(0.3), 3.1, 0); g.add(arm);
+    var la = new THREE.Mesh(lampGeo, lampMat); la.position.set(mx(0.62), 3.0, 0); g.add(la);
     g.position.set(x, 0, z); scene.add(g); colliders.push({ x: x, z: z, r: 0.25 });
   }
-  for (i = -36; i <= 36; i += 12) { lamp(i, -13); lamp(i, 13); }
+  for (i = -36; i <= 36; i += 12) { lamp(mx(i), -13); lamp(mx(i), 13); }
   // benches
   var benchSeat = new THREE.BoxGeometry(1.8, 0.1, 0.5), benchLeg = new THREE.BoxGeometry(0.1, 0.45, 0.45), woodMat = flat(0x8a5a2b);
   function bench(x, z, rot) {
@@ -249,7 +281,7 @@
     [-0.8, 0.8].forEach(function (lx) { var l = new THREE.Mesh(benchLeg, postMat); l.position.set(lx, 0.25, 0); g.add(l); });
     g.position.set(x, 0, z); g.rotation.y = rot; scene.add(g); colliders.push({ x: x, z: z, r: 0.9 });
   }
-  bench(-6, -7, 0); bench(6, -7, 0); bench(-6, 7, Math.PI); bench(6, 7, Math.PI);
+  bench(mx(-6), -7, 0); bench(mx(6), -7, 0); bench(mx(-6), 7, Math.PI); bench(mx(6), 7, Math.PI);
   // fountain at the crossroads
   var fountain = { group: new THREE.Group(), collider: { x: 0, z: 0, r: 3.0 } };
   scene.add(fountain.group);
@@ -269,11 +301,11 @@
   for (i = 0; i < 14; i++) {
     var cg = new THREE.Group();
     for (var k = 0; k < 5; k++) { var cp = new THREE.Mesh(new THREE.SphereGeometry(2 + rnd() * 2.5, 10, 8), cloudMat); cp.position.set((rnd() - .5) * 8, (rnd() - .5) * 1.5, (rnd() - .5) * 4); cg.add(cp); }
-    cg.position.set((rnd() * 2 - 1) * 90, 28 + rnd() * 10, (rnd() * 2 - 1) * 90); cg.userData.v = 0.4 + rnd() * 0.6; scene.add(cg); clouds.push(cg);
+    cg.position.set(mx((rnd() * 2 - 1) * 90), 28 + rnd() * 10, (rnd() * 2 - 1) * 90); cg.userData.v = 0.4 + rnd() * 0.6; scene.add(cg); clouds.push(cg);
   }
 
   /* ------------------------------------------------------------ signs */
-  function labelSprite(text, bg, fg) {
+  function labelTex(text, bg, fg) {
     var c = document.createElement('canvas'); c.width = 512; c.height = 96;
     var x = c.getContext('2d');
     x.fillStyle = '#1a1d26'; x.fillRect(0, 0, 512, 96);
@@ -281,7 +313,10 @@
     x.fillStyle = fg; x.font = 'bold 40px "Press Start 2P", monospace'; x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillText(text, 256, 52);
     var tex = new THREE.CanvasTexture(c); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
-    var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: true }));
+    return tex;
+  }
+  function labelSprite(text, bg, fg) {
+    var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex(text, bg, fg), depthTest: true }));
     sp.scale.set(8, 1.5, 1);
     return sp;
   }
@@ -295,14 +330,14 @@
     var roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(p.w, p.d) * 0.78, p.h * 0.45, 4), flat(p.roof));
     roof.position.y = p.h + p.h * 0.225; roof.rotation.y = Math.PI / 4; roof.castShadow = true; grp.add(roof);
     var eave = new THREE.Mesh(new THREE.BoxGeometry(p.w + 0.8, 0.25, p.d + 0.8), flat(p.roof)); eave.position.y = p.h + 0.1; eave.castShadow = true; grp.add(eave);
-    var chimney = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.8), flat(0x6b5a4a)); chimney.position.set(p.w * 0.3, p.h + 1.0, -p.d * 0.2); chimney.castShadow = true; grp.add(chimney);
+    var chimney = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.8), flat(0x6b5a4a)); chimney.position.set(mx(p.w * 0.3), p.h + 1.0, -p.d * 0.2); chimney.castShadow = true; grp.add(chimney);
     // plinth and steps
     var plinth = new THREE.Mesh(new THREE.BoxGeometry(p.w + 0.6, 0.3, p.d + 0.6), flat(0x9aa0ad)); plinth.position.y = 0.15; plinth.receiveShadow = true; grp.add(plinth);
     var steps = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.2, 1.2), flat(0xb8bcc8)); steps.position.set(0, 0.1, p.d / 2 + 0.8); steps.receiveShadow = true; grp.add(steps);
     // door with frame, on the +z face
     var frame = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.7, 0.35), flat(0xf4f6fb)); frame.position.set(0, 1.35, p.d / 2 + 0.05); grp.add(frame);
     var door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.4, 0.3), flat(0x1a1d26)); door.position.set(0, 1.2, p.d / 2 + 0.12); grp.add(door);
-    var knob = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), flat(0xfcd34d)); knob.position.set(0.55, 1.2, p.d / 2 + 0.3); grp.add(knob);
+    var knob = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), flat(0xfcd34d)); knob.position.set(mx(0.55), 1.2, p.d / 2 + 0.3); grp.add(knob);
     // windows
     var winMat = new THREE.MeshLambertMaterial({ color: 0xffe9a8, emissive: 0xffd77a, emissiveIntensity: 0.5 }); winMats.push(winMat);
     for (var wx = -p.w / 2 + 1.5; wx <= p.w / 2 - 1.5; wx += 2.2) {
@@ -316,13 +351,13 @@
     }
     var sign = labelSprite(p.short, '#f1d7b0', '#1a1d26'); sign.position.set(0, p.h + p.h * 0.45 + 1.4, 0); grp.add(sign);
     grp.position.set(p.x, 0, p.z); scene.add(grp);
-    p.group = grp; p.collider = { x: p.x, z: p.z, hw: p.w / 2 + 0.4, hd: p.d / 2 + 0.4 }; p.bushes = [];
+    p.group = grp; p.sign = sign; p.doorMesh = door; p.collider = { x: p.x, z: p.z, hw: p.w / 2 + 0.4, hd: p.d / 2 + 0.4 }; p.bushes = [];
     colliders.push(p.collider);
     p.door = { x: p.x, z: p.z + p.d / 2 + 1.6 };
     [-1, 1].forEach(function (sd) { var bsh = new THREE.Mesh(bushGeo, bushMat); bsh.position.set(p.x + sd * 1.9, 0.45, p.z + p.d / 2 + 0.6); bsh.scale.set(1, 0.8, 1); bsh.castShadow = true; scene.add(bsh); p.bushes.push(bsh); });
-    // marker
+    // marker (MASTER QUEST hides them: the signs stay, so the player has to read the town)
     var mk = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), new THREE.MeshLambertMaterial({ color: 0xfcd34d, emissive: 0xfcd34d, emissiveIntensity: 0.5 }));
-    mk.position.set(p.door.x, 3.6, p.door.z - 1.0); mk.castShadow = true; scene.add(mk);
+    mk.position.set(p.door.x, 3.6, p.door.z - 1.0); mk.castShadow = true; mk.visible = !MQ; scene.add(mk);
     p.marker = mk; markers.push(mk);
   });
 
@@ -444,6 +479,36 @@
   var player = boxMan({});
   player.position.set(0, 0, 4);
   scene.add(player);
+  // MASTER QUEST: he has been here before, so he dresses for it. A green cap from Hyrule: a band over the hair, a
+  // crown, then three shrinking boxes and a tip, each hung off the end of the last so the whole thing flops back
+  // and down off his head. It streams out behind when he runs and flips over when he jumps (capFlop, in update).
+  // Loop 1 never builds it. In first person the camera ends up inside his head, so it goes before the lens reaches it.
+  var cap = null;
+  if (MQ) (function () {
+    var green = flat(0x43a047), deep = flat(0x2e7d32);
+    function box(w, h, d, mat, x, y, z, parent) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m; }
+    var base = new THREE.Group(); base.position.set(0, 2.84, 0); player.add(base);          // the top of his hair
+    box(0.94, 0.18, 0.84, deep, 0, 0.05, -0.06, base);                                      // band: the fringe still shows in front
+    box(0.8, 0.2, 0.66, green, 0, 0.22, -0.12, base);                                       // crown
+    var joints = [], parent = base, LEN = [0.44, 0.38, 0.32, 0.24], SIZE = [[0.66, 0.24], [0.5, 0.2], [0.36, 0.16], [0.2, 0.12]];
+    var REST = [0.12, -0.42, -0.5, -0.45], LEAN = [0, 0.3, 0.22, 0.14];                     // radians about x (+ lifts, - droops), and a lean to his left
+    for (var k = 0; k < 4; k++) {
+      var j = new THREE.Group();
+      if (k) j.position.set(0, 0, -LEN[k - 1] + 0.04); else j.position.set(0, 0.24, -0.34);
+      j.rotation.x = REST[k]; j.rotation.y = LEAN[k]; parent.add(j);
+      box(SIZE[k][0], SIZE[k][1], LEN[k], k % 2 ? deep : green, 0, 0, -LEN[k] / 2, j);
+      joints.push(j); parent = j;
+    }
+    cap = { base: base, joints: joints, rest: REST, share: [0.35, 0.8, 0.9, 0.7], at: new THREE.Vector3() };
+  })();
+  function capFlop(dt) {
+    var run = Math.min(1, pstate.speed / 9), k = Math.min(1, dt * 9), sw = Math.sin(pstate.walkT) * run, i, j;
+    var lift = run * 0.42 - (pstate.air ? pstate.vy * 0.035 : 0);        // running: out behind him; going up: it lags and flops; coming down: it rises
+    lift = Math.max(-0.6, Math.min(0.9, lift));
+    for (i = 0; i < cap.joints.length; i++) { j = cap.joints[i]; j.rotation.x += (cap.rest[i] + lift * cap.share[i] - j.rotation.x) * k; }
+    cap.joints[0].rotation.y += (sw * 0.22 - cap.joints[0].rotation.y) * k;                // swings with his stride
+    cap.joints[2].rotation.z += (-sw * 0.16 - cap.joints[2].rotation.z) * k;
+  }
   var pstate = { yaw: 0, speed: 0, walkT: 0, y: 0, vy: 0, air: false, land: 0 };
 
   NPCS.forEach(function (n) {
@@ -469,24 +534,80 @@
   var hudRev = root.querySelector('[data-hud="revisions"]');
   try { found = JSON.parse(localStorage.getItem('quest.found') || '{}') || {}; } catch (e) { found = {}; }
   hudTotal.textContent = PLACES.length;
+  if (MQ) {
+    // The gold pill: this is the second loop, and the town knows it. Anyone here has finished the game once and knows
+    // the keys, so the pill takes the keys pill's place. It stays only while the HUD still fits on one row: the moment
+    // anything would wrap (a phone, a narrow window, the hearts arriving in first person, double-digit counters) mqFit()
+    // swaps it for a gold MQ sticker on the FACTS pill's corner, out of the text flow. Toasts shrink to their text and
+    // hang just below the HUD, however tall it has become; with the d-pad on screen they move right, clear of the pad,
+    // in a smaller font. The fights place their own toasts (.qb-on / .qm-on), so these rules stand aside for them.
+    root.classList.add('is-mq');
+    var mqStyle = document.createElement('style');
+    mqStyle.textContent = '.quest.is-mq .q-hud .q-keys{display:none}' +
+      '.quest.is-mq .q-hud .q-loop{background:#fcd34d;color:#1a1d26;border-color:#1a1d26;text-shadow:none;white-space:nowrap}' +
+      '.quest.is-mq .q-hud > .q-pill:first-child{position:relative}' +
+      '.quest.is-mq .q-loop-tag{display:none;position:absolute;left:.55rem;top:-.62rem;font-size:.5rem;line-height:1;padding:.18rem .3rem;background:#fcd34d;color:#1a1d26;border:2px solid #1a1d26;box-shadow:2px 2px 0 #000;text-shadow:none}' +
+      '.quest.is-mq-tight .q-hud .q-loop{display:none}.quest.is-mq-tight .q-loop-tag{display:block}' +
+      '.quest.is-mq:not(.qm-on):not(.qb-on) .q-toast{top:var(--mq-toast-top,3.4rem);width:max-content;max-width:min(86%,44ch);text-align:center;line-height:1.6}' +
+      // With the pad showing (the same breakpoint as the pad in swank.css) the HUD drops to the pixel font's native 8 px, so
+      // FACTS takes two lines of a phone's 4:3 view rather than three, and a toast sits in the column between the pad
+      // (.9rem + 3 x 44 px + gaps = 156 px) and the crosshair on one side and the edge on the other, above B and A.
+      '@media (max-width:700px){.quest.is-mq .q-hud .q-pill{font-size:.5rem;padding:.4rem .55rem}.quest.is-mq .q-loop-tag{top:-.8rem}' +
+      '.quest.is-mq:not(.qm-on):not(.qb-on) .q-toast{left:auto;right:.6rem;transform:none;max-width:min(100% - 11rem,50% - 1.5rem);font-size:.5rem;line-height:1.5;padding:.4rem .5rem}}';
+    document.head.appendChild(mqStyle);
+    var mqPill = document.createElement('span'); mqPill.className = 'q-pill q-loop'; mqPill.textContent = 'LOOP 2 \u00b7 MASTER QUEST';
+    var mqHud = root.querySelector('.q-hud'), mqFirst = mqHud && mqHud.querySelector('.q-pill');
+    if (mqHud) mqHud.insertBefore(mqPill, mqFirst ? mqFirst.nextSibling : null);
+    if (mqFirst) { var mqTag = document.createElement('span'); mqTag.className = 'q-loop-tag'; mqTag.textContent = 'MQ'; mqFirst.insertBefore(mqTag, mqFirst.firstChild); }
+    window.addEventListener('resize', function () {                // a wider window may have room again (a phone's URL bar
+      if (!mqHud || mqHud.offsetWidth === mqW) return;                // changing only the height fires this too: nothing to redo)
+      mqW = mqHud.offsetWidth; mqTight = false; root.classList.remove('is-mq-tight'); mqFit();
+    });
+  }
+  // Asked a few times a second from update() and on every toast. Reads layout only (plus one class and one custom
+  // property when they change). The HUD is display:none in the cave and the shooter: nothing to measure then.
+  var mqTight = false, mqTop = -1, mqTick = 0, mqW = -1;
+  function mqFit() {
+    if (!MQ || !mqHud || !mqPill || !mqHud.offsetHeight) return;
+    if (!mqTight && mqPill.offsetHeight && mqHud.offsetHeight > mqPill.offsetHeight + 4) { mqTight = true; root.classList.add('is-mq-tight'); }
+    var top = mqHud.offsetTop + mqHud.offsetHeight + 6;
+    if (top !== mqTop) { mqTop = top; root.style.setProperty('--mq-toast-top', top + 'px'); }
+  }
   function countFound() { return PLACES.filter(function (p) { return found[p.id]; }).length; }
-  function updateHud() { hudFound.textContent = countFound(); PLACES.forEach(function (p) { p.marker.material.color.set(found[p.id] ? 0x34d399 : 0xfcd34d); p.marker.material.emissive.set(found[p.id] ? 0x34d399 : 0xfcd34d); }); }
+  function updateHud() {
+    hudFound.textContent = countFound();
+    PLACES.forEach(function (p) {
+      p.marker.material.color.set(found[p.id] ? 0x34d399 : 0xfcd34d); p.marker.material.emissive.set(found[p.id] ? 0x34d399 : 0xfcd34d);
+      // MASTER QUEST has no markers, so a building that has been read says so itself, in the found green: its door (seen
+      // walking up to it) and its roof sign (seen across town, and in first person)
+      if (MQ && found[p.id] && !p.signRead) {
+        p.signRead = true; p.doorMesh.material.color.setHex(0x2fae7a);
+        var old = p.sign.material.map; p.sign.material.map = labelTex(p.short, '#34d399', '#1a1d26'); if (old) old.dispose();
+      }
+    });
+  }
   updateHud();
 
   var running = false, dialogOpen = false, typing = null, toastT = 0, clock = new THREE.Clock();
   var keys = {};
   var camYaw = 0, camPitch = 0.52, camDist = 14, dragging = false, lastPX = 0, lastPY = 0, dragMoved = 0;
-  var fp = false, fpBlend = 0, fpPitch = 0, fireCool = 0, shots = [], accepted = 0, hits = 0, MAX_HITS = parseInt((location.search.match(/[?&]maxhits=(\d+)/) || [0, 5])[1], 10) || 5, over = false, overT = 0;
+  var HEARTS = MQ ? 3 : 5;                             // three in MASTER QUEST; ?maxhits= overrides, the fountain's prize adds on top
+  var fp = false, fpBlend = 0, fpPitch = 0, fireCool = 0, shots = [], accepted = 0, hits = 0, MAX_HITS = parseInt((location.search.match(/[?&]maxhits=(\d+)/) || [0, HEARTS])[1], 10) || HEARTS, over = false, overT = 0;
   var hurtEl = root.querySelector('.q-hurt'), overEl = root.querySelector('.q-over'), hudHits = root.querySelector('[data-hud="hits"]'), hudHitsWrap = root.querySelector('.q-hits');
   var hudAcc = root.querySelector('[data-hud="accepted"]'), cross = root.querySelector('.q-cross');
-  // ---- endgame state + test hooks (?endgame=1 ?bosshp=5 ?skipintro=1 ?god=1 ?shmup=1 ?timescale=4)
-  function qp(name, dflt) { var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : dflt; }
-  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)) };
+  // ---- endgame state + test hooks (?endgame=1 ?bosshp=5 ?skipintro=1 ?god=1 ?shmup=1 ?timescale=4 ?loop=2)
+  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)), loop: LOOP };
   var endgame = false, pendingEndgame = false, boss = null, shmup = null;
   // the fountain hides a secret level; its prize is extra hearts for the boss
   var cave = null, caveOn = false, caveTaken = false, caveArmed = false;
   try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
   var fireRate = 0.32, shotSpeed = 30, shotGrav = 9, fireHeld = false, hurtCool = 0, envLocked = false, hudOn = true, shakeAmp = 0, shakeT = 0, shakeDur = 1;
+  // MASTER QUEST fairness. The reviewers are quicker, but never quicker than he is (9 u/s): on open ground he can always
+  // outrun any one of them. And after PRESS START or a resubmission they stay at their desks for a few seconds, so
+  // nobody is caught while reading the toast (the nearest mirrored desk is 11 units from the spawn). Loop 1: neither.
+  // The orbit camera starts (and restarts after REJECTED!) at MQ_YAW, a little round to his right: at yaw 0 it sits
+  // against the mirrored Library's eave, which then filled the lower half of the view.
+  var MQ_TOP = 8.5, MQ_GRACE = 6, graceT = 0, MQ_YAW = -0.5;
 
   /* ------------------------------------------------------------ input */
   var KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', KeyQ: 'rotl', KeyE: 'rotr' };
@@ -541,7 +662,8 @@
   function begin() {
     if (running) return;
     running = true; start.hidden = true; el.focus(); blip(440, .06);
-    if (window.Riff && musicWanted) { try { Riff.play('quest'); } catch (e) {} }
+    music('quest');
+    if (MQ) { graceT = MQ_GRACE; camYaw = MQ_YAW; showToast('MASTER QUEST. THE TOWN IS MIRRORED.', 3.5, ['THE REVIEWERS HAVE READ VERSION 1.', 3.5]); }
     if (PARAMS.cave) { caveArmed = true; setTimeout(enterCave, 300); return; }
     if (PARAMS.shmup) { setTimeout(launchShmup, 300); return; }
     if (PARAMS.endgame) { setTimeout(startEndgame, 300); return; }
@@ -550,7 +672,7 @@
   }
   var musicWanted = true;
   var musicBtn = root.querySelector('[data-music]');
-  if (musicBtn && window.Riff) { Riff.bind(musicBtn, 'quest'); musicBtn.addEventListener('click', function () { musicWanted = Riff.playing; }); }
+  if (musicBtn && window.Riff) { Riff.bind(musicBtn, 'quest'); musicBtn.addEventListener('click', function () { musicWanted = Riff.playing; }); if (LOOP === 2 && Riff.has && Riff.has('quest2') && Riff.cue) Riff.cue('quest2'); }
 
   /* ------------------------------------------------------------ audio */
   var AC = null;
@@ -727,7 +849,7 @@
     if (b.hp <= 0) {
       accepted++; if (hudAcc) hudAcc.textContent = accepted;
       showToast(['ACCEPTED WITHOUT CHANGES', 'REVIEWER ' + (BADDIES.indexOf(b) + 1) + ' WITHDRAWS', 'WE THANK THE REVIEWER', 'EDITOR: "PROCEED TO PRODUCTION"'][accepted & 3]);
-      b.down = 22; b.hp = 2; m.visible = false; blip(523, .1); setTimeout(function () { blip(784, .18); }, 100);
+      b.down = MQ ? 12 : 22; b.hp = 2; m.visible = false; blip(523, .1); setTimeout(function () { blip(784, .18); }, 100);   // retired for a while; less of a while in loop 2
     } else { showToast('REVIEWER ' + (BADDIES.indexOf(b) + 1) + ': "I REMAIN UNCONVINCED"'); blip(660, .08); }
   }
   function updateShots(dt) {
@@ -826,10 +948,12 @@
     over = false; root.classList.remove('is-over'); if (overEl) overEl.hidden = true;
     dialogOpen = false; dread = 0; fp = false; fpBlend = 0; fpPitch = 0; hits = 0; revisions = 0; if (hudRev) hudRev.textContent = 0;
     if (hudHitsWrap) hudHitsWrap.hidden = true; if (cross) cross.hidden = true; weapon.visible = false; player.visible = true; player.scale.set(1, 1, 1);
-    player.position.set(0, 0, 4); pstate.yaw = 0; pstate.y = 0; pstate.vy = 0; pstate.air = false; camYaw = 0; camPitch = 0.52;
+    player.position.set(0, 0, 4); pstate.yaw = 0; pstate.y = 0; pstate.vy = 0; pstate.air = false; camYaw = MQ ? MQ_YAW : 0; camPitch = 0.52;
+    caveArmed = false;                                   // he respawns inside the fountain's trigger: walk away first, as after PRESS START
     shots.forEach(function (sh) { scene.remove(sh.m); }); shots.length = 0;
     BADDIES.forEach(function (b) { b.mesh.visible = true; b.mesh.position.set(b.home.x, 0, b.home.z); b.flee = 0; b.cool = 3; b.down = 0; b.hp = 2; });
-    if (window.Riff) { Riff.setDread(0); Riff.takeover(false); if (musicWanted) { try { Riff.play('quest'); } catch (e) {} } }
+    if (MQ) graceT = MQ_GRACE;
+    if (window.Riff) { Riff.setDread(0); Riff.takeover(false); music('quest'); }
     applyDread(clock.elapsedTime); blip(440, .06); showToast('RESUBMITTED. VERSION 2.');
   }
   if (overEl) overEl.addEventListener('click', function () { if (over && overT > 1.2) resubmit(); });
@@ -1066,8 +1190,9 @@
     for (i = 0; i < n; i++) { b = BADDIES[navOrder[i]]; b.slot = a + i * step; b.slotOn = true; }
   }
   // -> navWx/navWz: where this reviewer wants to be: a little ahead of where he is running, out on its own spoke, closing in as it nears
+  // (MASTER QUEST: further ahead of him and further out, so the ring closes from the sides rather than from behind)
   function navSlotPoint(b, px, pz, d) {
-    var lead = Math.min(1, d / 14) * 0.8, R = b.slotOn ? Math.min(5.5, Math.max(0, (d - 3) * 0.55)) : 0;
+    var lead = Math.min(1, d / 14) * (MQ ? 1.15 : 0.8), R = b.slotOn ? Math.min(MQ ? 7 : 5.5, Math.max(0, (d - 3) * (MQ ? 0.7 : 0.55))) : 0;
     navWx = px + navPvx * lead + Math.sin(b.slot) * R; navWz = pz + navPvz * lead + Math.cos(b.slot) * R;
   }
   function navPlan(b, i, px, pz, d) {
@@ -1106,12 +1231,12 @@
   }
   function navReviewer(b, i, h) {
     var m = b.mesh, p = m.position, px = player.position.x, pz = player.position.z;
-    var dx = px - p.x, dz = pz - p.z, d = Math.hypot(dx, dz), range = 14 + 10 * dread;
-    var speed = 0, want = b.head, face = b.head, raw = false, turn = 9, cap, k, o, rx, rz, rl, q, f, sx = 0, sz = 0, vx, vz, ox = p.x, oz = p.z;
+    var dx = px - p.x, dz = pz - p.z, d = Math.hypot(dx, dz), range = (14 + 10 * dread) * (MQ ? 1.3 : 1);
+    var speed = 0, want = b.head, face = b.head, raw = false, turn = MQ ? 11 : 9, cap, k, o, rx, rz, rl, q, f, sx = 0, sz = 0, vx, vz, ox = p.x, oz = p.z;
     if (b.flee > 0) b.flee -= h; if (b.cool > 0) b.cool -= h;
     if (b.careful > 0) b.careful -= h; if (b.probe > 0) b.probe -= h;
     b.plan -= h;
-    var think = b.plan <= 0 && navBudget > 0, fleeing = b.flee > 0, chasing = !fleeing && !dialogOpen && d < range + (b.chase ? 4 : 0);   // once on the scent they give up a little later than they notice
+    var think = b.plan <= 0 && navBudget > 0, fleeing = b.flee > 0, chasing = !fleeing && !dialogOpen && graceT <= 0 && d < range + (b.chase ? (MQ ? 8 : 4) : 0);   // once on the scent they give up a little later than they notice
     b.chase = chasing;
     // standing inside something solid (a bad desk, or the world changed underfoot): walk out to the nearest open cell
     if (think && b.esc <= 0 && navCell[navIdx(p.x, p.z)] !== 0 && collide(p.x, p.z, 0.45) && navNearest(p.x, p.z, false)) { b.esc = 1.5; b.ex = navWx; b.ez = navWz; }
@@ -1126,7 +1251,8 @@
       else if (b.mode !== 4) { b.mode = 4; b.plan = 0; b.fleeA = Math.atan2(p.x - px, p.z - pz); }   // no thinking time this step: straight away from him, and ask the map on the next one
       want = b.fleeA;
     } else if (chasing) {
-      speed = d < 1.2 ? 0 : (4.6 + (i % 3) * 0.4) * (1 + 0.5 * dread);
+      // loop 1: 4.6-5.4 rising to 6.9-8.1 at full dread. MASTER QUEST: 5.75-6.75 rising to 7.5-8.5, never past MQ_TOP
+      speed = d < 1.2 ? 0 : MQ ? Math.min(MQ_TOP, (4.6 + (i % 3) * 0.4) * 1.25 * (1 + 0.3 * dread)) : (4.6 + (i % 3) * 0.4) * (1 + 0.5 * dread);
       if (d < 1.7 && b.cool <= 0 && pstate.y < 1.2) caught(b);
       if (think) { navBudget--; navPlan(b, i, px, pz, d); } else if (b.mode < 1 || b.mode > 3) { b.mode = 2; b.plan = 0; }   // no thinking time left this frame: go straight for now
       if (b.mode === 1) { navSlotPoint(b, px, pz, d); want = Math.atan2(navWx - p.x, navWz - p.z); }
@@ -1223,7 +1349,9 @@
       m.position.y = v > 0.35 ? Math.abs(Math.sin(b.walkT)) * 0.06 : 0;
     }
   }
-  function showToast(msg) { toast.textContent = msg; toast.hidden = false; toastT = 2.6; }
+  // showToast(msg, secs, then): then = [msg, secs] follows when this one runs out, unless another toast replaces it first
+  var toastNext = null;
+  function showToast(msg, secs, then) { if (MQ) mqFit(); toast.textContent = msg; toast.hidden = false; toastT = secs || 2.6; toastNext = then || null; }
   /* ------------------------------------------------------------ physics */
   function collide(x, z, r) {
     for (var i = 0; i < colliders.length; i++) {
@@ -1249,7 +1377,9 @@
     markers.forEach(function (m) { m.material.emissiveIntensity = 0.5 + e * (0.5 + Math.sin(t * 12) * 0.5); });
   }
   function update(dt) {
-    if (toastT > 0) { toastT -= dt; if (toastT <= 0) toast.hidden = true; }
+    if (MQ && !(mqTick++ & 7)) mqFit();
+    if (toastT > 0) { toastT -= dt; if (toastT <= 0) { if (toastNext && hudOn && !over) showToast(toastNext[0], toastNext[1]); else { toast.hidden = true; toastNext = null; } } }
+    if (graceT > 0 && running) graceT -= dt;
     var t = clock.elapsedTime;
     if (running && dt > 0) { dread = Math.min(1, dread + dt / (endgame ? 4 : DREAD_TIME)); if (window.Riff) Riff.setDread(dread); if (!envLocked) applyDread(t); if (!fp && dread >= FP_AT) enterFP(); }
     if (hurtCool > 0) hurtCool -= dt;
@@ -1300,6 +1430,7 @@
     if (pstate.land > 0) pstate.land -= dt;
     if (pstate.speed > 0.5) pstate.walkT += dt * pstate.speed * 1.5;
     pose(player, { walk: pstate.walkT, speed: pstate.speed / 9, air: pstate.air, vy: pstate.vy, t: t });
+    if (cap) capFlop(dt);
     player.position.y = pstate.air ? pstate.y : (pstate.speed > 0.5 ? Math.abs(Math.sin(pstate.walkT)) * 0.08 : 0);
     // landing squash
     var sq = pstate.land > 0 ? Math.sin(pstate.land / 0.18 * Math.PI) * 0.18 : 0; player.scale.set(1 + sq, 1 - sq, 1 + sq);
@@ -1345,6 +1476,8 @@
       prompt.style.left = ((tmp.x + 1) / 2 * 100) + '%'; prompt.style.top = ((1 - tmp.y) / 2 * 100) + '%';
     }
     sun.position.set(player.position.x + 40, 60, player.position.z + 20); sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
+    // the first-person camera swoops into his head from behind: the cap goes before the lens reaches it (asked of this frame's camera)
+    if (cap) { cap.base.getWorldPosition(cap.at); cap.base.visible = camera.position.distanceTo(cap.at) > 1.9; }
   }
 
   /* ------------------------------------------------------------ endgame: boss, then space */
@@ -1367,10 +1500,12 @@
     try {
       if (name === 'silence') { R.stop(); return; }
       if (name === 'boss') { R.setDread(1); if (R.boss) R.boss(true); if (musicWanted && !R.playing) R.play('quest'); return; }
+      if (name === 'quest' && LOOP === 2 && R.has && R.has('quest2')) name = 'quest2';          // the second loop has its own overworld score
       if (name === 'space') { if (R.boss) R.boss(false); if (musicWanted) R.play('space'); return; }
       if (name === 'quest') { if (R.boss) R.boss(false); if (musicWanted) R.play('quest'); return; }
       if (name === 'cave') { if (R.boss) R.boss(false); if (musicWanted && R.play) R.play('cave'); return; }
       if (name === 'title') { if (R.boss) R.boss(false); if (musicWanted) { try { R.play('title'); } catch (e) { R.play('quest'); } } return; }
+      if (R.has && R.has(name)) { if (R.boss) R.boss(false); if (musicWanted) R.play(name); return; }   // plug-in tracks from riff2.js: quest2, magician, space2, tlb
     } catch (e) { console.error(e); }
   }
   var api = {
@@ -1390,14 +1525,17 @@
     // in force, 'paper' puts them back, and anything named in the same call then overrides.
     setWeapon: function (o) { o = o || {}; if (o.kind) setWeaponKind(o.kind); if (o.rate) fireRate = o.rate; if (o.speed) shotSpeed = o.speed; if (o.gravity !== undefined) shotGrav = o.gravity; },
     music: music, musicWanted: function () { return musicWanted; }, setMusicWanted: function (on) { musicWanted = !!on; if (!on && window.Riff) Riff.stop(); },
-    stinger: function (name) { try { if (window.Riff && Riff.stinger && musicWanted) Riff.stinger(name); } catch (e) {} },
+    stinger: function (name) { try { return !!(window.Riff && Riff.stinger && musicWanted && Riff.stinger(name)); } catch (e) { return false; } },   // true if it fired, so a caller can fall back
     isOver: function () { return over; },
     params: PARAMS,
     links: { publications: '/publications/', research: '/research/', code: '/code/', scholar: 'https://scholar.google.com/citations?user=-OiUY4kAAAAJ&hl=en', email: 'mailto:duncan.palmer@stats.ox.ac.uk' },
     onBossDefeated: function () { launchShmup(); },
-    restart: function () { try { localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); } catch (e) {} location.hash = '#play'; location.reload(); }
+    // the shooter's first ending offers the second loop: everything is re-earned, and the world remembers which loop it is on
+    startLoop2: function () { try { localStorage.setItem('quest.loop', '2'); localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); } catch (e) {} location.hash = '#play'; location.reload(); },
+    restart: function () { try { localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); localStorage.removeItem('quest.loop'); } catch (e) {} location.hash = '#play'; location.reload(); }
   };
-  try { boss = window.QuestBoss ? window.QuestBoss(api) : null; } catch (e) { console.error(e); boss = null; }
+  // loop 2 fights a different boss module with the same interface (magician.js); it falls back to the editor if that file is missing
+  try { boss = (LOOP === 2 && window.QuestMagician) ? window.QuestMagician(api) : window.QuestBoss ? window.QuestBoss(api) : null; } catch (e) { console.error(e); boss = null; }
   try { shmup = window.QuestShmup ? window.QuestShmup(api) : null; } catch (e) { console.error(e); shmup = null; }
   try { cave = window.QuestCave ? window.QuestCave(api) : null; } catch (e) { console.error(e); cave = null; }
 
@@ -1445,7 +1583,7 @@
     shots.forEach(function (sh) { scene.remove(sh.m); }); shots.length = 0;
     camera.rotation.z = 0; setHud(true);
     if (boss) { try { boss.stop(); boss.start({ hp: PARAMS.bossHp, skipIntro: true, retry: true }); } catch (e) { console.error(e); } }
-    blip(440, .06); showToast('RESUBMITTED. THE EDITOR IS WAITING.');
+    blip(440, .06); showToast(MQ && window.QuestMagician ? 'RESUBMITTED. SENT BACK TO REVIEWER 2.' : 'RESUBMITTED. THE EDITOR IS WAITING.');
   }
   function launchShmup() {
     if (!shmup) { showToast('SPACE IS CLOSED TODAY.'); return; }
@@ -1453,7 +1591,7 @@
     if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
     fireHeld = false; for (var k in keys) keys[k] = false;
     setHud(false); root.classList.add('is-space');
-    try { shmup.start({}); } catch (e) { console.error(e); }
+    try { shmup.start({ loop: LOOP }); } catch (e) { console.error(e); }
   }
   function enterCave() {
     if (!cave || caveOn || endgame || over) return;
