@@ -1,4 +1,39 @@
-# Handover — astheeggeggs.github.io (rewritten 2026-09-21 ~07:15 by Claude Opus 5)
+# Handover — astheeggeggs.github.io (updated 2026-09-27; the 2026-09-21 text follows below)
+
+## 2026-09-27: the second loop is BUILT, reviewed, integration-tested and COMMITTED (not pushed)
+Duncan's 2026-09-26 request (verbatim in `.dev/loop2-contract.md`, with his two addenda) is done: the title
+cinematic and MR. E are gone, the overworld theme is rewritten by hand, and the SECOND LOOP exists end to end
+(Master Quest town with the Link cap, REVIEWER 2 as the HotD2 Magician, the DOJ-style shooter loop, the True Last
+Boss PEER REVIEW, TENURED!, and four new tracks plus three stingers). README.md documents all of it.
+
+How it got here: build workflow `wf_3309ac86-532` (session b826815a) died on a session limit; resume workflow
+`wf_1d11e7a9-59c` (session 142cdeff) finished everything. That run: a completion pass per file (magician restyle,
+Link hat and HUD/fairness fixes, riff2 mix, shmup finish), 2-3 review lenses per module, a skeptic per major
+finding, one fixer per module, then an integration checker. Its full per-agent results are in
+`~/.claude/projects/-Users-dpalmer-Repositories-astheeggeggs-github-io/142cdeff-73f4-46e5-8051-db574e26e336/subagents/workflows/wf_1d11e7a9-59c/journal.jsonl`.
+
+Integration (all green): regress.mjs, w1 title 13/13, w2 town 14/14, w5 music 41/41, w6 static 44/44, and the
+whole loop-2 chain title → town → 8th fact → magician → shooter loop 2 → TLB → TENURED! → PLAY AGAIN → loop 1 with
+0 console errors. w3 and w4 in `.dev/tmp/orch-verify/` are STALE (they read canvas-drawn shooter text from the
+DOM); use the adapted `.dev/tmp/integ/w3b-magician.mjs` and `w4b-shmup2.mjs`. `orch-verify/helper.mjs` pumpUntil
+never returns early (it burns its whole budget); `.dev/tmp/integ/fast.mjs` has a fixed `until()`.
+
+**Git:** committed on `rebuild-with-game` as seven commits, `050b917` (title) through the docs commit; the WIP
+commit `237ea8f` was squashed into them. Nothing is pushed; push only when Duncan asks. Never add Co-Authored-By.
+The preview artifact is not republished (only on request).
+
+**Open, for Duncan to judge (nobody has played or listened):**
+- Music: all verified by measurement only. Audition files: `.dev/tmp/render/*.m4a` (overworld, master quest,
+  title, magician, space2 with the full form, true last boss).
+- Magician time-to-kill: 177 game-s with a scripted aimer at 100 HP (target 90-180), about 133 s simulated for a
+  60 fps human. If it feels long, lengthen the exposure windows (PH wind/rec in magician.js).
+- Loop-2 shooter is brutal: an idle ship loses a life every ~4-5 s in stage 2-1; for the dodging bot the loop-2
+  IMPACT FACTOR phase 0 is harsher than any TLB phase. The tlbwarn stinger covers ~3 s of the 5.6 s WARNING card.
+- Pre-existing, loop 1, left alone so loop 1 stays identical: a reviewer catches a standing player 2-3 s after
+  PRESS START; phone toasts overlap the FACTS pill and the d-pad UP. The MQ layout (mqFit) would fix the latter.
+- quest.js collide() deletes shots at trees, lamps and benches at any height; the magician's plates fall to
+  street level when he dies on a roof.
+- The BFG's four quality problems (section below) are still unaddressed.
 
 ## What this repo is
 Duncan Palmer's personal site (Jekyll → GitHub Pages, `https://astheeggeggs.github.io/`). The live site is
