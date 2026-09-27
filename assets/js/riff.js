@@ -1,20 +1,33 @@
 /* =============================================================================
    RIFF.JS — procedurally generated chip-metal. No samples, no MIDI files,
    no copyright: every note is synthesised in WebAudio at runtime.
-   Riff.play('quest' | 'space' | 'cave' | 'title'), Riff.stop(), Riff.toggle(style), Riff.setDread(0..1), Riff.playing
+   Riff.play('quest' | 'quest2' | 'space' | 'cave' | 'title'), Riff.stop(), Riff.toggle(style), Riff.setDread(0..1), Riff.playing,
+   Riff.boss(on), Riff.stinger(name), Riff.render(style, seconds, opts) -> Promise<AudioBuffer>, Riff.analyse(buffer);
+   plug-in tracks through Riff.addStyle / addStinger / kit / has (see STYLES below).
    ============================================================================= */
 (function () {
   'use strict';
   var AC = null, master = null, tone = null, dist = null, timer = null, playing = false, style = null;
-  var dread = 0, fbGain = null, wetGain = null, KEYPC = 67 % 12;
-  var owMix = null, metalMix = null, boost = 0, mstep = 0;
+  var dread = 0, fbGain = null, wetGain = null;
+  var owMix = null, metalMix = null, boost = 0, rendering = false;
   var step = 0, nextT = 0, buttons = [];
   var gate = null, duck = null, stingBus = null, lastStyle = null, parked = false;
   var bossWant = false, bossOn = false, bossStep = 0;
+  /* --- plug-in styles and stingers: riff2.js registers whole tracks here without touching this file.
+     Riff.addStyle(name, {schedule: fn(S), dreadful: bool, info: fn}) — schedule(S) is called every 100 ms with
+     S = {now, nextT, step, dread, boost}; it must schedule audio from S.nextT up to S.now + 0.3 and advance
+     S.nextT / S.step (drop what is already late, like the schedulers below). Voices built on Riff.kit().AC are
+     tracked, so Riff.stop() kills them. `dreadful` styles get the dread filter; the rest play fully open. ---- */
+  var STYLES = {}, XSTING = {};
 
   function ctx() {
     if (AC) return AC;
     AC = new (window.AudioContext || window.webkitAudioContext)();
+    buildBuses();
+    return AC;
+  }
+  // the fixed part of the graph, built once per context: the live one, or an OfflineAudioContext under Riff.render
+  function buildBuses() {
     master = AC.createGain(); master.gain.value = 0.5;
     tone = AC.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 18000; tone.Q.value = 0.7;
     // output stage: music → dread filter → gate (stop) → duck (stingers) → limiter → soft clip → speakers.
@@ -36,7 +49,6 @@
     var g = AC.createGain(); g.gain.value = 0.22;
     pre.connect(shaper); shaper.connect(post); post.connect(body); body.connect(g); g.connect(metalMix);
     dist = pre;
-    return AC;
   }
   // n - 1, not n: a WaveShaper maps input 0 to index (n-1)/2, so an off-centre table leaks a
   // constant DC offset into the whole mix (softClip() below gets this right with an odd length).
@@ -51,10 +63,10 @@
   function f(n) { return 440 * Math.pow(2, (n - 69) / 12); }   // midi note → Hz
 
   /* --- instruments ------------------------------------------------------- */
-  function chug(note, t, dur, mute, lean) {
-    // power chord: root + fifth + octave, two detuned saws each, palm-muted envelope
+  function chug(note, t, dur, mute, lean, ivs) {
+    // power chord: root + fifth + octave (or the semitones in `ivs`), two detuned saws each, palm-muted envelope
     // lean (boss fight): one saw per chord tone, a little louder, so the choir has oscillators to spare
-    [0, 7, 12].forEach(function (iv, k) {
+    (ivs || [0, 7, 12]).forEach(function (iv, k) {
       (lean ? [k * 7 - 7] : [-6, 6]).forEach(function (det) {
         var o = AC.createOscillator(), g = AC.createGain();
         o.type = 'sawtooth'; o.frequency.value = f(note + iv); o.detune.value = det;
@@ -148,12 +160,14 @@
       o.connect(g); g.connect(softBus()); o.start(t); o.stop(Math.max(t + dur + 0.6, end + 0.03));
     });
   }
-  function bass(note, t, dur, vel) {
-    var o = AC.createOscillator(), o2 = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
-    o.type = 'triangle'; o.frequency.value = f(note); o2.type = 'sine'; o2.frequency.value = f(note) / 2;
+  // a triangle with a sine an octave below it. `sub` is that octave's level (default 1, the boss layer's floor); the
+  // town passes a light one, because at full level the octave alone was most of the mix and buried the tune
+  function bass(note, t, dur, vel, sub) {
+    var o = AC.createOscillator(), o2 = AC.createOscillator(), g = AC.createGain(), sg = AC.createGain(), lp = AC.createBiquadFilter();
+    o.type = 'triangle'; o.frequency.value = f(note); o2.type = 'sine'; o2.frequency.value = f(note) / 2; sg.gain.value = sub === undefined ? 1 : sub;
     lp.type = 'lowpass'; lp.frequency.value = 500;
     env(g, t, 0.006, vel * 0.55, 0.1, 0.7, dur * 0.9, 0.08);
-    o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(owMix); o.start(t); o2.start(t); o.stop(t + dur + 0.2); o2.stop(t + dur + 0.2);
+    o.connect(lp); o2.connect(sg); sg.connect(lp); lp.connect(g); g.connect(owMix); o.start(t); o2.start(t); o.stop(t + dur + 0.2); o2.stop(t + dur + 0.2);
   }
   function pad(notes, t, dur, vel) {
     notes.forEach(function (n) {
@@ -166,85 +180,197 @@
     });
   }
   function softKick(t) { var o = AC.createOscillator(), g = AC.createGain(); o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.08); g.gain.setValueAtTime(0.45, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18); o.connect(g); g.connect(owMix); o.start(t); o.stop(t + 0.2); }
-  function brush(t) { var s = AC.createBufferSource(), g = AC.createGain(), bp = AC.createBiquadFilter(); s.buffer = noise(); bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.9; g.gain.setValueAtTime(0.16, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); s.connect(bp); bp.connect(g); g.connect(owMix); s.start(t); s.stop(t + 0.15); }
+  function brush(t, v) { var s = AC.createBufferSource(), g = AC.createGain(), bp = AC.createBiquadFilter(); s.buffer = noise(); bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.9; g.gain.setValueAtTime(0.16 * (v === undefined ? 1 : v), t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); s.connect(bp); bp.connect(g); g.connect(owMix); s.start(t); s.stop(t + 0.15); }
   function shaker(t, acc) { var s = AC.createBufferSource(), g = AC.createGain(), hp = AC.createBiquadFilter(); s.buffer = noise(); hp.type = 'highpass'; hp.frequency.value = 8000; g.gain.setValueAtTime(acc ? 0.09 : 0.05, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05); s.connect(hp); hp.connect(g); g.connect(owMix); s.start(t); s.stop(t + 0.07); }
+  // the town lead: a quarter-width pulse under a triangle, a breathy low-pass, vibrato that arrives late and only on notes long enough to want it
+  function flute(note, t, dur, vel) {
+    var g = AC.createGain(), lp = AC.createBiquadFilter(), v = AC.createOscillator(), vg = AC.createGain();
+    lp.type = 'lowpass'; lp.frequency.value = 2300; lp.Q.value = 0.6;
+    v.frequency.value = 5.2; vg.gain.setValueAtTime(0, t); vg.gain.setValueAtTime(0, t + 0.16); vg.gain.linearRampToValueAtTime(dur > 0.4 ? 9 : 3, t + 0.5); v.connect(vg); v.start(t); v.stop(t + dur + 0.3);
+    [[0.25, -3, 0.55], [0, 3, 0.5]].forEach(function (p) {
+      var o = AC.createOscillator(), og = AC.createGain(); if (p[0]) o.setPeriodicWave(pulse(p[0])); else o.type = 'triangle';
+      o.frequency.value = f(note); o.detune.value = p[1]; og.gain.value = p[2]; vg.connect(o.detune);
+      o.connect(og); og.connect(lp); o.start(t); o.stop(t + dur + 0.3);
+    });
+    env(g, t, 0.035, vel * 0.45, 0.12, 0.85, dur, 0.1);
+    lp.connect(g); g.connect(softBus());
+  }
+  // the Master Quest plectrum: a saw and a square an octave up, a fast decay, high-passed so it stays wiry
+  function harpsi(note, t, dur, vel) {
+    var g = AC.createGain(), hp = AC.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 260;
+    var end = env(g, t, 0.002, vel * 0.45, 0.22, 0.12, Math.min(dur, 0.5), 0.12);
+    [['sawtooth', 0, 1], ['square', 12, 0.35]].forEach(function (p) { var o = AC.createOscillator(), og = AC.createGain(); o.type = p[0]; o.frequency.value = f(note + p[1]); og.gain.value = p[2]; o.connect(og); og.connect(hp); o.start(t); o.stop(end + 0.03); });
+    hp.connect(g); g.connect(softBus());
+  }
+  // the mirrored lead: a quarter pulse and a saw a few cents apart through a soft clip, so it has teeth
+  var GRIT = null;
+  function gritLead(note, t, dur, vel) {
+    var g = AC.createGain(), sh = AC.createWaveShaper(), lp = AC.createBiquadFilter(), lg = null;
+    sh.curve = GRIT || (GRIT = curve(3)); lp.type = 'lowpass'; lp.frequency.value = 3000; lp.Q.value = 0.8;
+    if (dur > 0.3) { var v = AC.createOscillator(); lg = AC.createGain(); v.frequency.value = 5.8; lg.gain.setValueAtTime(0, t + 0.12); lg.gain.linearRampToValueAtTime(12, t + 0.45); v.connect(lg); v.start(t); v.stop(t + dur + 0.2); }
+    [[0.25, -6], [0, 6]].forEach(function (p) {
+      var o = AC.createOscillator(), og = AC.createGain(); if (p[0]) o.setPeriodicWave(pulse(p[0])); else o.type = 'sawtooth';
+      o.frequency.value = f(note); o.detune.value = p[1]; og.gain.value = 0.5; if (lg) lg.connect(o.detune);
+      o.connect(og); og.connect(sh); o.start(t); o.stop(t + dur + 0.2);
+    });
+    env(g, t, 0.012, vel * 0.28, 0.1, 0.8, dur, 0.08);
+    sh.connect(lp); lp.connect(g); g.connect(softBus());
+  }
 
-  /* --- the overworld piece: composed once from a seed, ~3.5 min, loops ---- */
+  /* --- the overworld piece: a town theme in G, 108 BPM, twelve 8-bar sections (3 min 33 s), loops ------
+     Written as note data, not generated. Pitches are DEGREES of the key on a sixteenth grid,
+     "pos.degree.length" (0 = G4, 7 = G5, -7 = G3; a trailing + or - is a chromatic alteration,
+     honoured only while the world is still major). Degrees are what let one tune be re-read
+     through darker modes as dread rises (SHADES: a whole four-bar phrase switches on its first
+     bar line, never a single note) and, for the Master Quest ('quest2'), be mirrored: every
+     interval inverted about the tonic and the harmony inverted with it, in the parallel minor. */
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-  var OVERWORLD = null;
-  function composeOverworld() {
-    if (OVERWORLD) return OVERWORLD;
-    var rnd = mulberry32(64), BPM = 126, KEY = 67;                      // G major
-    var SCALE = [0, 2, 4, 5, 7, 9, 11];
-    // chord degrees (0-based) per 8-bar section; each entry = one bar
-    var PROG = {
-      A:  [0, 4, 5, 3, 0, 4, 1, 4],           // I V vi IV I V ii V
-      B:  [5, 3, 0, 4, 5, 3, 1, 4],           // vi IV I V vi IV ii V
-      C:  [3, 4, 2, 5, 3, 4, 0, 0],           // IV V iii vi IV V I I
-      D:  [5, 2, 3, 0, 5, 2, 1, 4],           // vi iii IV I vi iii ii V  (the wistful bit)
-      Z:  [3, 4, 0, 0, 3, 4, 0, 0]            // coda: IV V I I, resolves into the loop
-    };
-    var FORM = ['A', 'A', 'B', 'A', 'C', 'B', 'A', 'D', 'D', 'A', 'B', 'C', 'A', 'Z'];   // 14 × 8 bars
-    var VOICE = { A: 'marimba', B: 'ocarina', C: 'bell', D: 'ocarina', Z: 'marimba' };
-    function deg(d, oct) { return KEY + SCALE[((d % 7) + 7) % 7] + 12 * (oct + Math.floor(d / 7)); }
-    function chordTones(root) { return [root, root + 2, root + 4]; }
-    var RHY = [
-      [1,0,0,0, 1,0,1,0, 1,0,0,0, 1,0,1,0], [1,0,1,0, 1,0,0,0, 1,0,1,0, 0,0,1,0], [1,0,0,1, 0,0,1,0, 1,0,0,0, 1,0,0,0],
-      [1,0,1,1, 0,0,1,0, 1,0,0,0, 0,0,0,0], [1,0,0,0, 0,0,1,0, 1,0,1,0, 1,0,0,0], [1,0,1,0, 1,0,1,0, 1,0,0,0, 0,0,0,0]
-    ];
-    var themes = {};
-    function melody(sec) {
-      if (themes[sec]) return themes[sec];
-      var out = [], cur = 7;   // scale-degree index relative to tonic, start on the octave
-      for (var bar = 0; bar < 8; bar++) {
-        var root = PROG[sec][bar], tones = chordTones(root), rhy = RHY[Math.floor(rnd() * RHY.length)];
-        if (bar === 7) rhy = [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,0,0];
-        var last = -1;
-        for (var i = 0; i < 16; i++) {
-          if (!rhy[i]) { out.push(null); continue; }
-          var strong = i % 4 === 0, choice;
-          if (strong || rnd() < 0.6) {           // chord tone near the current pitch
-            var cands = [];
-            for (var o = -1; o <= 2; o++) tones.forEach(function (tn) { cands.push(tn + 7 * o); });
-            cands.sort(function (a, b) { return Math.abs(a - cur) - Math.abs(b - cur); });
-            choice = cands[Math.min(cands.length - 1, Math.floor(rnd() * 2.2))];
-          } else choice = cur + (rnd() < 0.5 ? 1 : -1);  // passing tone
-          if (choice > 13) choice -= 7; if (choice < 3) choice += 7;
-          if (choice === last && rnd() < 0.7) choice += rnd() < 0.5 ? 1 : -1;
-          cur = choice; last = choice;
-          // note length = distance to the next hit
-          var len = 1; for (var k = i + 1; k < 16 && !rhy[k]; k++) len++;
-          out.push({ n: deg(choice, 1), len: len, vel: strong ? 1 : 0.75 });
-        }
-      }
-      return themes[sec] = out;
+  var OW_KEY = 67, OW_BPM = 108, OW_LOW = 96, OW_TOP = 160, OW2_BPM = 132, OW2_TOP = 176;
+  var MODES = { major: [0, 2, 4, 5, 7, 9, 11], mixo: [0, 2, 4, 5, 7, 9, 10], dorian: [0, 2, 3, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10], phrygian: [0, 1, 3, 5, 7, 8, 10], locrian: [0, 1, 3, 5, 6, 8, 10] };
+  var SHADE_AT = [0.3, 0.5, 0.7, 0.85], SHADES = ['major', 'mixo', 'dorian', 'aeolian', 'phrygian'], SHADES2 = ['aeolian', 'aeolian', 'phrygian', 'phrygian', 'locrian'];
+  function shadeOf(d) { var k = 0; while (k < SHADE_AT.length && d >= SHADE_AT[k]) k++; return k; }
+  function pitch(deg, alt, mode) { var o = Math.floor(deg / 7); return OW_KEY + MODES[mode][deg - o * 7] + 12 * o + (alt || 0); }
+  // chords: [root degree, alterations of the chord tones (major only), seventh, bass degree when not the root]
+  var CHORD = {
+    G: [0], Am: [1], Bm: [2], C: [3], D: [4], Em: [5],
+    G7: [0, 0, 1], Am7: [1, 0, 1], D7: [4, 0, 1], Em7: [5, 0, 1],
+    A7: [1, [0, 1, 0, 0], 1], B7: [2, [0, 1, 0, 0], 1], E7: [5, [0, 1, 0, 0], 1],
+    Cm: [3, [0, -1, 0]], F: [6, [-1, 0, 0]],
+    'G/B': [0, 0, 0, 2], 'D/F#': [4, 0, 0, 6], 'C/E': [3, 0, 0, 5]
+  };
+  // the themes. ch: one chord per bar, or two split by a dot. mel: the lead. ans: the bell's answers (by bar), which
+  // enter as the lead lands on a long note and move only while it holds or rests: a reply, never a second voice in its rhythm.
+  // hook: the bars whose 3-3-2 figure the marimba doubles an octave down when a section asks for accents.
+  var SEC = {
+    A: { ch: ['G', 'Em', 'C', 'D', 'G', 'Em', 'C.D', 'G'],                                   // the town theme: antecedent to the half close, consequent home
+         mel: ['0.0.3 3.2.3 6.4.2 8.7.4 12.6.2 14.5.2', '0.4.3 3.5.3 6.4.2 8.2.6 14.1.2', '0.3.3 3.5.3 6.7.2 8.8.4 12.7.2 14.6.2', '0.5.3 3.4.3 6.3.2 8.4.2 10.5.2 12.6.4',
+               '0.0.3 3.2.3 6.4.2 8.7.4 12.6.2 14.5.2', '0.4.3 3.5.3 6.4.2 8.2.4 12.4.2 14.5.2', '0.7.3 3.8.3 6.7.2 8.6.2 10.5.2 12.4.2 14.3.2', '0.2.2 2.1.2 4.0.6 14.4.2'],
+         ans: { 1: '8.7.2 10.6.2 12.5.1 13.4.1', 3: '12.8.1 13.9.1 14.11.2', 5: '9.11.1 10.9.1 11.7.1', 7: '4.4.2 6.7.2 8.9.2 10.11.4' }, hook: [0, 4] },
+    B: { ch: ['Em', 'C', 'G', 'D', 'Em', 'C', 'Am', 'D7'],                                   // the relative minor, lifting onto G in its third bar
+         mel: ['0.5.4 4.7.2 6.5.2 8.4.6 14.2.2', '0.3.4 4.5.2 6.3.2 8.1.6 14.3.2', '0.4.4 4.7.2 6.9.2 8.7.6 14.6.2', '0.6.4 4.5.2 6.4.2 8.5.8',
+               '0.5.4 4.7.2 6.5.2 8.4.6 14.2.2', '0.3.4 4.5.2 6.3.2 8.1.6 14.3.2', '0.4.4 4.5.2 6.7.2 8.8.4 12.9.4', '0.10.4 4.8.2 6.6.2 8.5.4 12.4.4'] },
+    C: { ch: ['C', 'A7', 'D', 'B7', 'Em', 'Cm', 'Am7.D7', 'G'],                              // the bridge: V of V, V of vi, the borrowed iv, ii-V home
+         mel: ['0.7.4 4.8.2 6.7.2 8.5.4 12.3.4', '0.1.4 4.3+.2 6.5.2 8.8.6 14.7.2', '0.6.4 4.8.2 6.6.2 8.4.4 12.2.4', '0.4+.4 4.6.2 6.8.2 8.9.8',
+               '0.7.4 4.5.2 6.4.2 8.2.6 14.4.2', '0.5-.4 4.7.2 6.5-.2 8.3.6 14.2.2', '0.1.4 4.3.2 6.5.2 8.6.4 12.8.4', '0.7.6 6.6.2 8.7.8'] },
+    D: { ch: ['C', 'G/B', 'Am', 'D', 'C', 'G/B', 'Am', 'D7'],                                 // the wistful bit: long notes over a descending bass
+         mel: ['0.7.6 6.8.2 8.7.4 12.5.4', '0.4.6 6.5.2 8.4.4 12.2.4', '0.3.6 6.4.2 8.3.4 12.1.4', '0.2.4 4.4.4 8.6.8',
+               '0.7.6 6.8.2 8.7.4 12.5.4', '0.4.6 6.5.2 8.4.4 12.2.4', '0.3.4 4.4.4 8.5.4 12.6.4', '0.7.6 6.8.2 8.4.8'] },
+    Z: { ch: ['C', 'D', 'G', 'Em', 'C', 'D', 'Am', 'D7'],                                     // the coda: the hook thrown between chords, ii-V, and round again
+         mel: ['0.3.3 3.5.3 6.7.2 8.10.8', '0.4.3 3.6.3 6.8.2 8.11.8', '0.0.3 3.2.3 6.4.2 8.7.4 12.6.2 14.5.2', '0.4.3 3.5.3 6.4.2 8.2.8',
+               '0.3.3 3.5.3 6.7.2 8.10.4 12.9.2 14.8.2', '0.4.3 3.6.3 6.8.2 8.11.4 12.10.2 14.9.2', '0.8.4 4.7.4 8.5.4 12.4.4', '0.3.4 4.2.4 8.1.4 12.-1.4'],
+         ans: { 1: '10.8.2 12.9.2 14.10.2', 3: '8.7.2 10.6.2 12.5.2 14.4.2' }, hook: [0, 1, 2] }
+  };
+  // the form: which theme, and how it is dressed. lead: flute | ocarina. bass: pizz | walk | synco | long.
+  // dr: brush | light | kit | none | brush4 (brushes from the fifth bar). pad: velocity or 0. ans: the bell answers.
+  // harm: a voice in thirds below the strong notes ('bell'). arp: marimba | bell eighths as colour. acc: marimba on the hook.
+  // dbl: the tune doubled an octave below (the ocarina under the flute; the grit lead under itself in the Master Quest).
+  // vel: the tune's dynamic, which grows (with the dressing) to the ninth section and dips for the seventh and eighth.
+  var FORM = [
+    { s: 'A', lead: 'flute',   bass: 'pizz',  dr: 'brush',  pad: 0,   ans: 0, harm: 0,      arp: 0,         vel: 0.85 },             // 1  the statement: tune, bass, brushes
+    { s: 'A', lead: 'flute',   bass: 'pizz',  dr: 'light',  pad: 0.8, ans: 1, harm: 0,      arp: 0,         vel: 0.9 },               // 2  the bells answer
+    { s: 'B', lead: 'flute',   bass: 'walk',  dr: 'kit',    pad: 0.9, ans: 0, harm: 0,      arp: 'marimba', vel: 0.9 },               // 3  relative minor, marimba colour
+    { s: 'A', lead: 'flute',   bass: 'synco', dr: 'kit',    pad: 0.8, ans: 1, harm: 'bell', arp: 0,         vel: 0.95, acc: 1 },       // 4  the return, in thirds
+    { s: 'C', lead: 'ocarina', bass: 'walk',  dr: 'light',  pad: 1,   ans: 0, harm: 0,      arp: 'bell',    vel: 0.88 },            // 5  the bridge
+    { s: 'B', lead: 'flute',   bass: 'walk',  dr: 'kit',    pad: 0.9, ans: 0, harm: 'bell', arp: 'marimba', vel: 0.95 },               // 6
+    { s: 'A', lead: 'flute',   bass: 'long',  dr: 'none',   pad: 0,   ans: 0, harm: 0,      arp: 0,         vel: 0.8 },             // 7  thin: the tune and the bass alone
+    { s: 'D', lead: 'ocarina', bass: 'long',  dr: 'brush4', pad: 1.2, ans: 0, harm: 0,      arp: 0,         vel: 0.85 },            // 8  wistful
+    { s: 'A', lead: 'flute',   bass: 'synco', dr: 'kit',    pad: 0.9, ans: 1, harm: 'bell', arp: 'marimba', vel: 1, acc: 1, dbl: 1 }, // 9  the build: everything, the tune doubled an octave down
+    { s: 'B', lead: 'flute',   bass: 'walk',  dr: 'kit',    pad: 0.9, ans: 0, harm: 'bell', arp: 'marimba', vel: 0.95 },               // 10
+    { s: 'C', lead: 'flute',   bass: 'walk',  dr: 'kit',    pad: 1,   ans: 0, harm: 0,      arp: 'bell',    vel: 0.95 },               // 11 the bridge, driven
+    { s: 'Z', lead: 'flute',   bass: 'pizz',  dr: 'kit',    pad: 0.8, ans: 1, harm: 0,      arp: 0,         vel: 0.95, acc: 1 }        // 12 the coda, round into 1
+  ];
+  var ARP = [[0, 1, 2, 3, 2, 1, 0, 1], [0, 2, 1, 3, 0, 2, 1, 3]];
+  var OW = null, OW2 = null;
+  // mirror: the Master Quest reading. Melody degree d becomes 7 - d (inverted about the tonic octave), a chord
+  // on degree d becomes the chord on 3 - d (the inversion of its tones), the kit hardens: see FORM2 below.
+  function composeOverworld(mirror) {
+    if (mirror ? OW2 : OW) return mirror ? OW2 : OW;
+    var rnd = mulberry32(mirror ? 128 : 64), steps = [], spans = [], form = mirror ? FORM2() : FORM;
+    function notes(str) {
+      var out = [];
+      (str || '').split(' ').forEach(function (tok) {
+        if (!tok) return;
+        var p = tok.split('.'), d = p[1], alt = /\+$/.test(d) ? 1 : /-$/.test(d) ? -1 : 0, deg = parseInt(d, 10);
+        if (mirror) { deg = 7 - deg; alt = -alt; }
+        out.push({ p: +p[0], d: deg, alt: alt, len: +p[2] });
+      });
+      return out;
     }
-    var steps = [];   // one entry per 16th: { mel, arp, bass, pad, kick, snare, shk, voice }
-    FORM.forEach(function (sec, si) {
-      var mel = melody(sec), voice = VOICE[sec], repeatOfA = sec === 'A' && si > 0, quiet = sec === 'D' && si === 7;
-      for (var bar = 0; bar < 8; bar++) {
-        var root = PROG[sec][bar], tones = chordTones(root);
-        for (var i = 0; i < 16; i++) {
-          var st = { voice: voice, quiet: quiet };
-          var m = mel[bar * 16 + i]; if (m) st.mel = m;
-          // harmony a third above on the returning A sections (bells)
-          if (m && repeatOfA && i % 4 === 0) st.harm = deg(chordTones(root)[1] + 7, 1);
-          // marimba arpeggio, 8ths, alternating pattern per section
-          if (i % 2 === 0 && !quiet) { var pat = si % 2 ? [0, 1, 2, 1, 0, 2, 1, 2] : [0, 2, 1, 2, 0, 1, 2, 1]; st.arp = deg(tones[pat[i / 2]] , 0); }
-          if (i === 0 || i === 8) st.bass = deg(root, -1); else if (i === 6 || i === 14) st.bass = deg(root + 4, -1); else if (i === 12 && rnd() < 0.5) st.bass = deg(root + 2, -1);
-          if (i === 0) st.pad = tones.map(function (d) { return deg(d, 0); });
-          if (!quiet) {
-            if (i === 0 || i === 8 || (i === 10 && bar % 2)) st.kick = true;
-            if (i === 4 || i === 12) st.snare = true;
-            if (i % 2 === 0) st.shk = i % 4 === 0;
-            if (bar === 7 && i >= 12) { st.snare = true; st.kick = false; }   // little fill
-          }
-          steps.push(st);
-        }
+    function chord(name) {
+      var c = CHORD[name], d = c[0], alts = c[1] || [], bd = c[3] === undefined ? d : c[3];
+      if (mirror) { bd = c[3] === undefined ? ((3 - d) % 7 + 7) % 7 : ((7 - bd) % 7 + 7) % 7; d = ((3 - d) % 7 + 7) % 7; alts = []; }
+      var tones = [0, 2, 4].concat(c[2] ? [6] : []).map(function (iv, k) { return { d: d + iv, alt: alts[k] || 0 }; }), low = ((bd % 7) + 7) % 7 - 14;   // G2..F#3
+      return { tones: tones, bass: { d: low, alt: bd === d ? (alts[0] || 0) : 0 }, third: { d: low + 2, alt: alts[1] || 0 }, fifth: { d: low + 4, alt: alts[2] || 0 } };
+    }
+    form.forEach(function (fm, si) {
+      SEC[fm.s].ch.forEach(function (bar, b) { var names = bar.split('.'), L = 16 / names.length; names.forEach(function (nm, k) { spans.push({ at: si * 128 + b * 16 + k * L, len: L, c: chord(nm) }); }); });
+    });
+    // the bass line under one chord span: it walks or bounces and always approaches the next root by step (or sits on the fifth when the next root is a step away)
+    function bassLine(kind, sp, next) {
+      var c = sp.c, r = c.bass, n = next.c.bass, far = Math.abs(n.d - r.d), app = far <= 1 ? c.fifth : { d: n.d > r.d ? n.d - 1 : n.d + 1, alt: 0 }, oct = { d: r.d + 7, alt: r.alt };
+      if (sp.len === 8) return kind === 'long' ? [[0, r, 7]] : kind === 'walk' ? [[0, r, 4], [4, app, 4]] : kind === 'chug' ? [[0, r, 2], [2, r, 2], [4, c.fifth, 2], [6, app, 2]]
+                              : kind === 'synco' ? [[0, r, 3], [3, oct, 1], [4, c.fifth, 2], [6, app, 2]] : [[0, r, 3], [3, r, 1], [4, c.fifth, 2], [6, app, 2]];
+      return kind === 'long' ? [[0, r, 15]] : kind === 'walk' ? [[0, r, 4], [4, c.third, 4], [8, c.fifth, 4], [12, app, 4]]
+           : kind === 'chug' ? [[0, r, 2], [2, r, 2], [4, r, 2], [6, r, 2], [8, r, 2], [10, r, 2], [12, c.fifth, 2], [14, app, 2]]
+           : kind === 'synco' ? [[0, r, 3], [3, oct, 3], [6, r, 2], [8, c.fifth, 3], [11, oct, 1], [12, c.fifth, 2], [14, app, 2]]
+           : [[0, r, 3], [3, r, 1], [6, c.fifth, 2], [8, oct, 3], [12, c.fifth, 2], [14, app, 2]];   // pizz
+    }
+    function drums(kind, b, i, st) {
+      var last = b === 7, fill = last && i >= 12;
+      if (kind === 'half4') kind = b < 4 ? 'half' : 'hard';            // half time for four bars, then the whole kit
+      if (kind === 'none' || (kind === 'brush4' && b < 4)) return;
+      if (kind === 'brush' || kind === 'brush4') { if (i === 0 || i === 8) st.sk = 1; if (i === 4 || i === 12) st.br = 0.8; if (fill) st.br = 0.5 + (i - 12) * 0.17; }
+      else if (kind === 'light') { if (i === 0 || i === 8 || (i === 10 && b % 2)) st.sk = 1; if (i === 4 || i === 12) st.br = 1; if (i % 2 === 0) st.shk = i % 4 === 0 ? 1 : 0.6; if (fill) { st.br = 0.5 + (i - 12) * 0.17; st.shk = 0; } }
+      else if (kind === 'kit') {
+        if (i === 0 || i === 6 || i === 8 || (i === 11 && b % 2)) st.sk = 1; if (i === 4 || i === 12) st.sn = 0.7;
+        if (i % 2 === 0) st.ht = { o: i === 14 && b % 2 === 1 ? 1 : 0, v: i % 4 === 0 ? 1.1 : 0.8 };
+        if (fill) { st.sn = 0.6 + (i - 12) * 0.12; st.ht = null; if (i === 13) st.tm = 147; if (i === 15) st.tm = 98; }
+      }
+      else if (kind === 'hard') {
+        if (i === 0 || i === 6 || i === 8 || i === 10) st.kk = 0.85; if (i === 4 || i === 12) st.sn = 0.75;
+        if (i % 2 === 0) st.ht = { o: i === 14 ? 1 : 0, v: 0.7 };
+        if (last && i >= 8) { st.sn = 0.5 + (i - 8) * 0.07; st.ht = null; if (i === 12) st.tm = 147; if (i === 14) st.tm = 98; }
+      }
+      else if (kind === 'half') { if (i === 0) st.kk = 0.8; if (i === 8) st.sn = 0.6; if (i % 4 === 0) st.ht = { o: 0, v: 0.5 }; }
+    }
+    form.forEach(function (fm, si) {
+      var sec = SEC[fm.s];
+      for (var b = 0; b < 8; b++) {
+        var at = si * 128 + b * 16, row = [], i;
+        for (i = 0; i < 16; i++) row.push({ r: rnd(), sec: si, bar: b, lead: fm.lead, svel: fm.vel, arpv: fm.arp, harmv: fm.harm, bv: fm.bv, dbl: fm.dbl });
+        var answered = fm.ans && sec.ans && sec.ans[b];      // the thirds sit out the bars the bells answer in: call in thirds, reply in bells
+        notes(sec.mel[b]).forEach(function (m) {
+          var st = row[m.p]; st.mel = { d: m.d, alt: m.alt, len: m.len, vel: m.p % 4 === 0 ? 1 : 0.8 };
+          if (fm.harm && !answered && m.p % 4 === 0 && m.len >= 2) st.harm = { d: m.d - 2, alt: 0, len: m.len };
+          if (fm.acc && sec.hook && sec.hook.indexOf(b) >= 0 && m.p < 8) st.acc = { d: m.d - 7, alt: m.alt };
+        });
+        if (fm.ans && sec.ans) notes(sec.ans[b]).forEach(function (a) { row[a.p].ans = { d: a.d, alt: a.alt, len: a.len }; });
+        spans.forEach(function (sp, idx) {
+          if (sp.at < at || sp.at >= at + 16) return;
+          var next = spans[(idx + 1) % spans.length], off = sp.at - at;
+          if (fm.pad) row[off].pad = { tones: sp.c.tones.map(function (tn) { var x = tn.d; while (x > -1) x -= 7; return { d: x, alt: tn.alt }; }), len: sp.len, vel: fm.pad };   // folded into G3..F#4
+          bassLine(fm.bass, sp, next).forEach(function (bn) { row[off + bn[0]].bass = { d: bn[1].d, alt: bn[1].alt, len: bn[2], p: off + bn[0] }; });
+          if (fm.arp) for (i = off; i < off + sp.len; i += 2) { var tn = sp.c.tones, ix = ARP[si % 2][(i / 2) % 8], tone = ix === 3 ? { d: tn[0].d + 7, alt: tn[0].alt } : tn[ix]; row[i].arp = { d: tone.d - 7, alt: tone.alt }; }
+        });
+        for (i = 0; i < 16; i++) drums(fm.dr, b, i, row[i]);
+        steps = steps.concat(row);
       }
     });
-    return OVERWORLD = { bpm: BPM, steps: steps };
+    var song = { bpm: mirror ? OW2_BPM : OW_BPM, steps: steps, bars: steps.length / 16 };
+    if (mirror) OW2 = song; else OW = song;
+    return song;
   }
+  // the Master Quest dressing of the same form: the hard kit and palm-muted chugs from bar one, a harpsichord for the marimba,
+  // the lead with grit. The two long-bass sections stay the breath before the last push: the soft bass instead of chugs,
+  // half-time drums (the seventh throughout, the eighth for four bars before the whole kit comes back)
+  function FORM2() {
+    return FORM.map(function (fm) {
+      var thin = fm.bass === 'long';
+      return { s: fm.s, lead: 'grit', bass: thin ? 'long' : 'chug', bv: thin ? 'soft' : 'chug', dr: fm.dr === 'none' ? 'half' : fm.dr === 'brush4' ? 'half4' : 'hard',
+               pad: fm.pad, ans: fm.ans, harm: fm.harm, arp: fm.arp ? 'harpsi' : 0, vel: fm.vel, acc: fm.acc, dbl: fm.dbl };
+    });
+  }
+  var OCT = [0, 12];   // a chug with no fifth, for the notes whose fifth in the mode is not perfect
   function drone(note, t, dur, vel) {
     [0, 7, 12].forEach(function (iv, i) {
       var o = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
@@ -255,14 +381,6 @@
     });
   }
   function heartbeat(t) { softKick(t); softKick(t + 0.17); }
-  // Bend the major world into its parallel minor as dread grows: flatten 3rds, 6ths and 7ths.
-  function dreadify(n) {
-    var pc = ((n - KEYPC) % 12 + 12) % 12;
-    if (pc === 4 && Math.random() < dread * 1.6) return n - 1;
-    if (pc === 9 && Math.random() < dread * 1.3) return n - 1;
-    if (pc === 11 && Math.random() < dread) return n - 1;
-    return n;
-  }
   /* --- the boss kit: a cathedral on an oscillator budget ------------------- */
   var hallIn = null, choirIn = null, choirF = null;
   function hall() {   // three feedback delays at unrelated lengths: a cheap stone room
@@ -412,51 +530,71 @@
   }
   function applyTone(now, quick) {
     if (!AC) return;
-    var open = style === 'space' || style === 'cave' || style === 'title', d = open ? 0 : dread, cut = 18000 - 14500 * Math.pow(d, 1.5), tc = quick ? 0.03 : 0.5;
+    var open = style === 'space' || style === 'cave' || style === 'title' || (STYLES[style] && !STYLES[style].dreadful), d = open ? 0 : dread, cut = 18000 - 14500 * Math.pow(d, 1.5), tc = quick ? 0.03 : 0.5;
     if (bossOn && !open) cut = Math.max(cut, 7500);           // a boss needs air: choir formants and cymbals live up there
     tone.frequency.setTargetAtTime(cut, now, tc);
     if (fbGain) fbGain.gain.setTargetAtTime(0.32 + 0.4 * d, now, tc);
     if (wetGain) wetGain.gain.setTargetAtTime(0.22 + 0.3 * d, now, tc);
   }
 
+  var owShade = -1;   // the mode the current four-bar phrase is read in, chosen on its first bar line (-1: choose now)
+  function owNote(n, mode, major) { return pitch(n.d, major ? n.alt : 0, mode); }
   function scheduleOverworld() {
-    // tempo: a queasy slowdown to about 110 around dread 0.4, then an accelerating pulse to 160 by the end
-    var song = composeOverworld(), bpm = dread < 0.4 ? song.bpm - 40 * dread : 110 + (dread - 0.4) / 0.6 * 50 + boost * 6;
-    var spb = 60 / bpm / 4, now = AC.currentTime, grim = Math.max(0, (dread - 0.5) * 2);   // grim: 0..1 over the back half
+    var two = style === 'quest2', song = composeOverworld(two), d = two ? Math.min(1, 0.15 + dread) : dread;   // the Master Quest starts uneasy: its modes and shading run 0.15 ahead
+    // tempo, from the raw dread: the town sags queasily from 108 to 96 by dread 0.4, then an accelerating pulse to 160 by the end;
+    // the Master Quest has no sag (it holds its 132, the tempo info() reports) and then drives on to 176
+    var base = two ? OW2_BPM : OW_BPM, low = two ? OW2_BPM : OW_LOW, top = two ? OW2_TOP : OW_TOP;
+    var bpm = dread < 0.4 ? base - (base - low) * dread / 0.4 : low + (dread - 0.4) / 0.6 * (top - low) + boost * 6;
+    var spb = 60 / bpm / 4, now = AC.currentTime, grim = Math.max(0, (d - 0.5) * 2);   // grim: 0..1 over the back half
     while (nextT < now - 0.05) { nextT += bossOn ? 60 / BOSS_BPM / 4 : spb; step++; if (bossOn) bossStep++; }   // the tab stalled: drop what is already late
     while (nextT < now + 0.3) {
       var st = song.steps[step % song.steps.length], t = nextT, i16 = step % 16;
       // --- the boss layer joins and leaves on a bar line; while it is on, it owns the tempo and the harmony
-      if (i16 === 0 && bossWant !== bossOn) { bossOn = bossWant; bossStep = 0; applyTone(t, false); }
+      if (!two && i16 === 0 && bossWant !== bossOn) { bossOn = bossWant; bossStep = 0; applyTone(t, false); }
       if (bossOn) { var bs = 60 / BOSS_BPM / 4; scheduleBossStep(t, bs); nextT += bs; step++; bossStep++; continue; }
-      if (bossWant) timp(43, t, 0.3 + 0.7 * i16 / 15, true);      // it is coming: a roll up to the bar line
-      // --- the tune, thinning out as things go wrong
-      if (st.mel && Math.random() > grim * 0.6) {
-        var d = st.mel.len * spb, v = st.mel.vel * (st.quiet ? 0.7 : 1) * (1 - grim * 0.4), n = dreadify(st.mel.n);
-        if (dread > 0.55 && Math.random() < dread - 0.3) ocarina(n - (grim > 0.5 && Math.random() < 0.3 ? 12 : 0), t, d * 0.95, v * 0.9);
-        else if (st.voice === 'marimba') marimba(n, t, d, v); else if (st.voice === 'bell') bell(n, t, d, v); else ocarina(n, t, d * 0.95, v);
+      if (!two && bossWant) timp(43, t, 0.3 + 0.7 * i16 / 15, true);      // it is coming: a roll up to the bar line
+      // --- the mode: chosen per four-bar phrase on its first bar line. No note is ever soured on its own.
+      if (owShade < 0 || step % 64 === 0) owShade = shadeOf(d);
+      var sh = owShade, mode = (two ? SHADES2 : SHADES)[sh], major = !two && sh === 0, v0 = st.svel * (1 - grim * 0.35);
+      // --- the tune: whole while the world is bright; only its calls once things are grim; then fragments
+      if (st.mel && (sh < 3 || (sh === 3 ? st.bar % 4 < 2 : st.bar % 4 === 0))) {
+        var n = owNote(st.mel, mode, major), dur = st.mel.len * spb * 0.95, v = st.mel.vel * v0;
+        if (two) gritLead(n, t, dur, v); else if (sh >= 2 || st.lead === 'ocarina') ocarina(n, t, dur, v); else flute(n, t, dur, v);
+        if (st.dbl && sh <= 1) (two ? gritLead : ocarina)(n - 12, t, dur, v * 0.6);
       }
-      if (st.harm && dread < 0.7) bell(dreadify(st.harm), t, spb * 3, 0.5);
-      if (st.arp && Math.random() > dread * 0.6) marimba(dreadify(st.arp), t, spb * 1.8, 0.35 * (1 - grim * 0.5));
-      if (st.bass) bass(st.bass, t, spb * 2, 0.8 + 0.3 * dread);
-      if (st.pad) pad(st.pad.map(dreadify), t, spb * 16, (st.quiet ? 1.4 : 1) * (1 + dread));
+      if (st.acc && sh <= 1) (two ? harpsi : marimba)(owNote(st.acc, mode, major), t, spb * 2, 0.6);
+      if (st.ans && sh === 0) bell(owNote(st.ans, mode, major), t, st.ans.len * spb * 1.5, 0.6);
+      if (st.harm && sh <= 1) (st.harmv === 'bell' ? bell : ocarina)(owNote(st.harm, mode, major), t, st.harm.len * spb * 0.9, 0.3);
+      if (st.arp && sh <= 1) (two ? harpsi : st.arpv === 'bell' ? bell : marimba)(owNote(st.arp, mode, major), t, spb * 1.8, (st.arpv === 'bell' ? 0.32 : 0.5) * (1 - d));
+      if (st.bass && (sh < 3 || st.bass.p % 8 === 0)) {     // the walking stops once it is grim: roots and fifths on the beat
+        var bn = owNote(st.bass, mode, major), bd = st.bass.len * spb;
+        if (st.bv === 'chug') {   // Master Quest: a power chord where the mode has a perfect fifth over the note, root and octave where it does not
+          var up = owNote({ d: st.bass.d + 4, alt: 0 }, mode, false) - bn;
+          chug(bn, t, bd * 0.9, st.bass.len <= 2, true, up === 7 ? null : OCT);
+        } else bass(bn, t, bd, 0.75 + 0.3 * d, 0.35);
+      }
+      if (st.pad) pad(st.pad.tones.map(function (tn) { return owNote(tn, mode, major); }), t, st.pad.len * spb, st.pad.vel * 1.6 * (1 + d));
       // --- the things underneath
-      if (i16 === 0 && dread > 0.2) drone(67 - 24, t, spb * 16, dread);
-      if (i16 === 8 && dread > 0.65) drone(67 - 24 + 6, t, spb * 8, (dread - 0.6) * 1.5);   // the tritone arrives
-      // industrial pulse: palm-muted root stabs on the off-8ths, then every 8th, then a gallop
+      if (i16 === 0 && d > 0.45) drone(43, t, spb * 16, (d - 0.45) * 1.8);
+      if (i16 === 8 && d > 0.65) drone(49, t, spb * 8, (d - 0.6) * 1.5);   // the tritone arrives
+      // industrial pulse: palm-muted root stabs on the off-8ths, then every 8th, then a gallop. st.r is seeded, so the same every loop.
       if (grim > 0) {
-        var root = 43, stab = (i16 % 2 === 0), gallop = grim > 0.7 && (i16 % 4 === 3);
-        if (stab && Math.random() < grim) chug(root, t, spb * 0.9, true);
+        var root = 43, gallop = grim > 0.7 && i16 % 4 === 3;
+        if (!two && i16 % 2 === 0 && st.r < grim) chug(root, t, spb * 0.9, true);
         if (gallop) chug(root, t, spb * 0.9, true);
-        if (i16 === 12 && grim > 0.5 && Math.random() < 0.5) chug(root + 6, t, spb * 2, false);          // tritone hit
-        if (i16 === 6 && grim > 0.8 && Math.random() < 0.4) lead(root + 30 + (Math.random() < 0.5 ? 0 : 1), t, spb * 3);   // a dissonant shriek
+        if (i16 === 12 && grim > 0.5 && st.r < 0.5) chug(root + 6, t, spb * 2, false);          // tritone hit
+        if (i16 === 6 && grim > 0.8 && st.r < 0.4) lead(root + 30 + (st.r < 0.2 ? 0 : 1), t, spb * 3);   // a dissonant shriek
       }
       // --- drums: brushes to boots
-      if (st.kick) { if (grim > 0.3) kick(t); else if (dread > 0.5 && i16 === 0) heartbeat(t); else softKick(t); }
-      if (grim > 0.5 && (i16 === 0 || i16 === 8 || (i16 === 10 && grim > 0.8))) kick(t);
-      if (st.snare) { if (grim > 0.4) snare(t); else if (Math.random() > dread * 0.7) brush(t); }
-      if (st.shk !== undefined && dread < 0.6) shaker(t, st.shk);
-      if (grim > 0.6 && i16 % 2 === 0) hat(t, i16 === 14);
+      if (st.sk) { if (grim > 0.3) kick(t); else if (d > 0.5 && i16 === 0) heartbeat(t); else softKick(t); }
+      if (st.kk) kick(t, st.kk);
+      if (grim > 0.5 && !st.sk && !st.kk && (i16 === 0 || i16 === 8 || (i16 === 10 && grim > 0.8))) kick(t);
+      if (st.br) { if (grim > 0.4) snare(t, 0.8); else if (d < 0.6) brush(t, st.br); }
+      if (st.sn) snare(t, grim > 0.4 ? 1 : st.sn);
+      if (st.shk && d < 0.5) shaker(t, st.shk >= 1);
+      if (st.ht && (two || sh <= 1)) hat(t, !!st.ht.o, st.ht.v);
+      else if (grim > 0.6 && i16 % 2 === 0) hat(t, i16 === 14);
+      if (st.tm) tom(t, st.tm, 0.6);
       nextT += spb; step++;
     }
   }
@@ -1040,7 +1178,7 @@
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v * 0.38, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0008, t + 1.1);
     o.connect(g); g.connect(titleBus()); o.start(t); o.stop(t + 1.15);
   }
-  function tRumble(t, dur) {   // the tremor under bar 14: a sub that climbs and shakes faster as it goes
+  function tRumble(t, dur) {   // a tremor: a sub that climbs and shakes faster as it goes (the title no longer uses it; plug-ins may, through kit())
     var o = AC.createOscillator(), g = AC.createGain(), lfo = AC.createOscillator(), lg = AC.createGain();
     o.type = 'sine'; o.frequency.setValueAtTime(30, t); o.frequency.linearRampToValueAtTime(44, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.13, t + dur * 0.88); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.12);
@@ -1057,15 +1195,15 @@
     });
   }
 
-  /* --- the title piece: A minor, 128 BPM, 20 scored bars then a 40-bar loop --
-     The 20 bars are the cinematic (intro.js), beat for beat: every cut in that
-     film lands on a bar line, so every bar below is captioned with the frame it
-     is under. After bar 19 the piece turns into a 40-bar loop (75 s) that ends
-     on the dominant and resolves back into bar 20 — never into bar 0's silence.
+  /* --- the title piece: A minor, 128 BPM, a two-bar intro then a 40-bar loop --
+     The title card is already on screen when the coin goes in, so the intro is
+     the coin, a riser and a snare roll into the logo slam: two bars. After them
+     the piece is a 40-bar loop (75 s) that ends on the dominant and resolves
+     back into bar 2 — never into bar 0's coin.
      The acid line is written as scale degrees and shifted per chord (a triad is
      three scale steps apart, so shifting the whole pattern by `sh` re-reads the
      same riff through the new chord), which is how it can pedal and still move. */
-  var TITLE = null, TITLE_INTRO_BARS = 20, TITLE_LOOP_BARS = 40;
+  var TITLE = null, TITLE_INTRO_BARS = 2, TITLE_LOOP_BARS = 40;
   function composeTitle() {
     if (TITLE) return TITLE;
     var TR = 45, AMIN = [0, 2, 3, 5, 7, 8, 10];                      // A2, A natural minor
@@ -1108,74 +1246,55 @@
       [[0,76,4], [4,74,4], [8,72,4], [12,71,4]]
     ];
     // ch chord · dr drums · b bass · a acid · c/c2 acid cutoff (ramped across the bar)
-    // s stabs · sv stab velocity · l lead phrase · p pad · hv hoover · lg the laugh · e one-shots
+    // s stabs · sv stab velocity · l lead phrase · p pad · hv hoover · gp a gap: the last sixteenths emptied · e one-shots
     var BARS = [
-      /* 0  0.000  black      */ { ch:'Am', dr:'none',   e:[[0,'coin'],[0,'sub',1],[0,'rise',16,0.1]] },
-      /* 1  1.875  fadeup     */ { ch:'Am', dr:'pulse',  p:0.55, e:[[0,'crash',0.3]] },
-      /* 2  3.750             */ { ch:'Am', dr:'pulse2', p:0.55 },
-      /* 3  5.625  line1      */ { ch:'Am', dr:'four',   b:'I', p:0.5, e:[[0,'stab',0.55]] },
-      /* 4  7.500             */ { ch:'F',  dr:'four',   b:'I', p:0.5 },
-      /* 5  9.375  line2      */ { ch:'Am', dr:'four',   b:'P', a:'C', c:0.1,  s:'off', p:0.45, lv:0.8, e:[[0,'stab',0.6]] },
-      /* 6  11.250            */ { ch:'F',  dr:'four',   b:'P', a:'C', c:0.16, s:'off', p:0.45, lv:0.8 },
-      /* 7  13.125 photo      */ { ch:'Am', dr:'house',  b:'P', a:'C', c:0.24, s:'off', p:0.4, lv:0.86, e:[[0,'stab',0.85]] },
-      /* 8  15.000            */ { ch:'G',  dr:'house',  b:'P', a:'A', c:0.34, s:'off', p:0.4, lv:0.86 },
-      /* 9  16.875            */ { ch:'Am', dr:'houseF', b:'P', a:'B', c:0.44, s:'off', p:0.35, lv:0.9, e:[[12,'rise',4,0.3]] },
-      /* 10 18.750 photoOut   */ { ch:'Am', dr:'break',  b:'L', p:0.3, lv:0.8, gp:1, e:[[0,'fall',0.9,0.38],[0,'crash',0.4],[8,'rise',7,0.38]] },
-      /* 11 20.625 institute  */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.72, s:'down', sv:1.15, e:[[0,'crash',0.9],[0,'sub',0.8]] },
-      /* 12 22.500            */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.72, s:'off' },
-      /* 13 24.375 line5      */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.8,  s:'down', e:[[14,'tom',150]] },
-      /* 14 26.250 rumble     */ { ch:'E',  dr:'roll',   b:'I', a:'A', c:0.35, c2:1, lv:0.85, gp:1, e:[[0,'rumble',15],[0,'rise',15,0.42]] },
-      /* 15 28.125 MR. E      */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:1,    s:'down', sv:1.2, hv:1.15, e:[[0,'crash',1],[0,'sub',1]] },
-      /* 16 30.000 name       */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:0.95, s:'down', hv:0.85, e:[[0,'tom',110],[8,'stab',0.85]] },
-      /* 17 31.875 laugh      */ { ch:'Am', dr:'house',  b:'D', c:0.9, lg:1, e:[[0,'tom',150],[4,'tom',130],[8,'tom',110],[12,'tom',95]] },
-      /* 18 33.750 LOGO SLAM  */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:1, s:'down', sv:1.35, hv:1.3, e:[[0,'crash',1],[0,'sub',1]] },
-      /* 19 35.625 settle     */ { ch:'Am', dr:'fill',   b:'P', a:'B', c:0.6, s:'off', p:0.6, lv:0.88, e:[[0,'stab',0.7],[12,'rise',4,0.4]] },
-      /* --- 37.500: the loop. 40 bars, 75 s, turning back into this bar ------ */
-      /* 20 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.62, s:'down', e:[[0,'crash',0.7]] },
-      /* 21 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.66, s:'off' },
-      /* 22 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.7,  s:'off' },
-      /* 23 */ { ch:'G',  dr:'house',  b:'D', a:'B', c:0.74, s:'off', e:[[14,'tom',150]] },
-      /* 24 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.78, s:'down' },
-      /* 25 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.82, s:'off' },
-      /* 26 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.86, s:'off' },
-      /* 27 */ { ch:'E',  dr:'houseF', b:'D', a:'B', c:0.9,  s:'off', e:[[8,'rise',8,0.35]] },
-      /* 28 */ { ch:'Am', dr:'house',  b:'P', a:'A', c:0.6,  s:'off', l:0, e:[[0,'crash',0.55]] },
-      /* 29 */ { ch:'F',  dr:'house',  b:'P', a:'B', c:0.6,  s:'off', l:1 },
-      /* 30 */ { ch:'C',  dr:'house',  b:'P', a:'A', c:0.64, s:'off', l:2 },
-      /* 31 */ { ch:'G',  dr:'house',  b:'P', a:'B', c:0.68, s:'off', l:3, e:[[14,'tom',150]] },
-      /* 32 */ { ch:'Am', dr:'house',  b:'P', a:'A', c:0.7,  s:'off', l:4 },
-      /* 33 */ { ch:'F',  dr:'house',  b:'P', a:'B', c:0.72, s:'off', l:5 },
-      /* 34 */ { ch:'E',  dr:'house',  b:'P', a:'A', c:0.74, s:'off', l:6 },
-      /* 35 */ { ch:'E',  dr:'houseF', b:'P', a:'B', c:0.76, s:'off', l:7, e:[[8,'rise',8,0.4]] },
-      /* 36 */ { ch:'Dm', dr:'break',  b:'L', a:'D', c:0.25, p:0.5, e:[[0,'fall',0.9,0.4]] },
-      /* 37 */ { ch:'Dm', dr:'break',  b:'L', a:'D', c:0.35, p:0.5 },
-      /* 38 */ { ch:'Am', dr:'break',  b:'L', a:'D', c:0.45, p:0.5 },
-      /* 39 */ { ch:'Am', dr:'break',  b:'L', a:'D', c:0.55, p:0.5 },
-      /* 40 */ { ch:'F',  dr:'pulse2', b:'L', a:'D', c:0.65, s:'off', p:0.4 },
-      /* 41 */ { ch:'F',  dr:'pulse2', b:'L', a:'D', c:0.75, s:'off', p:0.4 },
-      /* 42 */ { ch:'E',  dr:'four',   b:'P', a:'D', c:0.85, s:'off', p:0.3, e:[[0,'rise',16,0.4]] },
-      /* 43 */ { ch:'E',  dr:'roll',   b:'P', a:'D', c:0.5, c2:1, p:0.2, gp:1, e:[[0,'rise',15,0.45]] },
-      /* 44 */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:1,    s:'down', l:0, hv:0.8, e:[[0,'crash',0.9]] },
-      /* 45 */ { ch:'F',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:1 },
-      /* 46 */ { ch:'C',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:2 },
-      /* 47 */ { ch:'G',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:3, e:[[14,'tom',150]] },
-      /* 48 */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:0.95, s:'down', l:4, hv:0.8 },
-      /* 49 */ { ch:'F',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:5 },
-      /* 50 */ { ch:'E',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:6 },
-      /* 51 */ { ch:'E',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:7, e:[[8,'rise',8,0.4]] },
-      /* 52 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.8,  s:'down', e:[[0,'crash',0.6]] },
-      /* 53 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.8,  s:'off' },
-      /* 54 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.84, s:'off' },
-      /* 55 */ { ch:'G',  dr:'house',  b:'D', a:'B', c:0.84, s:'off', e:[[14,'tom',150]] },
-      /* 56 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.88, s:'down', l:4 },
-      /* 57 */ { ch:'F',  dr:'house',  b:'D', a:'B', c:0.88, s:'off', l:5 },
-      /* 58 */ { ch:'E',  dr:'house',  b:'D', a:'A', c:0.9,  s:'off', l:6 },
-      /* 59 */ { ch:'E',  dr:'fill',   b:'D', a:'B', c:0.95, s:'off', l:7, e:[[8,'rise',8,0.5]] }
+      /* 0  0.000  coin       */ { ch:'Am', dr:'roll',   gp:1, e:[[0,'coin'],[0,'sub',0.8],[0,'rise',15,0.42]] },
+      /* 1  1.875  LOGO SLAM  */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:1, s:'down', sv:1.35, hv:1.3, e:[[0,'crash',1],[0,'sub',1]] },
+      /* --- 3.750: the loop. 40 bars, 75 s, turning back into this bar ------ */
+      /* 2 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.62, s:'down', e:[[0,'crash',0.7]] },
+      /* 3 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.66, s:'off' },
+      /* 4 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.7,  s:'off' },
+      /* 5 */ { ch:'G',  dr:'house',  b:'D', a:'B', c:0.74, s:'off', e:[[14,'tom',150]] },
+      /* 6 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.78, s:'down' },
+      /* 7 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.82, s:'off' },
+      /* 8 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.86, s:'off' },
+      /* 9 */ { ch:'E',  dr:'houseF', b:'D', a:'B', c:0.9,  s:'off', e:[[8,'rise',8,0.35]] },
+      /* 10 */ { ch:'Am', dr:'house',  b:'P', a:'A', c:0.6,  s:'off', l:0, e:[[0,'crash',0.55]] },
+      /* 11 */ { ch:'F',  dr:'house',  b:'P', a:'B', c:0.6,  s:'off', l:1 },
+      /* 12 */ { ch:'C',  dr:'house',  b:'P', a:'A', c:0.64, s:'off', l:2 },
+      /* 13 */ { ch:'G',  dr:'house',  b:'P', a:'B', c:0.68, s:'off', l:3, e:[[14,'tom',150]] },
+      /* 14 */ { ch:'Am', dr:'house',  b:'P', a:'A', c:0.7,  s:'off', l:4 },
+      /* 15 */ { ch:'F',  dr:'house',  b:'P', a:'B', c:0.72, s:'off', l:5 },
+      /* 16 */ { ch:'E',  dr:'house',  b:'P', a:'A', c:0.74, s:'off', l:6 },
+      /* 17 */ { ch:'E',  dr:'houseF', b:'P', a:'B', c:0.76, s:'off', l:7, e:[[8,'rise',8,0.4]] },
+      /* 18 */ { ch:'Dm', dr:'break',  b:'L', a:'D', c:0.25, p:0.5, e:[[0,'fall',0.9,0.4]] },
+      /* 19 */ { ch:'Dm', dr:'break',  b:'L', a:'D', c:0.35, p:0.5 },
+      /* 20 */ { ch:'Am', dr:'break',  b:'L', a:'D', c:0.45, p:0.5 },
+      /* 21 */ { ch:'Am', dr:'break',  b:'L', a:'D', c:0.55, p:0.5 },
+      /* 22 */ { ch:'F',  dr:'pulse2', b:'L', a:'D', c:0.65, s:'off', p:0.4 },
+      /* 23 */ { ch:'F',  dr:'pulse2', b:'L', a:'D', c:0.75, s:'off', p:0.4 },
+      /* 24 */ { ch:'E',  dr:'four',   b:'P', a:'D', c:0.85, s:'off', p:0.3, e:[[0,'rise',16,0.4]] },
+      /* 25 */ { ch:'E',  dr:'roll',   b:'P', a:'D', c:0.5, c2:1, p:0.2, gp:1, e:[[0,'rise',15,0.45]] },
+      /* 26 */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:1,    s:'down', l:0, hv:0.8, e:[[0,'crash',0.9]] },
+      /* 27 */ { ch:'F',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:1 },
+      /* 28 */ { ch:'C',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:2 },
+      /* 29 */ { ch:'G',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:3, e:[[14,'tom',150]] },
+      /* 30 */ { ch:'Am', dr:'houseF', b:'D', a:'E', c:0.95, s:'down', l:4, hv:0.8 },
+      /* 31 */ { ch:'F',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:5 },
+      /* 32 */ { ch:'E',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:6 },
+      /* 33 */ { ch:'E',  dr:'houseF', b:'D', a:'E', c:0.95, s:'off', l:7, e:[[8,'rise',8,0.4]] },
+      /* 34 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.8,  s:'down', e:[[0,'crash',0.6]] },
+      /* 35 */ { ch:'Am', dr:'house',  b:'D', a:'B', c:0.8,  s:'off' },
+      /* 36 */ { ch:'F',  dr:'house',  b:'D', a:'A', c:0.84, s:'off' },
+      /* 37 */ { ch:'G',  dr:'house',  b:'D', a:'B', c:0.84, s:'off', e:[[14,'tom',150]] },
+      /* 38 */ { ch:'Am', dr:'house',  b:'D', a:'A', c:0.88, s:'down', l:4 },
+      /* 39 */ { ch:'F',  dr:'house',  b:'D', a:'B', c:0.88, s:'off', l:5 },
+      /* 40 */ { ch:'E',  dr:'house',  b:'D', a:'A', c:0.9,  s:'off', l:6 },
+      /* 41 */ { ch:'E',  dr:'fill',   b:'D', a:'B', c:0.95, s:'off', l:7, e:[[8,'rise',8,0.5]] }
     ];
     function drums(kind, i, odd, st) {
       var h = null;
-      if (kind === 'pulse') { if (i === 0 || i === 8) st.kk = 0.6; if (i === 4 || i === 12) h = 0.3; }
-      else if (kind === 'pulse2') { if (i % 4 === 0) st.kk = 0.72; if (i % 4 === 2) h = 0.36; }
+      if (kind === 'pulse2') { if (i % 4 === 0) st.kk = 0.72; if (i % 4 === 2) h = 0.36; }
       else if (kind === 'four') {
         if (i % 4 === 0) st.kk = 0.72;
         if (i % 2 === 0) h = i % 4 === 0 ? 0.5 : 0.34;
@@ -1221,33 +1340,17 @@
         if (lmap[i]) st.ld = { n: lmap[i][1], len: lmap[i][2], vel: i === 0 ? 1 : 0.86 };
         if (i === 0 && B.p) st.pd = { notes: ch.tri.map(function (x) { return x - 12; }), len: 16, vel: B.p };
         if (i === 0 && B.hv) st.hv = { notes: ch.tri, len: 6, vel: B.hv };
-        if (B.lg) {   // the four laugh bursts, on the quarter note, walking down A G F E
-          var LGH = { 0: [[57,60,64], 1.15], 4: [[55,59,62], 1], 8: [[53,57,60], 1.05], 12: [[52,56,59], 1.2] };
-          if (LGH[i]) st.hv = { notes: LGH[i][0], len: 3.4, vel: LGH[i][1] };
-        }
         // a build that runs right up to the drop masks it, and leaves the limiter clamped down
         // over the very hit it is building to. Empty the last sixteenths instead: the silence
         // lets the compressor breathe out, and the drop arrives into a hole.
         if (B.gp && i >= 16 - B.gp) { st.kk = 0; st.sn = 0; st.cp = 0; st.tm = 0; st.ht = null; st.bs = null; st.ac = null; st.sb = null; }
-        if (B.lv) {   // the film is still talking: the groove sits under the hits that are coming
-          if (st.kk) st.kk *= B.lv;
-          if (st.sn) st.sn *= B.lv;
-          if (st.cp) st.cp *= B.lv;
-          if (st.ht) st.ht = { v: st.ht.v * B.lv, o: st.ht.o };
-          if (st.bs) st.bs.vel *= B.lv;
-          if (st.ac) st.ac.vel *= B.lv;
-          if (st.sb) st.sb.vel *= B.lv;
-          if (st.pd) st.pd.vel *= B.lv;
-        }
         (ev[i] || []).forEach(function (e) {
           if (e[1] === 'coin') st.cn = 1;
           else if (e[1] === 'sub') st.su = e[2];
           else if (e[1] === 'crash') st.cr = e[2];
           else if (e[1] === 'rise') st.ri = { len: e[2], v: e[3] };
           else if (e[1] === 'fall') st.fa = { d: e[2], v: e[3] };
-          else if (e[1] === 'rumble') st.rm = e[2];
           else if (e[1] === 'tom') st.tm = e[2];
-          else if (e[1] === 'stab') st.sb = { notes: ch.tri, len: 2.2, vel: e[2] };
         });
         steps.push(st);
       }
@@ -1259,7 +1362,7 @@
     var song = composeTitle(), spb = 60 / song.bpm / 4, now = AC.currentTime, swg = TITLE_SWING * spb;
     while (nextT < now - 0.05) { nextT += spb; step++; }              // the tab stalled: drop what is already late
     while (nextT < now + 0.3) {
-      // the scored 20 bars play once; after them the piece wraps inside the loop, never back into bar 0
+      // the two intro bars play once; after them the piece wraps inside the loop, never back into bar 0
       var j = step < song.introSteps ? step : song.introSteps + (step - song.introSteps) % song.loopSteps;
       var st = song.steps[j], t = nextT, sw = (j % 2) ? swg : 0;
       if (st.cn) tCoin(t);
@@ -1267,7 +1370,6 @@
       if (st.cr) tCrash(t, st.cr);
       if (st.ri) tRise(t, st.ri.len * spb, st.ri.v);
       if (st.fa) tFall(t, st.fa.d, st.fa.v);
-      if (st.rm) tRumble(t, st.rm * spb);
       if (st.pd) tPad(st.pd.notes, t, st.pd.len * spb, st.pd.vel);
       if (st.hv) tHoover(st.hv.notes, t, st.hv.len * spb, st.hv.vel);
       if (st.sb) tStab(st.sb.notes, t, st.sb.len * spb, st.sb.vel);
@@ -1356,32 +1458,119 @@
       sg.gain.setValueAtTime(0.0001, t); sg.gain.exponentialRampToValueAtTime(0.5, t + 2.4); sg.gain.setValueAtTime(0.5, t + 3.8); sg.gain.exponentialRampToValueAtTime(0.0001, t + 5.0);
       sub.connect(sg); sg.connect(dry); sub.start(t); sub.stop(t + 5.05);
     },
-    // home: the first bar of the overworld tune at walking pace, its cadence bar over ii-V, and G major left ringing
+    // home: the town theme's hook (bars 1-2) and its cadence (bars 7-8) at walking pace, in G major whatever the dread was, then G left ringing
     ending: function (t) {
-      var wet = stingOut(true), song = composeOverworld(), sp = 0.14;
-      duckFor(0, 6.0, 1.2);
+      var wet = stingOut(true), song = composeOverworld(false), sp = 0.125;
+      duckFor(0, 9.5, 1.2);
       function mar(n, at, len, v) { sTone('sine', f(n), at, Math.max(0.5, len), v * 0.3, 0.004, wet); sTone('sine', f(n) * 4, at, 0.12, v * 0.06, 0.002, wet); }
       function padc(notes, at, len, v) { notes.forEach(function (n, k) { var o = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter(); o.type = 'triangle'; o.frequency.value = f(n); o.detune.value = k * 4 - 6; lp.type = 'lowpass'; lp.frequency.value = 1100; g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(v * 0.07, at + 0.3); g.gain.setValueAtTime(v * 0.07, at + Math.max(0.35, len - 0.2)); g.gain.exponentialRampToValueAtTime(0.0001, at + len + 0.6); o.connect(lp); lp.connect(g); g.connect(wet); o.start(at); o.stop(at + len + 0.7); }); }
-      [0, 7].forEach(function (bar, k) { for (var i = 0; i < 16; i++) { var m = song.steps[bar * 16 + i].mel; if (m) mar(m.n, t + (k * 16 + i) * sp, m.len * sp * 1.6, m.vel); } });
-      padc([55, 59, 62, 67], t, 16 * sp, 1); sTone('triangle', f(43), t, 16 * sp, 0.2, 0.02, wet);
-      padc([57, 60, 64, 69], t + 16 * sp, 8 * sp, 1); sTone('triangle', f(45), t + 16 * sp, 8 * sp, 0.2, 0.02, wet);
-      padc([57, 60, 62, 66], t + 24 * sp, 8 * sp, 1); sTone('triangle', f(38), t + 24 * sp, 8 * sp, 0.2, 0.02, wet);
-      var e = t + 32 * sp;
+      [0, 1, 6, 7].forEach(function (bar, k) { for (var i = 0; i < (bar === 7 ? 14 : 16); i++) { var m = song.steps[bar * 16 + i].mel; if (m) mar(pitch(m.d, m.alt, 'major'), t + (k * 16 + i) * sp, m.len * sp * 1.6, m.vel); } });   // bar 8's pickup back into the tune is left out: this ends
+      [[[55, 59, 62, 67], 43, 0, 16], [[52, 55, 59, 64], 40, 16, 16], [[55, 60, 64, 67], 48, 32, 8], [[54, 57, 62, 66], 50, 40, 8]].forEach(function (c) {   // G, Em, C, D
+        padc(c[0], t + c[2] * sp, c[3] * sp, 1); sTone('triangle', f(c[1]), t + c[2] * sp, c[3] * sp, 0.2, 0.02, wet);
+      });
+      var e = t + 48 * sp;
       padc([55, 59, 62, 67, 71], e, 1.6, 1.2); sTone('triangle', f(43), e, 2.4, 0.26, 0.02, wet);
       [67, 71, 74, 79, 83].forEach(function (n, k) { var at = e + k * 0.13; [1, 2.76, 5.4].forEach(function (r, j) { sTone('sine', f(n) * r, at, 1.9 - j * 0.5, [0.2, 0.06, 0.02][j], 0.003, wet); }); });
     }
   };
 
   /* --- API ---------------------------------------------------------------- */
-  var live = [];   // every music voice, so stop() can actually stop them (stingers are exempt)
+  // every music voice, so stop() can actually stop them (stingers are exempt). A voice leaves the list when it has
+  // ended, not when it is old: a plug-in's eleven-second riser must still answer stop(). The 60 s cap only catches
+  // a source that was created and never started (it would never end).
+  var live = [];
   function track(ac) {
     ['createOscillator', 'createBufferSource'].forEach(function (k) {
       var mk = ac[k].bind(ac);
-      ac[k] = function () { var n = mk(); if (!inSting) live.push({ n: n, born: ac.currentTime }); return n; };
+      ac[k] = function () {
+        var n = mk();
+        if (!inSting) { var v = { n: n, born: ac.currentTime, done: false }; n.addEventListener('ended', function () { v.done = true; }); live.push(v); }
+        return n;
+      };
     });
   }
-  function prune() { var now = AC.currentTime, k = 0; while (k < live.length && now - live[k].born > 9) k++; if (k) live.splice(0, k); }
-  function tick() { try { if (parked) return; prune(); if (style === 'space') scheduleSpace(); else if (style === 'cave') scheduleCave(); else if (style === 'title') scheduleTitle(); else scheduleOverworld(); } catch (e) { if (window.console) console.error(e); } }
+  function prune() { var now = AC.currentTime, j = 0; for (var i = 0; i < live.length; i++) { var v = live[i]; if (!v.done && now - v.born < 60) live[j++] = v; } live.length = j; }
+  function scheduleCustom() {
+    var def = STYLES[style], S = { now: AC.currentTime, nextT: nextT, step: step, dread: dread, boost: boost, offline: rendering };
+    def.schedule(S);
+    // Keep the plug-in's grid whenever it is not behind the clock: a tick with nothing due leaves S.nextT alone, and
+    // that is correct. Only a scheduler that fell behind (or returned garbage) is put back 300 ms ahead. tick() runs
+    // on a timer and never loops, so a plug-in that never advances cannot spin either way.
+    var nt = S.nextT, now = AC.currentTime;
+    nextT = typeof nt === 'number' && isFinite(nt) && nt >= now ? nt : now + 0.3;
+    if (typeof S.step === 'number' && isFinite(S.step)) step = S.step;
+  }
+  function schedule() { if (style === 'space') scheduleSpace(); else if (style === 'cave') scheduleCave(); else if (style === 'title') scheduleTitle(); else if (STYLES[style]) scheduleCustom(); else scheduleOverworld(); }
+  function tick() { try { if (parked) return; prune(); schedule(); } catch (e) { if (window.console) console.error(e); } }
+
+  /* --- offline render: the same schedulers, the offline context's own clock, a throwaway graph ------
+     Riff.render(style, seconds, {dread, boss, boost}) builds an OfflineAudioContext, rebuilds every bus
+     on it, drives the style's scheduler exactly as the live tick does (the context suspends itself every
+     100 ms of render time and each stop schedules the next 300 ms) and resolves to the AudioBuffer. `dread` is a number or a function of
+     seconds, fed through setDread as the clock advances; `step` starts the scheduler part-way through
+     a piece (a loop seam can then be measured without rendering the loop). The live context and everything cached on it
+     are put back after every step, so whatever is playing keeps playing meanwhile. */
+  function snap() {
+    return { AC: AC, master: master, tone: tone, dist: dist, gate: gate, duck: duck, stingBus: stingBus, owMix: owMix, metalMix: metalMix,
+             fbGain: fbGain, wetGain: wetGain, soft: soft, hallIn: hallIn, choirIn: choirIn, choirF: choirF, spaceIn: spaceIn, pulseWaves: pulseWaves,
+             caveIn: caveIn, titleIn: titleIn, titleEch: titleEch, stingFx: stingFx, noiseBufs: noiseBufs, rendering: rendering, owShade: owShade,
+             playing: playing, style: style, step: step, nextT: nextT, dread: dread, boost: boost, bossWant: bossWant, bossOn: bossOn, bossStep: bossStep, inSting: inSting };
+  }
+  function load(s) {
+    AC = s.AC; master = s.master; tone = s.tone; dist = s.dist; gate = s.gate; duck = s.duck; stingBus = s.stingBus; owMix = s.owMix; metalMix = s.metalMix;
+    fbGain = s.fbGain; wetGain = s.wetGain; soft = s.soft; hallIn = s.hallIn; choirIn = s.choirIn; choirF = s.choirF; spaceIn = s.spaceIn; pulseWaves = s.pulseWaves;
+    caveIn = s.caveIn; titleIn = s.titleIn; titleEch = s.titleEch; stingFx = s.stingFx; noiseBufs = s.noiseBufs; rendering = s.rendering; owShade = s.owShade;
+    playing = s.playing; style = s.style; step = s.step; nextT = s.nextT; dread = s.dread; boost = s.boost; bossWant = s.bossWant; bossOn = s.bossOn; bossStep = s.bossStep; inSting = s.inSting;
+  }
+  function render(st, seconds, opts) {
+    opts = opts || {};
+    return new Promise(function (resolve, reject) {
+      var Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!Off) { reject(new Error('no OfflineAudioContext')); return; }
+      if (!Riff.has(st)) { reject(new Error('unknown style ' + st)); return; }
+      seconds = Math.max(1, +seconds || 10);
+      var off = new Off(2, Math.ceil(seconds * 44100), 44100), STEP = 0.1;
+      var dfn = typeof opts.dread === 'function' ? opts.dread : function () { return +opts.dread || 0; };
+      var R = { AC: off, master: null, tone: null, dist: null, gate: null, duck: null, stingBus: null, owMix: null, metalMix: null, fbGain: null, wetGain: null,
+                soft: null, hallIn: null, choirIn: null, choirF: null, spaceIn: null, pulseWaves: {}, caveIn: null, titleIn: null, titleEch: null, stingFx: null, noiseBufs: {}, rendering: true, owShade: -1,
+                playing: true, style: st, step: Math.max(0, opts.step | 0), nextT: 0, dread: 0, boost: opts.boost ? 1 : 0, bossWant: !!opts.boss && st === 'quest', bossOn: false, bossStep: 0, inSting: false };
+      // one scheduler step at render time `time`, on the offline graph, with the live state put back before anything else can run
+      function tickAt(time) {
+        var keep = snap(); load(R);
+        try { Riff.setDread(dfn(time)); schedule(); } finally { R = snap(); load(keep); }
+      }
+      // the context stops every 100 ms of its own time; each stop schedules the next 300 ms, exactly like the live tick,
+      // so the graph only ever holds the voices in flight (scheduling a whole piece up front makes Chrome pull every
+      // node of it on every render quantum, and a three-minute piece then renders at a tenth of real time)
+      // A step that throws (a plug-in's schedule, an opts.dread function) rejects the render and lets the context run
+      // out with nothing more scheduled: left suspended it would never finish, and its buffer and graph would never go.
+      function arm(k) {
+        if (k * STEP >= seconds) return;
+        off.suspend(k * STEP).then(function () {
+          try { tickAt(off.currentTime); arm(k + 1); } catch (e) { reject(e); }
+          off.resume();
+        }, reject);
+      }
+      try { var keep = snap(); load(R); buildBuses(); R = snap(); load(keep); tickAt(0); arm(1); }
+      catch (e) { load(keep); reject(e); return; }
+      off.startRendering().then(resolve, reject);
+    });
+  }
+  // {peak, rms, envelope (RMS per second), onsetsPerSecond, seconds} of a rendered buffer: enough to measure a track without hearing it
+  function analyse(buf) {
+    var L = buf.getChannelData(0), R2 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L, n = L.length, sr = buf.sampleRate;
+    var peak = 0, sum = 0, env = [], acc = 0, cnt = 0, i, k, v;
+    for (i = 0; i < n; i++) { v = Math.max(Math.abs(L[i]), Math.abs(R2[i])); if (v > peak) peak = v; v = L[i] * L[i]; sum += v; acc += v; if (++cnt === sr) { env.push(+Math.sqrt(acc / cnt).toFixed(4)); acc = 0; cnt = 0; } }
+    if (cnt > sr / 2) env.push(+Math.sqrt(acc / cnt).toFixed(4));
+    // onsets: 10 ms frames of first-difference energy (a high-pass, so attacks count and held pads do not); a frame
+    // 3 dB above the mean of the previous three counts, at most one every 50 ms. Checked against the town theme's
+    // note data: 3.2 onsets/s detected in its first minute against 3.1-4.1/s scheduled.
+    var fl = Math.round(sr / 100), nf = Math.floor(n / fl), e = new Float32Array(nf), ons = [], last = -9;
+    for (k = 0; k < nf; k++) { acc = 0; for (i = Math.max(1, k * fl); i < (k + 1) * fl; i++) { v = L[i] - L[i - 1]; acc += v * v; } e[k] = acc / fl; }
+    for (k = 0; k < Math.ceil(n / sr); k++) ons.push(0);
+    for (k = 3; k < nf; k++) { var m = (e[k - 1] + e[k - 2] + e[k - 3]) / 3; if (e[k] > m * 2 && e[k] > 1e-7 && k - last >= 5) { last = k; ons[Math.floor(k * fl / sr)]++; } }
+    return { seconds: n / sr, peak: +peak.toFixed(4), rms: +Math.sqrt(sum / n).toFixed(4), envelope: env, onsetsPerSecond: ons };
+  }
   var Riff = {
     get playing() { return playing; },
     get style() { return style; },
@@ -1390,7 +1579,7 @@
       if (AC.state === 'suspended') AC.resume();
       st = st || 'quest';
       if (playing && style === st) return;
-      Riff.stop(); style = lastStyle = st; playing = true; step = 0; bossOn = bossWant && st !== 'space' && st !== 'cave' && st !== 'title'; bossStep = 0;
+      Riff.stop(); style = lastStyle = st; playing = true; step = 0; bossOn = bossWant && st === 'quest'; bossStep = 0; owShade = -1;
       var now = AC.currentTime; nextT = now + 0.12;
       gate.gain.setTargetAtTime(1, now + 0.07, 0.01);           // stop() above has just shut the gate; open it again once the old voices are gone
       duck.gain.cancelScheduledValues(now); duck.gain.setTargetAtTime(1, now, 0.15);
@@ -1406,23 +1595,48 @@
     // the boss-fight layer. Joins (and leaves) on the next bar line; harmless to call when nothing is playing.
     boss: function (on) { bossWant = !!on; if (!playing) bossOn = false; },
     get bossing() { return bossWant; },
-    // one-shots: 'impact' | 'victory' | 'launch' | 'ending'. Unknown names are ignored. Work with the music stopped.
+    // one-shots: 'impact' | 'victory' | 'launch' | 'ending' plus addStinger names. Unknown names are ignored (returns false). Work with the music stopped.
     stinger: function (name) {
-      if (!Object.prototype.hasOwnProperty.call(STINGERS, name)) return;
+      var has = Object.prototype.hasOwnProperty, fn = has.call(STINGERS, name) ? STINGERS[name] : has.call(XSTING, name) ? XSTING[name] : null;
+      if (!fn) return false;
       var fresh = !AC; ctx(); if (fresh) track(AC);
-      if (AC.state === 'suspended') AC.resume();
-      inSting = true; try { STINGERS[name](AC.currentTime + 0.03); } finally { inSting = false; }
+      if (!rendering && AC.state === 'suspended') AC.resume();   // under Riff.render the context is the offline one, paused between steps
+      inSting = true; try { fn(AC.currentTime + 0.03); } finally { inSting = false; }
+      return true;
     },
     // tell the ♫ button which track it should start next, without starting it (for when the player has the music off)
     cue: function (st) { if (st) lastStyle = st; },
+    // plug-ins (riff2.js): whole tracks and one-shots registered from another file. See the note by STYLES above.
+    has: function (st) { return st === 'quest' || st === 'quest2' || st === 'space' || st === 'cave' || st === 'title' || Object.prototype.hasOwnProperty.call(STYLES, st); },
+    addStyle: function (name, def) { if (typeof name === 'string' && def && typeof def.schedule === 'function') STYLES[name] = def; },
+    addStinger: function (name, fn) { if (typeof name === 'string' && typeof fn === 'function') XSTING[name] = fn; },
+    // the synth kit for plug-ins: the shared context and buses plus every voice in this file. Creates the
+    // AudioContext, so call it from inside schedule()/stinger functions, never at load.
+    kit: function () {
+      var fresh = !AC; ctx(); if (fresh) track(AC);
+      return { AC: AC, master: master, out: owMix, metal: metalMix, dist: dist, sting: stingBus, gate: gate, duck: duck,
+               f: f, noise: noise, loopNoise: loopNoise, env: env, pluck: pluck, pulse: pulse, tanh: tanh, curve: curve, mulberry32: mulberry32,
+               kick: kick, snare: snare, hat: hat, tom: tom, crash: crash, riser: riser, softKick: softKick, brush: brush, shaker: shaker,
+               chug: chug, lead: lead, marimba: marimba, ocarina: ocarina, bell: bell, bass: bass, pad: pad, drone: drone, heartbeat: heartbeat, flute: flute, harpsi: harpsi, gritLead: gritLead,
+               choir: choir, chant: chant, vowel: vowel, timp: timp, brass: brass, tubular: tubular,
+               sLead: sLead, sArp: sArp, sBass: sBass, sPad: sPad,
+               tBass: tBass, tAcid: tAcid, tStab: tStab, tHoover: tHoover, tLead: tLead, tPad: tPad, tKick: tKick, tSnare: tSnare, tClap: tClap, tHat: tHat, tTom: tTom, tCrash: tCrash, tRise: tRise, tFall: tFall, tSub: tSub, tRumble: tRumble, tCoin: tCoin,
+               fmBell: fmBell, caveBass: caveBass, caveLead: caveLead,
+               stingOut: stingOut, sTone: sTone, sNoise: sNoise, sHorns: sHorns, sTimp: sTimp, duckFor: duckFor,
+               softBus: softBus, spaceBus: spaceBus, caveBus: caveBus, titleBus: titleBus, titleEcho: titleEcho, hall: hall, choirBus: choirBus };
+    },
     takeover: function (on) { boost = on ? 1 : 0; },
+    // offline measurement: render(style, seconds, {dread: number | function(seconds), boss, boost, step}) -> Promise<AudioBuffer>; analyse(buffer) -> numbers
+    render: render,
+    analyse: analyse,
     get metal() { return boost > 0; },
     get dread() { return dread; },
     info: function () {
-      var s = composeOverworld(), sp = composeSpace(), b = composeBoss(), cv = composeCave(), ti = composeTitle(),
+      var s = composeOverworld(false), s2 = composeOverworld(true), sp = composeSpace(), b = composeBoss(), cv = composeCave(), ti = composeTitle(),
           secs = function (x) { return Math.round(x.steps.length * 60 / x.bpm / 4); },
-          caveSecs = Math.round(cv.steps.length * 60 / cv.bpm / 12);   // the cave grid is twelfths, not sixteenths
-      return { steps: s.steps.length, seconds: secs(s), notes: s.steps.filter(function (x) { return x.mel; }).length,
+          caveSecs = Math.round(cv.steps.length * 60 / cv.bpm / 12),   // the cave grid is twelfths, not sixteenths
+          ow = function (x, bpm) { return { steps: x.steps.length, bars: x.bars, bpm: bpm, seconds: secs(x), notes: x.steps.filter(function (q) { return q.mel; }).length, form: FORM.map(function (fm) { return fm.s; }).join(''), shades: SHADE_AT }; };
+      var out = { steps: s.steps.length, seconds: secs(s), notes: s.steps.filter(function (x) { return x.mel; }).length, quest: ow(s, OW_BPM), quest2: ow(s2, OW2_BPM),
         spaceSeconds: secs(sp), space: { steps: sp.steps.length, bars: sp.steps.length / 16, bpm: sp.bpm, seconds: secs(sp), notes: sp.steps.filter(function (x) { return x.lead; }).length },
         boss: { steps: b.steps.length, bars: b.steps.length / 16, bpm: b.bpm, seconds: secs(b) },
         caveSeconds: caveSecs, cave: { steps: cv.steps.length, bars: cv.bars, bpm: cv.bpm, seconds: caveSecs, notes: cv.steps.filter(function (x) { return x && x.mel; }).length },
@@ -1430,6 +1644,8 @@
           introBars: ti.introSteps / 16, introSeconds: +(ti.introSteps * 60 / ti.bpm / 4).toFixed(3),
           loopBars: ti.loopSteps / 16, loopSeconds: +(ti.loopSteps * 60 / ti.bpm / 4).toFixed(3),
           notes: ti.steps.filter(function (x) { return x.ac; }).length } };
+      for (var k in STYLES) if (STYLES[k].info) { try { out[k] = STYLES[k].info(); } catch (e) {} }
+      return out;
     },
     stop: function () {
       playing = false; if (timer) clearInterval(timer); timer = null;
