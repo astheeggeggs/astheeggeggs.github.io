@@ -4,7 +4,8 @@
    drop from the sky that flattens the town, a fight where only the H-INDEX counts,
    then MANUSCRIPT ACCEPTED and a blast-off into space.
    Defines window.QuestBoss(api) only; all work happens inside start()/update().
-   Everything is procedural: box geometry, canvas textures, WebAudio SFX.
+   Everything is procedural: box geometry, canvas textures, and synthesised sound effects, all from the shared
+   first-person kit (fpsfx.js, window.FPSFX) except the item-get jingle, six NES-style oscillator notes of our own.
    ============================================================================= */
 (function () {
   'use strict';
@@ -43,96 +44,135 @@
     function say(fn, arg) { try { api[fn](arg); } catch (e) {} }
     var V1 = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3(), V4 = new THREE.Vector3(), Q1 = new THREE.Quaternion();
 
-    /* ------------------------------------------------------------ sfx (all synthesised) */
-    var sfxBus = null, sfxComp = null, noiseBuf = null, liveSfx = [], sfxGate = {};
-    function ac() { try { return api.audio(); } catch (e) { return null; } }
-    function bus() {
-      var a = ac(); if (!a) return null;
-      if (!sfxBus || sfxBus.context !== a) {
-        sfxBus = a.createGain(); sfxBus.gain.value = 0.5;
-        sfxComp = a.createDynamicsCompressor(); sfxBus.connect(sfxComp); sfxComp.connect(a.destination);
-      }
-      return sfxBus;
+    /* ------------------------------------------------------------ sfx: the shared first-person kit
+       Every sound but one comes from window.FPSFX (fpsfx.js): DOOM crossed with THE HOUSE OF THE DEAD, synthesised there
+       and played from cached buffers. Names, lengths and levels are in .dev/sfx-contract.md. api.audio() is quest.js's own
+       context, so this is the very kit quest.js plays on: every play here is tagged 'boss', and stop() silences that
+       group only. The one exception is the item-get jingle (getItem, below), which stop() and REJECTED! silence by hand.
+       Without FPSFX, or without audio, every call below is a silent no-op. */
+    var SFX_GROUP = 'boss', K = null, sfxGate = {}, deathCry = null, jingle = null;
+    function kit() {
+      if (!K && window.FPSFX) { try { K = window.FPSFX.kit(api.audio()); } catch (e) { K = null; } }
+      return K;
+    }
+    function play(name, o) {
+      var k = kit(); if (!k) return null;
+      o = o || {}; o.group = SFX_GROUP;
+      try { return k.play(name, o); } catch (e) { return null; }
     }
     function gate(name, secs) {      // rate limit by wall clock so a hail of shots cannot stack a hundred voices
       var now = Date.now(); if (sfxGate[name] && now - sfxGate[name] < secs * 1000) return false; sfxGate[name] = now; return true;
     }
-    function tone(o) {
-      try {
-        var b = bus(); if (!b) return null; var a = b.context, t = a.currentTime + (o.delay || 0);
-        var osc = a.createOscillator(), g = a.createGain();
-        osc.type = o.type || 'square'; osc.frequency.setValueAtTime(o.f0, t);
-        if (o.f1) osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1), t + o.dur);
-        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain || 0.1, t + (o.attack || 0.006));
-        g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-        osc.connect(g); g.connect(b); osc.start(t); osc.stop(t + o.dur + 0.03);
-        return { src: osc, gain: g };
-      } catch (e) { return null; }
-    }
-    function noise(o) {
-      try {
-        var b = bus(); if (!b) return null; var a = b.context, t = a.currentTime + (o.delay || 0);
-        if (!noiseBuf || noiseBuf.sampleRate !== a.sampleRate) {
-          noiseBuf = a.createBuffer(1, a.sampleRate, a.sampleRate); var d = noiseBuf.getChannelData(0);
-          for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-        }
-        var n = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-        n.buffer = noiseBuf; n.loop = true;
-        f.type = o.type || 'lowpass'; f.Q.value = o.q || 0.8; f.frequency.setValueAtTime(o.f0, t);
-        if (o.f1) f.frequency.exponentialRampToValueAtTime(Math.max(10, o.f1), t + o.dur);
-        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain || 0.1, t + (o.attack || 0.008));
-        if (o.hold) g.gain.setValueAtTime(o.gain || 0.1, t + o.hold);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-        n.connect(f); f.connect(g); g.connect(b); n.start(t); n.stop(t + o.dur + 0.03);
-        return { src: n, gain: g };
-      } catch (e) { return null; }
-    }
-    function keep(h) { if (h) liveSfx.push(h); return h; }
-    function killSfx() {
-      liveSfx.forEach(function (h) { try { h.gain.gain.cancelScheduledValues(0); h.gain.gain.value = 0; h.src.stop(); } catch (e) {} });
-      liveSfx.length = 0;
+    // A sound from a place in the town: panned from the camera, full level inside `ref` units, then ref/d. The editor
+    // is seventeen metres tall and holds 13-22 units off, so his own noises use a wide ref (loud, but you can hear
+    // which side he is on); a shot's feedback uses the widest, because an arcade hit is never quiet.
+    function at(x, y, z, ref, o) { o = o || {}; o.pos = { x: x, y: y, z: z }; o.listener = camera; o.ref = ref; o.floor = 0.3; return o; }
+    var REF_HIT = 40, REF_BOSS = 30;
+    // Rendered ahead while the dossier card types itself out, so the landing never waits on a cold render. Every
+    // length-baked sound at the exact length it is played at, including the wind-up of each of the three phases.
+    function warmSfx() {
+      var k = kit(); if (!k || !k.warm) return;
+      var list = ['ui.type', 'ui.confirm', { name: 'omen', dur: OMEN_LEN }, { name: 'whistle', dur: WHISTLE_LEN }, 'quake', 'boss.roar', 'slam', 'dispel', 'pickup', 'stomp'];
+      for (var i = 1; i < PH.length; i++) list.push({ name: 'windup', dur: Math.max(0.7, PH[i].wind) });
+      list.push('fireball.launch', 'fireball.burst', 'whoosh', 'ui.tick', 'hit.block', 'hit.armour', 'hit.weak', 'powerup', 'hit.crit', 'bfg.blast', 'enemy.pain',
+        'shatter', { name: 'omen', dur: BLOW_T }, { name: 'windup', dur: BLOW_T }, 'explosion', 'gib', 'ui.go', { name: 'rocket', dur: ROCKET_LEN });
+      try { k.warm(list); } catch (e) {}
     }
     var SFX = {
-      clank: function () { if (!gate('clank', 0.07)) return; tone({ f0: rand(1500, 1900), f1: 700, dur: 0.06, type: 'square', gain: 0.07 }); noise({ f0: 3200, dur: 0.05, type: 'bandpass', q: 4, gain: 0.08 }); },
-      block: function () { if (!gate('block', 0.07)) return; tone({ f0: rand(420, 520), f1: 180, dur: 0.09, type: 'triangle', gain: 0.12 }); noise({ f0: 900, dur: 0.06, type: 'bandpass', q: 2, gain: 0.07 }); },
-      ping: function (k) { var f = 560 * Math.pow(2, clamp(k, 0, 1) * 1.75); tone({ f0: f, f1: f * 1.02, dur: 0.13, type: 'triangle', gain: 0.16 }); tone({ f0: f * 2, dur: 0.07, type: 'sine', gain: 0.06 }); },
-      whoosh: function () { if (!gate('whoosh', 0.09)) return; noise({ f0: 350, f1: 1900, dur: 0.32, type: 'bandpass', q: 1.4, gain: 0.1, attack: 0.05 }); },
-      charge: function (dur) { keep(tone({ f0: 70, f1: 320, dur: dur, type: 'sawtooth', gain: 0.06, attack: dur * 0.7 })); },
-      roar: function () {
-        keep(tone({ f0: 92, f1: 40, dur: 1.9, type: 'sawtooth', gain: 0.3, attack: 0.12 })); keep(tone({ f0: 61, f1: 33, dur: 2.0, type: 'square', gain: 0.16, attack: 0.2 }));
-        keep(noise({ f0: 900, f1: 180, dur: 1.8, type: 'bandpass', q: 0.9, gain: 0.22, attack: 0.15 }));
+      // taking fire. The ping is House of the Dead's confirmation: it climbs as the H-INDEX falls, and it is the loudest
+      // of the three, so a scoring shot stands out. Measured over sustained fire (the gun every 0.13 s), A-weighted 50 ms
+      // max: ping -11.8 dB, cover -15.1, ricochet -19.2. The cover is at full level because a held trigger mostly hits
+      // covers: at 0.7 it sat under the fight music (best-band margin over music + gun, median 1.4 dB, 66 of 181 below 0).
+      clank: function (x, y, z) { if (gate('clank', 0.07)) play('hit.armour', at(x, y, z, REF_HIT, { gain: 0.7 })); },   // tenure: a ricochet off plate
+      block: function (x, y, z) { if (gate('block', 0.07)) play('hit.block', at(x, y, z, REF_HIT)); },                   // a journal cover: cardboard
+      ping: function (k, x, y, z) { play('hit.weak', at(x, y, z, REF_HIT, { k: clamp(k, 0, 1), gain: 1.25 })); },
+      // the BFG on the H-INDEX: the critical confirmation on the same scale, the plasma going off, and he feels it
+      plasma: function (k, x, y, z) {
+        play('hit.crit', at(x, y, z, REF_HIT, { k: clamp(k, 0, 1) }));
+        play('bfg.blast', at(x, y, z, REF_BOSS));
+        if (boss) play('enemy.pain', at(boss.x, HEAD_Y, boss.z, REF_BOSS, { pitch: -8 }));
       },
-      thud: function (g) { tone({ f0: 95, f1: 30, dur: 0.5, type: 'sine', gain: 0.5 * g, attack: 0.004 }); noise({ f0: 260, f1: 60, dur: 0.45, gain: 0.35 * g }); },
-      impact: function () {
-        tone({ f0: 120, f1: 24, dur: 1.6, type: 'sine', gain: 0.7, attack: 0.004 }); tone({ f0: 55, f1: 28, dur: 1.2, type: 'sawtooth', gain: 0.25 });
-        keep(noise({ f0: 1400, f1: 50, dur: 2.4, gain: 0.55 })); noise({ f0: 5000, f1: 800, dur: 0.5, type: 'highpass', gain: 0.12 });
-      },
-      whistle: function (dur) { keep(tone({ f0: 2600, f1: 260, dur: dur, type: 'sine', gain: 0.1, attack: dur * 0.5 })); keep(noise({ f0: 3000, f1: 400, dur: dur, type: 'bandpass', q: 3, gain: 0.06, attack: dur * 0.6 })); },
-      omen: function (dur) { keep(noise({ f0: 90, f1: 260, dur: dur, gain: 0.3, attack: dur * 0.8 })); keep(tone({ f0: 38, f1: 52, dur: dur, type: 'sine', gain: 0.3, attack: dur * 0.8 })); },
-      stroke: function () { if (!gate('stroke', 0.06)) return; noise({ f0: 4200, f1: 500, dur: 0.12, type: 'bandpass', q: 2, gain: 0.1 }); tone({ f0: 140, f1: 50, dur: 0.18, type: 'sine', gain: 0.22 }); },
-      puff: function () { if (!gate('puff', 0.1)) return; noise({ f0: 700, f1: 150, dur: 0.14, gain: 0.07 }); },
-      shatter: function () { for (var i = 0; i < 9; i++) tone({ f0: rand(1400, 4200), f1: rand(700, 1500), dur: rand(0.12, 0.4), type: 'triangle', gain: 0.07, delay: i * 0.035 }); noise({ f0: 6000, f1: 1500, dur: 0.6, type: 'highpass', gain: 0.14 }); },
-      boom: function () { tone({ f0: 80, f1: 22, dur: 1.4, type: 'sine', gain: 0.6, attack: 0.005 }); keep(noise({ f0: 900, f1: 40, dur: 2.0, gain: 0.5 })); },
-      count: function (go) { tone({ f0: go ? 880 : 440, dur: go ? 0.5 : 0.16, type: 'square', gain: 0.1 }); },
-      // the BFG landing on the H-INDEX: the ping the paper ball gets, an octave down and with a hole under it
-      plasma: function (k) {
-        var f = 330 * Math.pow(2, clamp(k, 0, 1) * 1.6);
-        tone({ f0: f, f1: f * 1.01, dur: 0.4, type: 'triangle', gain: 0.24 }); tone({ f0: f * 1.5, dur: 0.22, type: 'sine', gain: 0.1 });
-        tone({ f0: 150, f1: 34, dur: 0.75, type: 'sine', gain: 0.4, attack: 0.004 });
-        keep(noise({ f0: 2600, f1: 90, dur: 0.8, gain: 0.3 }));
-      },
-      blast: function () {
+      blast: function (x, y, z) {                              // the BFG on the body: tenure does not entirely absorb this
         if (!gate('blast', 0.06)) return;
-        tone({ f0: 120, f1: 30, dur: 0.5, type: 'sine', gain: 0.3, attack: 0.004 }); noise({ f0: 1800, f1: 120, dur: 0.45, gain: 0.2 });
+        play('bfg.blast', at(x, y, z, REF_BOSS));
+        if (boss) play('enemy.pain', at(boss.x, HEAD_Y, boss.z, REF_BOSS, { pitch: -9, gain: 0.7 }));
       },
-      getItem: function () {                                   // the item-get: four notes and a held fifth
-        [523, 659, 784, 1047].forEach(function (f, i) { tone({ f0: f, dur: 0.16, type: 'square', gain: 0.11, delay: i * 0.11 }); });
-        tone({ f0: 1568, dur: 0.6, type: 'square', gain: 0.12, delay: 0.44 }); tone({ f0: 784, dur: 0.6, type: 'triangle', gain: 0.07, delay: 0.44 });
+      // his attacks: the wind-up is the telegraph, pitched to end exactly as the attack fires. It returns the handle, so a
+      // wind-up cut short by a phase change or the killing shot is stopped with it (F.windH) instead of whining on.
+      charge: function (dur) { return boss ? play('windup', at(boss.x, 10, boss.z, REF_BOSS, { dur: dur })) : null; },
+      launch: function (x, y, z) { if (gate('launch', 0.09)) play('fireball.launch', at(x, y, z, 20)); },       // a manuscript thrown
+      whoosh: function (x, z) { if (gate('whoosh', 0.09)) play('whoosh', at(x, 6, z, 12)); },                    // an ink stroke falling
+      stroke: function (x, z) { if (gate('stroke', 0.06)) play('fireball.burst', at(x, 0.5, z, 10)); },          // ... and landing
+      puff: function (x, y, z) { if (gate('puff', 0.1)) play('fireball.burst', at(x, y, z, 10, { gain: 0.6 })); },  // a manuscript bursting
+      // where a stroke will land: a low warning beep (D4), an octave and more below the lowest ping (660 Hz), because the
+      // marks and the pings alternate in the rain's open window and danger must never sound like a score
+      mark: function (x, z) { play('ui.tick', at(x, 0, z, REF_HIT, { pitch: -7, gain: 0.8, gate: 0.1 })); },
+      ring: function () { if (boss) play('slam', at(boss.x, 0, boss.z, REF_BOSS)); },                          // DESK REJECT's shockwave
+      step: function () { if (boss) play('stomp', at(boss.x, 0, boss.z, 16)); },                               // his stride, at full weight: he is coming
+      roar: function () { return boss ? play('boss.roar', at(boss.x, HEAD_Y, boss.z, REF_BOSS)) : null; },
+      // the arrival: silence, the rumble, the whistle, the town coming down
+      omen: function (dur) { play('omen', { dur: dur }); },
+      whistle: function (dur) { play('whistle', { dur: dur }); },
+      impact: function () { play('quake'); },
+      building: function (x, z) { play('slam', at(x, 0, z, 14, { gate: 0.03 })); },
+      twinkle: function () { play('dispel', { gain: 0.5, pitch: 5 }); },                                          // a colleague, gone over the horizon
+      // the end of him: the badge shatters, he screams, the rumble swells, and he blows apart. The swell is two layers
+      // that both peak on the explosion: the omen's sub rumble, and his own wind-up at half level, which is what carries
+      // it on small speakers (the omen is 83% below 150 Hz). gate 0: a BFG kill can land within 0.2 s of an attack's wind-up.
+      shatter: function () { play('shatter'); },
+      cry: function () { return boss ? play('boss.roar', at(boss.x, HEAD_Y, boss.z, REF_BOSS, { pitch: -5 })) : null; },
+      swell: function (dur) {
+        play('omen', { dur: dur });
+        if (boss) play('windup', at(boss.x, 10, boss.z, REF_BOSS, { dur: dur, gain: 0.5, gate: 0 }));
       },
-      rocket: function (dur) { keep(noise({ f0: 120, f1: 2400, dur: dur, gain: 0.5, attack: 1.2, hold: dur * 0.8 })); keep(tone({ f0: 45, f1: 160, dur: dur, type: 'sawtooth', gain: 0.18, attack: 1.0 })); },
-      type: function () { if (gate('type', 0.045)) blipSafe(1320, 0.03, 'square'); }
+      boom: function () { if (boss) { play('explosion', at(boss.x, 8, boss.z, REF_BOSS)); play('gib', at(boss.x, 8, boss.z, REF_BOSS, { delay: 0.05 })); } },
+      debris: function () { if (boss && gate('debris', 0.12)) play('stomp', at(boss.x, 0, boss.z, REF_BOSS, { gain: 0.22, pitch: 5 })); },
+      count: function (go) { play(go ? 'ui.go' : 'ui.tick'); },
+      rocket: function (dur) { play('rocket', { dur: dur }); },
+      // the card and the prompts
+      type: function () { if (gate('type', 0.045)) play('ui.type'); },
+      confirm: function () { play('ui.confirm'); },
+      sage: function (x, z) { play('pickup', at(x, 1.6, z, REF_HIT)); },                                       // somebody is holding something
+      // the hand-over. The one sound the kit does not make, on purpose: Link's item-get, because the line he says it
+      // with is Zelda's. Plain NES squares through one gain of ours into the kit's own bus (so its limiter holds them),
+      // Doom's power-up under it. The kit's stopAll cannot reach nodes it did not make, so the jingle is silenced here:
+      // by stop(), and by REJECTED! (quest.js stops every kit voice then, and no longer runs update(): a 50 ms wall-clock
+      // watch on api.isOver() lives for the jingle's 1.07 s).
+      getItem: function () {
+        var k = kit(); if (!k || !k.bus) return;
+        play('powerup', { gain: 0.55 });
+        jingleStop(0.02);
+        try {
+          var a = k.ac, t = a.currentTime, bus = a.createGain(), j = { ac: a, g: bus, osc: [], end: t, poll: 0 }, left = 0;
+          bus.connect(k.bus);
+          [[523.25, 0, 0.16, 'square', 0.16], [659.25, 0.11, 0.16, 'square', 0.16], [783.99, 0.22, 0.16, 'square', 0.16], [1046.5, 0.33, 0.16, 'square', 0.16],
+           [1568, 0.44, 0.6, 'square', 0.17], [783.99, 0.44, 0.6, 'triangle', 0.12]].forEach(function (n) {
+            var o = a.createOscillator(), g = a.createGain(), t0 = t + n[1], t1 = t0 + n[2] + 0.03;
+            o.type = n[3]; o.frequency.value = n[0];
+            g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(n[4], t0 + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t0 + n[2]);
+            o.connect(g); g.connect(bus); o.start(t0); o.stop(t1); left++;
+            o.onended = function () { try { o.disconnect(); g.disconnect(); if (--left === 0) bus.disconnect(); } catch (e) {} };
+            j.osc.push([o, t1]); if (t1 > j.end) j.end = t1;
+          });
+          jingle = j;
+          j.poll = setInterval(function () {
+            var over = false; try { over = api.isOver(); } catch (e) {}
+            if (over) jingleStop(0.08);
+            else if (a.currentTime > j.end) { clearInterval(j.poll); if (jingle === j) jingle = null; }
+          }, 50);
+        } catch (e) {}
+      }
     };
-    function blipSafe(f, d, w) { try { api.blip(f, d, w); } catch (e) {} }
+    // Fade the item-get squares out over `fade` s and end every note by then (a note not yet started never plays).
+    function jingleStop(fade) {
+      var j = jingle; if (!j) return;
+      jingle = null; clearInterval(j.poll);
+      try {
+        var t = j.ac.currentTime, until = t + fade + 0.02;
+        j.g.gain.cancelScheduledValues(t); j.g.gain.setValueAtTime(1, t); j.g.gain.setTargetAtTime(0, t, Math.max(0.002, fade / 5));
+        j.osc.forEach(function (x) { if (x[1] > until) { x[1] = until; x[0].stop(until); } });   // stop() only ever shortens here
+      } catch (e) {}
+    }
 
 
     /* ------------------------------------------------------------ DOM: style, HP bar, banner, countdown, flash */
@@ -567,8 +607,7 @@
       if (!instant) {
         burst('dust', p.x, 2, p.z, 12, { spd: 9, up: 7, life: 2.2, s0: 1.2, s1: 4.5, drag: 1.6, jit: p.w * 0.4 });
         burst('fire', p.x, 2.5, p.z, 6, { spd: 12, up: 16, life: 0.9, s0: 0.5, s1: 0.1, grav: 22, jit: 2 });
-        var near = clamp(1.2 - Math.hypot(p.x - api.player.position.x, p.z - api.player.position.z) / 70, 0.25, 1);
-        SFX.thud(0.55 * near); noise({ f0: 2400, f1: 300, dur: 0.9, type: 'bandpass', q: 0.7, gain: 0.16 * near });
+        SFX.building(p.x, p.z);
       }
     }
     function crushFountain(instant) {
@@ -634,7 +673,7 @@
       for (i = town.flyers.length - 1; i >= 0; i--) {
         var f = town.flyers[i]; f.t += h; f.vy -= 9 * h; f.m.position.x += f.vx * h; f.m.position.y += f.vy * h; f.m.position.z += f.vz * h; f.m.rotation.x += 7 * h; f.m.rotation.z += 3 * h;
         if (!f.said && f.t > 1.0) { f.said = true; say('showToast', f.name + ' HAS LEFT THE REVIEW PROCESS'); }
-        if (f.t > 2.6) { fxSpawn('white', f.m.position.x, f.m.position.y, f.m.position.z, 0, 0, 0, { life: 0.5, s0: 0.5, s1: 5 }); tone({ f0: 2400, f1: 3200, dur: 0.25, type: 'sine', gain: 0.05 }); scene.remove(f.m); disposeTree(f.m); town.flyers.splice(i, 1); }
+        if (f.t > 2.6) { fxSpawn('white', f.m.position.x, f.m.position.y, f.m.position.z, 0, 0, 0, { life: 0.5, s0: 0.5, s1: 5 }); SFX.twinkle(); scene.remove(f.m); disposeTree(f.m); town.flyers.splice(i, 1); }
       }
       debrisStep(h);
     }
@@ -770,7 +809,7 @@
       sage.yaw = Math.atan2(api.player.position.x - s.x, api.player.position.z - s.z);
       sage.col = { x: s.x, z: s.z, r: 0.75 }; api.colliders.push(sage.col);
       burst('dust', s.x, 0.6, s.z, 8, { spd: 4, up: 3, life: 1.3, s0: 0.5, s1: 2.0, drag: 1.8, jit: 0.8 });
-      tone({ f0: 660, dur: 0.14, type: 'triangle', gain: 0.08 }); tone({ f0: 990, dur: 0.22, type: 'triangle', gain: 0.07, delay: 0.12 });
+      SFX.sage(s.x, s.z);
       say('showToast', 'SOMEBODY IS STILL STANDING IN THE RUBBLE');
       sageCall(9);                       // and he shouts, so there is a direction to turn towards
     }
@@ -935,8 +974,8 @@
     function onSkip(e) {
       if (!canSkip()) return;                      // every tap on the view comes through here: only eat the ones we use
       if (e && e.preventDefault) e.preventDefault();
-      if (phase === 'card') { closeCard(); blipSafe(880, 0.05, 'square'); setPhase('omen'); return; }
-      if (phase === 'outro' && out && !out.skipped && out.c < OUT_FLASH) { skipOutro(); blipSafe(660, 0.05, 'square'); }
+      if (phase === 'card') { closeCard(); SFX.confirm(); setPhase('omen'); return; }
+      if (phase === 'outro' && out && !out.skipped && out.c < OUT_FLASH) { skipOutro(); SFX.confirm(); }
     }
     function onSkipKey(e) {
       if (!e || e.repeat) return;
@@ -1041,7 +1080,7 @@
       p.vx = dx / L * speed; p.vy = dy / L * speed; p.vz = dz / L * speed;
       p.grav = 0.8; p.life = 6; p.r = 0.42; p.spin = rand(4, 9); p.hurtR = 0.42;
       p.g.position.set(x, y, z);
-      SFX.whoosh();
+      SFX.launch(x, y, z);
     }
     function dropStroke(tx, tz, fromY) {
       var p = prjGet(); if (!p) return;
@@ -1083,7 +1122,7 @@
     }
     function orbPop(p) {
       burst('fire', p.g.position.x, p.g.position.y, p.g.position.z, 4, { spd: 5, up: 3, life: 0.45, s0: 0.35, s1: 0.05, grav: 14 });
-      SFX.puff();
+      SFX.puff(p.g.position.x, p.g.position.y, p.g.position.z);
     }
     function prjSub(h, live) {
       var i, p, pos;
@@ -1095,7 +1134,7 @@
         if (live && hitsPlayer(pos.x, pos.y, pos.z, p.hurtR)) { hitPlayer(pos.x, pos.y, pos.z); orbPop(p); prjFree(p, i); continue; }
         if (pos.y <= (p.kind === 'stroke' ? 1.0 : 0.25)) {
           if (p.kind === 'stroke') {
-            addScorch(pos.x, pos.z); SFX.stroke();
+            addScorch(pos.x, pos.z); SFX.stroke(pos.x, pos.z);
             burst('red', pos.x, 0.4, pos.z, 7, { spd: 9, up: 7, life: 0.6, s0: 0.35, s1: 0.06, grav: 18 });
             if (live && hitsPlayer(pos.x, 1.0, pos.z, 1.1)) hitPlayer(pos.x, 1.2, pos.z);
           } else orbPop(p);
@@ -1241,7 +1280,7 @@
     var BLOCK_LINES = ['THE BOARD BLOCKS IT. WAIT FOR THE OPENING.', 'GUARDED. SHOOT WHEN IT WINDS UP.'];
     function fightInit() {
       F = { mode: 'idle', t: 0, dur: 1.2, atk: 'volley', last: '', combo: null, phase: 1, step: 0, sched: [], falls: [],
-            bodyHits: 0, taught: 0, blocked: 0, blockTaught: 0, ghost: 1, hitFlash: 0, guardStun: 0, taughtBfg: 0,
+            bodyHits: 0, taught: 0, blocked: 0, blockTaught: 0, ghost: 1, hitFlash: 0, guardStun: 0, taughtBfg: 0, windH: null,
             px: api.player.position.x, pz: api.player.position.z, pvx: 0, pvz: 0, ann: -9 };
       if (boss) boss.guard = 1;
     }
@@ -1268,7 +1307,7 @@
       F.combo = (F.phase >= 3 && Math.random() < 0.7) ? COMBO[name] : null;     // desperation: two patterns at once
       var cap = ATTACK_CAP[name], cap2 = F.combo && ATTACK_CAP[F.combo];
       if (cap) showCap(cap2 ? cap[0] + ' + ' + cap2[0] : cap[0], cap2 ? 'the editor has stopped being polite' : cap[1]);
-      SFX.charge(F.dur);
+      F.windH = SFX.charge(F.dur);
       if (name === 'volley') setPose('volleyUp', 4.5);
       else if (name === 'stomp') { setPose(Math.random() < 0.5 ? 'stompUp' : 'stompUpL', 4.0); addRing(boss.x, boss.z, 1.0, 5.6, 7.4, false, 0xff3344); }
       else if (name === 'rain') setPose('rainUp', 4.0);
@@ -1301,7 +1340,7 @@
     }
     function fireAttack() {
       var name = F.atk;
-      F.mode = 'fire'; F.t = 0; F.step = 0; F.sched.length = 0;
+      F.mode = 'fire'; F.t = 0; F.step = 0; F.sched.length = 0; F.windH = null;   // the wind-up ends by itself as the attack fires
       if (name === 'volley') setPose('volleyGo', 9);
       else if (name === 'stomp') setPose('stompDown', 14);
       else if (name === 'rain') setPose('rainUp', 5);
@@ -1326,19 +1365,19 @@
           fl = Math.hypot(Math.hypot(gx - tip.x, gz - tip.z), tip.y - ty) / 14.5;   // from the PEN, not the boss's axis
           shootOrb(tip.x, tip.y, tip.z, gx, ty + 0.4 * fl * fl, gz, 14.5);          // lobbed: p.grav is 0.8
         } else if (s.k === 'ring') {
-          api.shake(1.1, 0.45); SFX.thud(0.95);
+          api.shake(1.1, 0.45); SFX.ring();
           burst('dust', boss.x, 0.4, boss.z, 10, { spd: 16, up: 5, life: 1.2, s0: 0.6, s1: 2.6, drag: 1.6, jit: 2 });
           addRing(boss.x, boss.z, 2.2, 17.5, 34, true, 0xffb347);
         } else if (s.k === 'mark') {
           addMark(s.x, s.z, 0.85);
           F.falls.push({ t: total + 0.85, x: s.x, z: s.z });
-          blipSafe(880, 0.03, 'square');
+          SFX.mark(s.x, s.z);
         }
       }
     }
     function runFalls() {
       for (var i = F.falls.length - 1; i >= 0; i--) {
-        if (F.falls[i].t <= total) { dropStroke(F.falls[i].x, F.falls[i].z); SFX.whoosh(); F.falls.splice(i, 1); }
+        if (F.falls[i].t <= total) { dropStroke(F.falls[i].x, F.falls[i].z); SFX.whoosh(F.falls[i].x, F.falls[i].z); F.falls.splice(i, 1); }
       }
     }
     function chooseAttack() {
@@ -1364,6 +1403,7 @@
         F.phase = ph; P = PH[ph];
         bossSay(ph === 2 ? '"I have consulted a further reviewer. They are enthusiastic."'
                          : '"You leave me no choice. I shall handle this personally."');
+        if (F.windH) { F.windH.stop(0.08); F.windH = null; }   // the attack it was winding up is cancelled, so is its whine
         setPose('roar', 6); SFX.roar(); api.shake(ph === 2 ? 0.6 : 0.95, 0.8);
         F.mode = 'recover'; F.t = 0; F.dur = 1.3; F.step = F.sched.length;
       }
@@ -1378,7 +1418,7 @@
         var w0 = b.walkT; b.x = nx; b.z = nz; bossCol.x = nx; bossCol.z = nz;
         b.walkT += h * 3.4; b.walking = Math.min(1, b.walking + h * 4);
         if (Math.sin(b.walkT) * Math.sin(w0) < 0) {
-          SFX.thud(0.16);
+          SFX.step();
           if (Math.random() < 0.6) burst('dust', b.x + rand(-2, 2), 0.2, b.z + rand(-2, 2), 2, { spd: 3, up: 2, life: 0.9, s0: 0.5, s1: 1.9, drag: 2 });
         }
       } else b.walking = Math.max(0, b.walking - h * 4);
@@ -1447,7 +1487,7 @@
       drawBadge(b, b.hp, true); F.badgeFlash = big ? 0.2 : 0.08;
       if (big) {
         // five off the h-index, the board scattered, and a hole in the middle of the fight
-        SFX.plasma(1 - b.hp / maxHp);
+        SFX.plasma(1 - b.hp / maxHp, x, y, z);
         burst('plasma', x, y, z, 16, { spd: 15, up: 11, life: 0.85, s0: 0.5, s1: 0.06, grav: 14, jit: 0.4 });
         burst('plasmaDim', x, y, z, 8, { spd: 9, up: 7, life: 1.2, s0: 0.7, s1: 2.4, drag: 1.5, jit: 0.5 });
         burst('gold', x, y, z, 8, { spd: 11, up: 8, life: 0.6, s0: 0.35, s1: 0.05, grav: 16 });
@@ -1458,7 +1498,7 @@
         guard(function () { api.shake(0.75, 0.4); });
         if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = 0.2; }
       } else {
-        SFX.ping(1 - b.hp / maxHp);
+        SFX.ping(1 - b.hp / maxHp, x, y, z);
         burst('gold', x, y, z, 5, { spd: 7, up: 5, life: 0.45, s0: 0.28, s1: 0.04, grav: 16 });
         fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.12, s0: 0.5, s1: 2.2 });
         if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = 0.07; }
@@ -1467,7 +1507,7 @@
       if (b.hp <= 0) setPhase('death');
     }
     function blockHit(x, y, z) {
-      SFX.block();
+      SFX.block(x, y, z);
       burst('white', x, y, z, 3, { spd: 6, up: 4, life: 0.3, s0: 0.22, s1: 0.03, grav: 14 });
       F.blocked++;
       if (F.blockTaught < BLOCK_LINES.length && (F.blocked === 6 || F.blocked === 40)) say('showToast', BLOCK_LINES[F.blockTaught++]);
@@ -1478,7 +1518,7 @@
         var b = boss;
         b.hp = Math.max(0, b.hp - BFG.bodyDmg); b.flinch = 0.7;
         drawBadge(b, b.hp, false); setHpBar(b.hp, maxHp, F.ghost);
-        SFX.blast();
+        SFX.blast(x, y, z);
         burst('plasma', x, y, z, 12, { spd: 13, up: 9, life: 0.7, s0: 0.45, s1: 0.05, grav: 16 });
         burst('soot', x, y, z, 8, { spd: 9, up: 8, life: 1.3, s0: 0.5, s1: 2.2, drag: 1.4 });
         burst('flame', x, y, z, 5, { spd: 10, up: 10, life: 0.5, s0: 0.5, s1: 0.06, grav: 18 });
@@ -1489,7 +1529,7 @@
         if (b.hp <= 0) setPhase('death');
         return;
       }
-      SFX.clank();
+      SFX.clank(x, y, z);
       burst('spark', x, y, z, 3, { spd: 8, up: 5, life: 0.3, s0: 0.2, s1: 0.03, grav: 20 });
       F.bodyHits++;
       if (F.taught < BODY_LINES.length && (F.bodyHits === 2 || F.bodyHits === 9 || F.bodyHits === 26)) say('showToast', BODY_LINES[F.taught++]);
@@ -1559,12 +1599,13 @@
         o.position.x += p.vx * h; o.position.y += p.vy * h; o.position.z += p.vz * h;
         o.rotation.x += p.sx * h; o.rotation.y += p.sy * h; o.rotation.z += p.sz * h;
         if (o.position.y < 0.09 && p.vy < 0) {
+          if (!p.landed) { p.landed = true; SFX.debris(); }           // the pieces coming down, a few at a time
           o.position.y = 0.09; p.vy = -p.vy * 0.24; p.vx *= 0.6; p.vz *= 0.6; p.sx *= 0.4; p.sy *= 0.4; p.sz *= 0.4;
           if (Math.abs(p.vy) < 0.7) { p.rest = 0; p.vy = 0; }
         }
       }
     }
-    var DEATH_LEN = 5.0;
+    var DEATH_LEN = 5.0, BLOW_T = 1.2;       // he comes apart 1.2 s in; the death swell is baked to peak on that instant
     function deathStep(h, T) {
       var b = boss; if (!b) return;
       b.guard = 0; if (b.shield) b.shield.visible = false;
@@ -1575,7 +1616,10 @@
         b.haloMat.opacity = 1;
         b.halo.scale.setScalar(1 + Math.min(T, 1.2) * 2.2);
         if (Math.random() < h * 26) burst('gold', b.x + rand(-1, 1), 9 + rand(-1, 1), b.z + 1.6, 2, { spd: 6, up: 9, life: 0.7, s0: 0.3, s1: 0.05, grav: 10 });
-        if (T >= 1.2) { explodeBoss(); SFX.boom(); api.shake(2.0, 1.3); setFlash(0.55); }
+        if (T >= BLOW_T) {
+          explodeBoss(); SFX.boom(); api.shake(2.0, 1.3); setFlash(0.55);
+          if (deathCry) { deathCry.fade(0, 0.35); deathCry = null; }   // the explosion swallows the scream
+        }
       } else {
         partsStep(h);
         if (T < 1.55) setFlash(0.55 * (1 - (T - 1.2) / 0.35)); else setFlash(0);
@@ -1591,6 +1635,7 @@
     }
     /* ------------------------------------------------------------ the arrival: omen, drop, landing */
     var OMEN_LEN = 2.4, DROP_LEN = 1.05, LAND_LEN = 2.0;
+    var WHISTLE_LEN = 1.0;                   // the whistle is gone ~20 ms before he lands (1.0 s + its 0.03 s fade, of 1.05): the quake comes out of silence
     function omenInit() {
       var m = new THREE.Mesh(new THREE.CircleGeometry(1, 28), new THREE.MeshBasicMaterial({ color: 0x050308, transparent: true, opacity: 0, depthWrite: false, fog: false }));
       m.rotation.x = -Math.PI / 2; m.position.set(0, 0.075, 0); scene.add(m);
@@ -1624,7 +1669,7 @@
     }
 
     /* ------------------------------------------------------------ blast-off: the manuscript becomes the rocket */
-    var OUT_FLASH = 8.3, OUT_END = 9.0, rocket = null, stars = null, BLACK = new THREE.Color(0x000000);
+    var OUT_FLASH = 8.3, OUT_END = 9.0, ROCKET_LEN = 5.4, rocket = null, stars = null, BLACK = new THREE.Color(0x000000);
     function buildRocket(x, z) {
       var g = new THREE.Group(); g.position.set(x, 0, z);
       var paper = new THREE.MeshLambertMaterial({ color: 0xf4f0e2, emissive: 0xb0aa98 });
@@ -1707,6 +1752,7 @@
     }
     function skipOutro() {
       if (!out || out.skipped) return;
+      if (!out.lit) SFX.rocket(ROCKET_LEN);        // skipped before ignition: it is lit now, so it roars (stop() cuts it at the white-out)
       out.skipped = true; out.lit = true; out.count = 4; out.c = OUT_FLASH - 0.15;
       hideCount(); rm('cap'); rm('banner');
       if (rocket) rocket.flame.visible = true;
@@ -1727,7 +1773,7 @@
       }
       if (!out.lit && c >= 3.2) {
         out.lit = true; rm('cap');
-        say('stinger', 'launch'); SFX.rocket(5.4);
+        say('stinger', 'launch'); SFX.rocket(ROCKET_LEN);
         if (rocket) rocket.flame.visible = true;
       }
       // the ascent
@@ -1797,7 +1843,7 @@
         boss.g.position.y = 132; setPose('crouch', 9);
         for (var k in boss.cur) boss.cur[k] = boss.tgt[k];
         boss.yaw = Math.atan2(api.player.position.x, api.player.position.z);
-        SFX.whistle(DROP_LEN);
+        SFX.whistle(WHISTLE_LEN);
         return;
       }
       if (name === 'land') {
@@ -1828,10 +1874,10 @@
         setBossCollider(false); prjClear();
         music('silence');                          // the score drops out; the victory stinger lands on nothing
         rootClass('qb-cine', true);                // and the touch pad gets off the banner and the blast-off
-        if (F) { F.falls.length = 0; F.banner = false; }
+        if (F) { F.falls.length = 0; F.banner = false; if (F.windH) { F.windH.stop(0.08); F.windH = null; } }   // no attack follows this wind-up
         if (boss) { boss.guard = 0; setPose('dying', 2.2); boss.walking = 0; boss.hp = 0; }
         rm('cap');
-        SFX.shatter(); guard(function () { api.shake(1.2, 1.2); });
+        SFX.shatter(); deathCry = SFX.cry(); SFX.swell(BLOW_T); guard(function () { api.shake(1.2, 1.2); });
         if (boss) burst('gold', boss.x, 9, boss.z + 1.6, 18, { spd: 11, up: 12, life: 1.2, s0: 0.35, s1: 0.06, grav: 9, jit: 0.8 });
         return;
       }
@@ -1864,7 +1910,7 @@
       opts = opts || {};
       if (self.active) guard(stop);
       guard(function () {
-        ensureStyle(); fxInit(); prjInit(); saveEnv();
+        ensureStyle(); fxInit(); prjInit(); saveEnv(); warmSfx();
         maxHp = Math.max(1, Math.min(9999, parseInt(opts.hp, 10) || 100));
         total = 0; pT = 0; fired = false; out = null; boss = null; F = null; phase = '';
         self.active = true; self.cinematic = false; self.ended = false; musicOn = false;
@@ -1904,7 +1950,7 @@
       guard(finishDestruction);
       guard(function () { setBossCollider(false); removeBoss(); });
       guard(fxKill);
-      guard(killSfx);
+      guard(function () { deathCry = null; jingleStop(0.1); if (K) K.stopAll(0.1, SFX_GROUP); });   // ours only: the kit is shared with quest.js
       guard(restoreEnv);
       guard(function () { camera.rotation.z = 0; camera.up.set(0, 1, 0); });
       rootClass('qb-on', false); rootClass('qb-cine', false);
