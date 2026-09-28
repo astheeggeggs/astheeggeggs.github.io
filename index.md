@@ -38,7 +38,7 @@ quest: true
       <div class="q-view"></div>
 
       <div class="q-hud">
-        <span class="q-pill">FACTS <span data-hud="found">0</span>/<span data-hud="total">8</span> · REVISIONS <span data-hud="revisions">0</span> · ACCEPTED <span data-hud="accepted">0</span><span class="q-hits" hidden> · <span data-hud="hits">♥♥♥♥♥</span></span></span>
+        <span class="q-pill">FACTS <span data-hud="found">0</span>/<span data-hud="total">8</span> · REVISIONS <span data-hud="revisions">0</span><span class="q-hits" hidden> · <span data-hud="hits">♥♥♥♥♥</span></span></span>
         <span class="q-pill q-keys">WASD MOVE · SPACE JUMP · F TALK / REBUT · DRAG ORBIT</span>
         <button type="button" class="q-pill q-music" data-music aria-pressed="false">♫ OFF</button>
       </div>

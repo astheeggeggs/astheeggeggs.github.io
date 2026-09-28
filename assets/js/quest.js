@@ -3,6 +3,7 @@
    Three.js third-person world. WASD / arrows to run, Space to jump, F to talk,
    drag to orbit the camera, Esc closes a sign. Touch pad on mobile.
    The longer you play, the less pleasant it gets. That is intentional.
+   The eighth fact starts the endgame: first person, a boss, and the shared first-person sound kit (fpsfx.js).
    Finish it and the ending offers a second loop, MASTER QUEST: the same town
    mirrored left to right, nine faster reviewers who have read version 1 (never
    quite as fast as he is, and they give him a few seconds' start), dread that
@@ -146,7 +147,10 @@
   scene.add(sun);
 
   var flat = function (c) { return new THREE.MeshLambertMaterial({ color: c }); };
-  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = (MQ ? 57 : 90) / 0.7, FP_AT = 0.7;      // seconds of play until the world is fully wrong (first person at 90 s; 57 s in MASTER QUEST)
+  // dread: 0 at PRESS START, 1 when the world is fully wrong. It reaches 0.7 at 90 s of play (57 s in MASTER QUEST), so
+  // DREAD_TIME is the ~129 s (~81 s) to 1, and at SURGE_AT the score pushes its tempo up a notch (Riff.takeover). The sky,
+  // lights, reviewers and music all follow it; the camera does not. First person waits for the eighth fact (startEndgame).
+  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = (MQ ? 57 : 90) / 0.7, SURGE_AT = 0.7, surged = false;
   var DAY = { sky: new THREE.Color(0x8ec9ff), hemiSky: new THREE.Color(0xbfe4ff), hemiGround: new THREE.Color(0x3a7a3a), sun: new THREE.Color(0xfff2d0) };
   var DUSK = { sky: new THREE.Color(0x2a0a1e), hemiSky: new THREE.Color(0x5a1a2a), hemiGround: new THREE.Color(0x140a0a), sun: new THREE.Color(0xff3b2a) };
   var fading = [];   // { mat, from, to }
@@ -521,10 +525,10 @@
     var m = rig({ suit: 0xb91c1c, hair: 0x4a2a1a, glasses: true, tie: 0x111111, angry: true, spiky: false, satchel: false });
     m.position.set(b.x, 0, b.z); m.scale.set(0.95, 0.95, 0.95); scene.add(m);
     var badge = labelSprite('REVIEWER ' + (i + 1), '#b91c1c', '#fff'); badge.scale.set(2.2, 0.42, 1); badge.position.y = 3.3; m.add(badge);
-    b.mesh = m; b.yaw = rnd() * 6.28; b.wander = 0; b.flee = 0; b.cool = 0; b.walkT = 0; b.home = { x: b.x, z: b.z }; b.hp = 2; b.down = 0;
-    // navigation state (see "reviewer navigation"): smoothed heading, plan/waypoint, approach slot, zigzag, stuck detector, escape, homing
+    b.mesh = m; b.yaw = rnd() * 6.28; b.wander = 0; b.flee = 0; b.cool = 0; b.walkT = 0; b.home = { x: b.x, z: b.z };
+    // navigation state (see "reviewer navigation"): smoothed heading, plan/waypoint, approach slot, stuck detector, escape, homing
     b.head = b.yaw; b.mode = 0; b.plan = i * 0.03; b.wx = b.x; b.wz = b.z; b.chase = false; b.slot = 0; b.slotOn = false; b.fleeA = 0;
-    b.side = i % 2 ? 1 : -1; b.zig = b.side; b.zigT = 0; b.aimed = 0; b.stuckT = 0; b.stuckN = 0; b.sx = b.x; b.sz = b.z; b.careful = 0; b.probe = 0;
+    b.side = i % 2 ? 1 : -1; b.stuckT = 0; b.stuckN = 0; b.sx = b.x; b.sz = b.z; b.careful = 0; b.probe = 0;
     b.esc = 0; b.ex = b.x; b.ez = b.z; b.goHome = false; b.homeSerial = -1; b.moved = 0;   // b.homeField is allocated with the other nav arrays, below
   });
 
@@ -592,9 +596,9 @@
   var keys = {};
   var camYaw = 0, camPitch = 0.52, camDist = 14, dragging = false, lastPX = 0, lastPY = 0, dragMoved = 0;
   var HEARTS = MQ ? 3 : 5;                             // three in MASTER QUEST; ?maxhits= overrides, the fountain's prize adds on top
-  var fp = false, fpBlend = 0, fpPitch = 0, fireCool = 0, shots = [], accepted = 0, hits = 0, MAX_HITS = parseInt((location.search.match(/[?&]maxhits=(\d+)/) || [0, HEARTS])[1], 10) || HEARTS, over = false, overT = 0;
+  var fp = false, fpBlend = 0, fpPitch = 0, fpCue = 0, fireCool = 0, shots = [], hits = 0, MAX_HITS = parseInt((location.search.match(/[?&]maxhits=(\d+)/) || [0, HEARTS])[1], 10) || HEARTS, over = false, overT = 0;
   var hurtEl = root.querySelector('.q-hurt'), overEl = root.querySelector('.q-over'), hudHits = root.querySelector('[data-hud="hits"]'), hudHitsWrap = root.querySelector('.q-hits');
-  var hudAcc = root.querySelector('[data-hud="accepted"]'), cross = root.querySelector('.q-cross');
+  var cross = root.querySelector('.q-cross');
   // ---- endgame state + test hooks (?endgame=1 ?bosshp=5 ?skipintro=1 ?god=1 ?shmup=1 ?timescale=4 ?loop=2)
   var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)), loop: LOOP };
   var endgame = false, pendingEndgame = false, boss = null, shmup = null;
@@ -603,11 +607,15 @@
   try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
   var fireRate = 0.32, shotSpeed = 30, shotGrav = 9, fireHeld = false, hurtCool = 0, envLocked = false, hudOn = true, shakeAmp = 0, shakeT = 0, shakeDur = 1;
   // MASTER QUEST fairness. The reviewers are quicker, but never quicker than he is (9 u/s): on open ground he can always
-  // outrun any one of them. And after PRESS START or a resubmission they stay at their desks for a few seconds, so
-  // nobody is caught while reading the toast (the nearest mirrored desk is 11 units from the spawn). Loop 1: neither.
-  // The orbit camera starts (and restarts after REJECTED!) at MQ_YAW, a little round to his right: at yaw 0 it sits
-  // against the mirrored Library's eave, which then filled the lower half of the view.
-  var MQ_TOP = 8.5, MQ_GRACE = 6, graceT = 0, MQ_YAW = -0.5;
+  // outrun any one of them. And after PRESS START they stay at their desks for a few seconds, so nobody is caught
+  // while reading the toast (the nearest mirrored desk is 11 units from the spawn). Loop 1 has no grace and needs no
+  // cap: its fastest reviewer tops out at 8.1 u/s at full dread (navReviewer).
+  // The orbit camera starts at MQ_YAW, a little round to his right: at yaw 0 it sits against the mirrored Library's
+  // eave, which then filled the lower half of the view.
+  // Both loops: once a REVISIONS demand is closed nobody can catch him for CAUGHT_REST seconds (they still chase). The
+  // reviewers stand about while it is open, so without it one already at his elbow caught him again the instant it
+  // closed - at full dread in MASTER QUEST, before he could move in about a third of the catches.
+  var MQ_TOP = 8.5, MQ_GRACE = 6, graceT = 0, MQ_YAW = -0.5, CAUGHT_REST = 1.5, restT = 0;
 
   /* ------------------------------------------------------------ input */
   var KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', KeyQ: 'rotl', KeyE: 'rotr' };
@@ -622,7 +630,7 @@
   });
   window.addEventListener('keyup', function (e) { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; if (ACT[e.code]) fireHeld = false; });
   window.addEventListener('blur', function () { fireHeld = false; for (var k in keys) keys[k] = false; });
-  function jump() { if (!running || dialogOpen || pstate.air || over || (endgame && boss && boss.active && boss.cinematic)) return; pstate.vy = 9.5; pstate.air = true; blip(520, .07); setTimeout(function () { blip(780, .06); }, 50); }
+  function jump() { if (!running || dialogOpen || pstate.air || over || (endgame && boss && boss.active && boss.cinematic)) return; pstate.vy = 9.5; pstate.air = true; jumpSfx(true); }
 
   root.querySelectorAll('[data-pad]').forEach(function (b) {
     var d = b.dataset.pad;
@@ -674,15 +682,44 @@
   var musicBtn = root.querySelector('[data-music]');
   if (musicBtn && window.Riff) { Riff.bind(musicBtn, 'quest'); musicBtn.addEventListener('click', function () { musicWanted = Riff.playing; }); if (LOOP === 2 && Riff.has && Riff.has('quest2') && Riff.cue) Riff.cue('quest2'); }
 
-  /* ------------------------------------------------------------ audio */
-  var AC = null;
-  function blip(freq, dur, type) {
+  /* ------------------------------------------------------------ audio
+     Two voices. The third-person town keeps its own: a tiny square-wave blip for jumps, doors and rebuttals, and the
+     Banjo-style syllables (speak). Everything in first person - the paper-ball gun, the BFG, being hit, each heart,
+     REJECTED!, resubmitting, the gun readied at the end of the swoop into his head, and his jumps - comes from the
+     shared kit in fpsfx.js (window.FPSFX: DOOM crossed with THE HOUSE OF THE DEAD; every name is in
+     .dev/sfx-contract.md), bound to this same context. The boss modules bind the very same kit through api.audio(), so
+     quest.js tags its plays 'quest' and sets the listener (the camera) that positioned plays pan from. Without fpsfx.js
+     those sounds are simply not there (a first-person jump falls back to the town's blips). */
+  var AC = null, FPK = null, SFX_GROUP = 'quest';
+  function audio() { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); return AC; }
+  function fpKit() {
+    if (!FPK && window.FPSFX) { try { FPK = window.FPSFX.kit(audio()); FPK.setListener(camera); } catch (e) { FPK = null; } }
+    return FPK;
+  }
+  function sfx(name, o) {
+    var k = fpKit(); if (!k) return null;
+    o = o || {}; o.group = SFX_GROUP;
+    try { var h = k.play(name, o); return h && h.ok ? h : null; } catch (e) { return null; }
+  }
+  function sfxAt(p, o) { o = o || {}; o.pos = { x: p.x, y: p.y, z: p.z }; return o; }   // from a place in the town, panned from the camera
+  // A jump in first person is the fight's one dodge, and the town's blips sit ~20 dB under the fight mix, so there it is a
+  // swish of air going up and a footfall coming down (the editor's giant step pitched up to a man's). Offline, over the
+  // fight music, they lift their own bands by 7-14 dB (the gun: 23-25; the blips: under 1). gate 0: the boss's orbs
+  // (whoosh) and footsteps (stomp) share the names and must not swallow his.
+  var JUMP_SFX = { up: ['whoosh', 5, 0.45], down: ['stomp', 6, 0.5] };
+  function jumpSfx(up) {
+    var j = JUMP_SFX[up ? 'up' : 'down'];
+    if (fp && sfx(j[0], { pitch: j[1], gain: j[2], gate: 0 })) return;
+    if (up) { blip(520, .07); setTimeout(function () { blip(780, .06); }, 50); } else blip(200, .05);
+  }
+  // rendered while the dossier card is up (startEndgame), in the order they are first needed, so no shot waits on a render
+  var SFX_WARM = ['reload', 'gun', 'whoosh', 'stomp', 'player.pain', 'heart.lost', 'hit.flesh', 'player.death'];
+  function blip(freq, dur) {
     try {
-      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-      var o = AC.createOscillator(), g = AC.createGain();
-      o.type = type || 'square'; o.frequency.value = freq;
-      g.gain.value = .035; g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime + dur);
-      o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + dur);
+      var ac = audio(), o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'square'; o.frequency.value = freq;
+      g.gain.value = .035; g.gain.exponentialRampToValueAtTime(.0001, ac.currentTime + dur);
+      o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + dur);
     } catch (e) {}
   }
 
@@ -708,7 +745,7 @@
     var px = player.position.x, pz = player.position.z;
     for (var i = 0; i < PLACES.length; i++) { var p = PLACES[i]; if (Math.hypot(px - p.door.x, pz - p.door.z) < 2.6) return { kind: 'place', obj: p }; }
     for (i = 0; i < NPCS.length; i++) { var n = NPCS[i]; if (Math.hypot(px - n.x, pz - n.z) < 2.4) return { kind: 'npc', obj: n }; }
-    for (i = 0; i < BADDIES.length; i++) { var b = BADDIES[i]; if (b.flee <= 0 && b.down <= 0 && Math.hypot(px - b.mesh.position.x, pz - b.mesh.position.z) < 3.2) return { kind: 'baddie', obj: b }; }
+    for (i = 0; i < BADDIES.length; i++) { var b = BADDIES[i]; if (b.flee <= 0 && Math.hypot(px - b.mesh.position.x, pz - b.mesh.position.z) < 3.2) return { kind: 'baddie', obj: b }; }
     return null;
   }
   function openDialog(target) {
@@ -757,48 +794,57 @@
   function action() {
     if (!running) { startPress(); return; }
     if (dialogOpen) { if (typing && current) finishTyping(current); else closeDialog(); return; }
+    if (fp) { fire(); return; }                        // first person is the endgame: nobody left to talk to, so F fires
     var t = nearbyTarget();
-    if (fp) { if (t && t.kind !== 'baddie') { current = t.obj; openDialog(t); } else fire(); return; }
     if (t && t.kind === 'baddie') { rebut(t.obj); return; }
     if (t) { current = t.obj; openDialog(t); }
   }
-  /* ------------------------------------------------------------ first person + rebuttal fire */
+  /* ------------------------------------------------------------ first person + rebuttal fire
+     First person, the hearts, the crosshair and REJECTED! belong to the endgame: startEndgame() is the only way in and
+     nothing leads back out. The swoop into his head (fpBlend, 1.2 s) waits until the boss's dossier card has closed, so
+     the player sees it happen, and it starts from the orbit view he last saw (update). The gun fires, and the crosshair
+     and the how-to-fire toast appear, only once it has landed behind his eyes. */
   var fwd = new THREE.Vector3();
   function viewDir() { return fwd.set(-Math.sin(camYaw) * Math.cos(fpPitch), Math.sin(fpPitch), -Math.cos(camYaw) * Math.cos(fpPitch)); }
+  var swoopYaw = 0, keysPill = root.querySelector('.q-keys');
   function enterFP() {
-    fp = true; fpPitch = 0; camYaw = pstate.yaw + Math.PI;   // look where he was facing
-    if (cross) cross.hidden = false;
-    showToast('FIRST PERSON. RETURN FIRE.'); blip(220, .3, 'sawtooth'); setTimeout(function () { blip(440, .2); }, 200);
-    if (window.Riff) Riff.takeover(true);
+    fp = true; fpPitch = 0; swoopYaw = camYaw; camYaw = pstate.yaw + Math.PI;   // look where he was facing; the swoop leaves from the orbit he had
+    fpCue = 1;                                               // the gun is readied as the swoop starts and the toast waits for its end (update)
     hits = 0; if (hudHitsWrap) hudHitsWrap.hidden = false; drawHearts();
-    if (prompt) prompt.textContent = 'F';
+    if (keysPill) keysPill.textContent = 'WASD MOVE · SPACE JUMP · F / CLICK FIRE · MOUSE AIM';   // loop 1's keys pill (MASTER QUEST hides it)
   }
+  // The card's close already has its sound, the boss module's (the editor's omen, the Magician's wind and click), so the
+  // swoop adds none of its own there: the gun is readied (HotD's chk-chk) as the hand comes into view. The blend takes
+  // 1.2 s and the weapon shows at its end, so FP_READY lands just before it. The toast waits for the landing, names the
+  // input the player actually has, and stays until his first shot (or 6 s).
+  var FP_READY = 1.1, FP_TEACH = '', fpTeach = false;
+  function fpLanded() {
+    if (cross) cross.hidden = !hudOn;
+    if (fpCue !== 2) return;
+    fpCue = 0; fpTeach = true;
+    var touch = !!(window.matchMedia && window.matchMedia('(hover: none), (max-width: 700px)').matches);   // the touch pad's breakpoint (swank.css)
+    FP_TEACH = touch ? 'FIRST PERSON. A TO RETURN FIRE.' : 'FIRST PERSON. F OR CLICK TO RETURN FIRE.';
+    showToast(FP_TEACH, 6);
+  }
+  function fpTaught() { fpTeach = false; if (!toast.hidden && toast.textContent === FP_TEACH && toastT > 0.8) toastT = 0.8; }
   /* ---- the BFG: kind switching, the wind-up, and the plasma ball -------------------------------- */
-  var weaponKind = 'paper', bfgCharge = -1, paperBallistics = null, BFG_WIND = 0.3;
+  var weaponKind = 'paper', bfgCharge = -1, bfgHum = null, paperBallistics = null, BFG_WIND = 0.3;
+  // the BFG's sounds, rendered the moment it is handed over (a few ms), so the first wind-up is never a cold render
+  var BFG_SFX = [{ name: 'bfg.charge', dur: BFG_WIND }, 'bfg.fire', 'bfg.blast'];
+  function bfgCancel() { bfgCharge = -1; if (bfgHum) { bfgHum.stop(0.04); bfgHum = null; } }   // a wind-up that will not fire goes quiet with it
   function setWeaponKind(kind) {
     kind = kind === 'bfg' ? 'bfg' : 'paper';
-    bfgCharge = -1;                       // any weapon call cancels a half-finished wind-up
+    bfgCancel();                          // any weapon call cancels a half-finished wind-up
     if (kind === weaponKind) return;
     // remember the ballistics the paper ball was using, so kind:'paper' puts everything back exactly
     if (kind === 'bfg') paperBallistics = { rate: fireRate, speed: shotSpeed, gravity: shotGrav };
     else if (paperBallistics) { fireRate = paperBallistics.rate; shotSpeed = paperBallistics.speed; shotGrav = paperBallistics.gravity; paperBallistics = null; }
-    weaponKind = kind; bfgCharge = -1; weapon.userData.recoil = 0;
-    if (kind === 'bfg') plasmaLight(); else if (plasmaLamp) plasmaLamp.intensity = 0;
+    weaponKind = kind; weapon.userData.recoil = 0;
+    if (kind === 'bfg') { plasmaLight(); var k = fpKit(); if (k) k.warm(BFG_SFX); } else if (plasmaLamp) plasmaLamp.intensity = 0;
     wPaper.visible = kind === 'paper'; wBfg.visible = kind === 'bfg';
     if (bfgHalo) bfgHalo.material.opacity = 0;
     if (bfgLamp) bfgLamp.intensity = 0;
     if (bfgGlowMat) bfgGlowMat.color.setHex(0x2f6b3f);
-  }
-  function bfgTone(f0, f1, dur, type, gain, delay) {
-    try {
-      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-      var t = AC.currentTime + (delay || 0), o = AC.createOscillator(), g = AC.createGain();
-      o.type = type || 'sawtooth'; o.frequency.setValueAtTime(f0, t);
-      if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + Math.min(0.05, dur * 0.4));
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + dur + 0.02);
-    } catch (e) {}
   }
   function bfgSpark(x, y, z, sp, life) {
     var s = sparkPool.pop();
@@ -827,13 +873,16 @@
     scene.add(m);
     shots.push({ m: m, v: d.multiplyScalar(shotSpeed), life: 3.6, spin: 1.5, prev: m.position.clone(), bfg: true, trail: 0 });
     bfgBurst(m.position.x, m.position.y, m.position.z, 8, 7, 0.35);
-    bfgTone(180, 46, 0.55, 'sawtooth', 0.1); bfgTone(74, 30, 0.9, 'square', 0.07); bfgTone(1500, 320, 0.18, 'triangle', 0.05);
+    sfx('bfg.fire');
     shakeAmp = 0.42; shakeT = shakeDur = 0.22;
   }
   function fire() {
-    if (!fp || dialogOpen || fireCool > 0 || over || !hudOn) return;
+    // nothing behind the dossier card (F and the A pad reach here during its first second, before it takes them) and
+    // nothing while the swoop is still flying in with no gun on screen: the chk-chk says when it is ready
+    if (!fp || fpBlend < 1 || dialogOpen || fireCool > 0 || over || !hudOn || (endgame && boss && boss.active && boss.cinematic)) return;
+    if (fpTeach) fpTaught();
     if (weaponKind === 'bfg') {                       // heavy, deliberate: it winds up first and goes off by itself
-      if (bfgCharge < 0) { bfgCharge = 0; bfgTone(120, 900, BFG_WIND, 'sawtooth', 0.055); bfgTone(300, 1800, BFG_WIND, 'square', 0.02); }
+      if (bfgCharge < 0) { bfgCharge = 0; bfgHum = sfx('bfg.charge', { dur: BFG_WIND }); }   // baked to the wind-up: it peaks as the ball leaves
       return;
     }
     fireCool = fireRate; weapon.userData.recoil = 1;
@@ -841,25 +890,17 @@
     m.position.copy(camera.position).add(d.clone().multiplyScalar(0.9)).add(new THREE.Vector3(0.15, -0.15, 0));
     m.castShadow = true; scene.add(m);
     shots.push({ m: m, v: d.multiplyScalar(shotSpeed), life: 2.2, spin: Math.random() * 6, prev: m.position.clone() });
-    blip(1200, .04, 'triangle'); blip(300, .08, 'sawtooth');
-  }
-  function shotHit(b) {
-    b.hp--; b.flee = 3; b.cool = 1.5;
-    var m = b.mesh;
-    if (b.hp <= 0) {
-      accepted++; if (hudAcc) hudAcc.textContent = accepted;
-      showToast(['ACCEPTED WITHOUT CHANGES', 'REVIEWER ' + (BADDIES.indexOf(b) + 1) + ' WITHDRAWS', 'WE THANK THE REVIEWER', 'EDITOR: "PROCEED TO PRODUCTION"'][accepted & 3]);
-      b.down = MQ ? 12 : 22; b.hp = 2; m.visible = false; blip(523, .1); setTimeout(function () { blip(784, .18); }, 100);   // retired for a while; less of a while in loop 2
-    } else { showToast('REVIEWER ' + (BADDIES.indexOf(b) + 1) + ': "I REMAIN UNCONVINCED"'); blip(660, .08); }
+    sfx('gun');                                       // three variants, never the same twice running, each ±0.7 semitone: a held trigger does not drone
   }
   function updateShots(dt) {
     for (var i = shots.length - 1; i >= 0; i--) {
       var sh = shots[i], m = sh.m;
       sh.prev.copy(m.position);
       sh.v.y -= shotGrav * dt; m.position.addScaledVector(sh.v, dt); m.rotation.x += dt * 12; m.rotation.z += dt * 9; sh.life -= dt;
-      // the editor is down, or the blast-off has the screen: a plasma ball must not go on glowing through it
-      var gone = !!(boss && boss.active && (boss.ended || boss.cinematic));
-      if (!gone && boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev, sh.bfg ? 'bfg' : 'paper')) gone = true; } catch (err) { console.error(err); } }   // the boss module applies its own damage and feedback
+      // the editor is down, or the blast-off has the screen: a plasma ball must not go on glowing through it (nor bang)
+      var gone = !!(boss && boss.active && (boss.ended || boss.cinematic)), quiet = gone;
+      // the boss module applies its own damage and feedback, sounds included: a ball it takes bursts in its sound, not ours
+      if (!gone && boss && boss.active) { try { if (boss.hitTest(m.position, sh.prev, sh.bfg ? 'bfg' : 'paper')) gone = quiet = true; } catch (err) { console.error(err); } }
       gone = gone || sh.life <= 0 || m.position.y < 0.05 || collide(m.position.x, m.position.z, 0.05);
       if (!gone && sh.bfg) {                     // the plasma ball trails sparks and lights what it passes
         sh.trail += dt;
@@ -867,12 +908,9 @@
         var grow = Math.min(1, (3.6 - sh.life) / 0.14);      // swells out of the muzzle instead of filling the view
         m.scale.setScalar((0.3 + 0.7 * grow) * (1 + Math.sin(sh.life * 26) * 0.07));
       }
-      if (!gone) {
-        for (var k = 0; k < BADDIES.length; k++) { var b = BADDIES[k]; if (b.down > 0) continue; var bp = b.mesh.position; if (Math.hypot(m.position.x - bp.x, m.position.z - bp.z) < (sh.bfg ? 1.8 : 1.0) && m.position.y > 0 && m.position.y < 3.2) { shotHit(b); gone = true; break; } }
-        if (!gone) for (k = 0; k < NPCS.length; k++) { var n = NPCS[k]; if (Math.hypot(m.position.x - n.x, m.position.z - n.z) < 1.0 && m.position.y < 3.2) { showToast('THAT WAS A COLLEAGUE'); blip(200, .1); gone = true; break; } }
-      }
+      if (!gone) for (var k = 0; k < NPCS.length; k++) { var n = NPCS[k]; if (Math.hypot(m.position.x - n.x, m.position.z - n.z) < 1.0 && m.position.y < 3.2) { showToast('THAT WAS A COLLEAGUE'); sfx('hit.flesh', sfxAt(m.position, { gain: 0.6 })); gone = true; break; } }
       if (gone) {
-        if (sh.bfg) { bfgBurst(m.position.x, m.position.y, m.position.z, 12, 11, 0.5); bfgTone(140, 40, 0.4, 'square', 0.06); }
+        if (sh.bfg) { bfgBurst(m.position.x, m.position.y, m.position.z, 12, 11, 0.5); if (!quiet) sfx('bfg.blast', sfxAt(m.position, { ref: 14 })); }
         scene.remove(m); shots.splice(i, 1);
       }
     }
@@ -887,8 +925,8 @@
     if (fireCool > 0) fireCool -= dt;
     // the BFG wind-up: F starts it, it goes off on its own a beat later whether or not you are still holding
     if (bfgCharge >= 0) {
-      if (weaponKind !== 'bfg' || over || !fp || !hudOn || dialogOpen) bfgCharge = -1;
-      else { bfgCharge += dt; if (bfgCharge >= BFG_WIND) { bfgCharge = -1; fireBfg(); } }
+      if (weaponKind !== 'bfg' || over || !fp || !hudOn || dialogOpen) bfgCancel();
+      else { bfgCharge += dt; if (bfgCharge >= BFG_WIND) { bfgCharge = -1; bfgHum = null; fireBfg(); } }
     }
     // weapon bob + recoil
     var r = weapon.userData.recoil || 0; if (r > 0) weapon.userData.recoil = r = Math.max(0, r - dt * (weaponKind === 'bfg' ? 2.6 : 5));
@@ -913,25 +951,28 @@
     blip(880, .08); setTimeout(function () { blip(1174, .1); }, 90);
   }
   function caught(b) {
-    b.cool = 5; b.flee = 2.5; revisions++;
+    b.cool = 5; b.flee = 2.5; revisions++; restT = CAUGHT_REST;
     if (hudRev) hudRev.textContent = revisions;
     current = { text: DEMANDS[Math.floor(Math.random() * DEMANDS.length)], title: 'REVISIONS REQUESTED (' + revisions + ')', voice: BADDIE_VOICE };
-    if (fp) { notice(current); hurt(1); }
-    else openDialog({ kind: 'baddie', obj: current });
+    openDialog({ kind: 'baddie', obj: current });
     // knockback
     var dx = player.position.x - b.mesh.position.x, dz = player.position.z - b.mesh.position.z, l = Math.hypot(dx, dz) || 1;
     var nx = player.position.x + dx / l * 2.5, nz = player.position.z + dz / l * 2.5;
     if (!collide(nx, nz, 0.5)) player.position.set(nx, 0, nz);
     blip(160, .18); setTimeout(function () { blip(120, .25); }, 150);
   }
-  // One place for taking damage in first person: red flash, grunt, a heart, and REJECTED! at zero.
+  // One place for taking damage in first person: red flash, a heart, and REJECTED! at zero. The sound is DOOM's pain
+  // grunt, then HotD's damage sting (the heart going) 0.15 s behind it. Started together the sting buried the grunt: the
+  // pair's band-by-time fingerprint sat 4.1-4.9 dB from the sting's alone, and 9.5-9.9 dB with the offset. The hit that
+  // takes the last heart is the death scream alone.
   function hurt(n) {
     if (over || hurtCool > 0 || !fp) return false;
-    hurtCool = 0.9; grunt();
+    hurtCool = 0.9;
     if (hurtEl) { hurtEl.hidden = false; hurtEl.style.transition = 'none'; hurtEl.style.opacity = 1; setTimeout(function () { hurtEl.style.transition = 'opacity .6s ease-out'; hurtEl.style.opacity = 0; }, 90); }
-    if (PARAMS.god) return true;
+    if (PARAMS.god) { sfx('player.pain'); return true; }
     hits = Math.min(MAX_HITS, hits + (n || 1)); drawHearts();
     if (hits >= MAX_HITS) rejected();
+    else { sfx('player.pain'); sfx('heart.lost', { delay: 0.15 }); }
     return true;
   }
   function drawHearts() { if (hudHits) hudHits.textContent = Array(MAX_HITS - hits + 1).join('♥') + Array(hits + 1).join('♡'); }
@@ -939,39 +980,14 @@
     over = true; overT = 0; dialogOpen = true; dlg.hidden = true; prompt.hidden = true; if (cross) cross.hidden = true; toast.hidden = true;
     if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
     root.classList.add('is-over'); if (overEl) overEl.hidden = false;
-    if (window.Riff) Riff.stop(); fireHeld = false;
-    // the thud
-    blip(70, 1.2, 'sawtooth'); setTimeout(function () { blip(52, 1.6, 'sawtooth'); }, 250);
+    if (window.Riff) Riff.stop(); fireHeld = false; bfgCancel();
+    // everything stops, every module's sounds too (the fight is frozen behind this screen), then the scream and the fall
+    var k = fpKit(); if (k) k.stopAll(0.08);
+    sfx('player.death');
   }
-  function resubmit() {
-    if (endgame) { retryBoss(); return; }
-    over = false; root.classList.remove('is-over'); if (overEl) overEl.hidden = true;
-    dialogOpen = false; dread = 0; fp = false; fpBlend = 0; fpPitch = 0; hits = 0; revisions = 0; if (hudRev) hudRev.textContent = 0;
-    if (hudHitsWrap) hudHitsWrap.hidden = true; if (cross) cross.hidden = true; weapon.visible = false; player.visible = true; player.scale.set(1, 1, 1);
-    player.position.set(0, 0, 4); pstate.yaw = 0; pstate.y = 0; pstate.vy = 0; pstate.air = false; camYaw = MQ ? MQ_YAW : 0; camPitch = 0.52;
-    caveArmed = false;                                   // he respawns inside the fountain's trigger: walk away first, as after PRESS START
-    shots.forEach(function (sh) { scene.remove(sh.m); }); shots.length = 0;
-    BADDIES.forEach(function (b) { b.mesh.visible = true; b.mesh.position.set(b.home.x, 0, b.home.z); b.flee = 0; b.cool = 3; b.down = 0; b.hp = 2; });
-    if (MQ) graceT = MQ_GRACE;
-    if (window.Riff) { Riff.setDread(0); Riff.takeover(false); music('quest'); }
-    applyDread(clock.elapsedTime); blip(440, .06); showToast('RESUBMITTED. VERSION 2.');
-  }
-  if (overEl) overEl.addEventListener('click', function () { if (over && overT > 1.2) resubmit(); });
-  window.addEventListener('keydown', function (e) { if (over && overT > 1.2 && (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF')) { e.preventDefault(); resubmit(); } });
-  function grunt() {
-    try {
-      AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-      var t = AC.currentTime, o = AC.createOscillator(), f1 = AC.createBiquadFilter(), f2 = AC.createBiquadFilter(), g = AC.createGain();
-      o.type = 'sawtooth'; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.28);
-      f1.type = 'bandpass'; f1.frequency.setValueAtTime(700, t); f1.frequency.exponentialRampToValueAtTime(380, t + 0.25); f1.Q.value = 2.5;
-      f2.type = 'lowpass'; f2.frequency.value = 1800;
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
-      var n = AC.createBufferSource(), nb = AC.createBuffer(1, AC.sampleRate * 0.3, AC.sampleRate), nd = nb.getChannelData(0); for (var i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1) * 0.5;
-      n.buffer = nb; var ng = AC.createGain(); ng.gain.setValueAtTime(0.35, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-      o.connect(f1); f1.connect(f2); f2.connect(g); g.connect(AC.destination); n.connect(f1); n.connect(ng); ng.connect(f2);
-      o.start(t); o.stop(t + 0.35); n.start(t); n.stop(t + 0.3);
-    } catch (e) {}
-  }
+  // REJECTED! needs hearts, hearts need first person, and first person is the endgame: resubmitting is always a boss retry
+  if (overEl) overEl.addEventListener('click', function () { if (over && overT > 1.2) retryBoss(); });
+  window.addEventListener('keydown', function (e) { if (over && overT > 1.2 && (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF')) { e.preventDefault(); retryBoss(); } });
   /* ------------------------------------------------------------ reviewer navigation
      The reviewers used to run straight at the player and wedge themselves against the first wall they met.
      - navCell  : a 1-unit grid over the playable square (0 wide open, 1 walkable, 2 blocked), stamped from the
@@ -983,7 +999,7 @@
                   is poured a few thousand cells per frame, so no single frame ever carries a whole one.
      - behaviour: clear line of sight -> run straight, at a personal approach slot so they fan out and flank;
                   otherwise follow the field downhill, string-pulled to the farthest cell they can see. Wall sliding,
-                  a stuck detector, separation, and a zigzag when you stare at one down the barrel in first person.
+                  a stuck detector and separation. They walk only in third person: they leave when the endgame starts.
      Nobody got faster. They merely read the map. */
   var NAV_R = 0.5, NAV_NEAR = 0.5 + 0.7072, NAV_N = 2 * (WORLD + 5), NAV_MIN = -(WORLD + 5), NAV_CELLS = NAV_N * NAV_N, NAV_INF = 65535, NAV_EVERY = 0.33;
   var navCell = new Uint8Array(NAV_CELLS), navField = new Uint16Array(NAV_CELLS), navBack = new Uint16Array(NAV_CELLS), navQueue = new Int32Array(NAV_CELLS), navInQ = new Uint8Array(NAV_CELLS);
@@ -991,7 +1007,7 @@
   var NAV_OX = [0, 0, 0, 0, 1, -1, 1, -1], NAV_OZ = [0, 0, 0, 0, NAV_N, NAV_N, -NAV_N, -NAV_N];   // the two cells a diagonal step squeezes between
   var navBuiltFor = -1, navSerial = 0, navT = 0, navFieldAt = -1e9, navFieldCell = -1, navFieldSerial = -1, navSlotAt = -1e9;
   var navQHead = 0, navQTail = 0, navQCount = 0, navJob = 0, navJobB = null, navBackCell = -1, navPath = new Int32Array(16), navBudget = 0;   // navJob: 0 nothing flooding, 1 the shared player field into navBack, 2 navJobB's field home
-  var navWx = 0, navWz = 0, navPvx = 0, navPvz = 0, navLastPx = 0, navLastPz = 0, navAimX = 0, navAimZ = 1;
+  var navWx = 0, navWz = 0, navPvx = 0, navPvz = 0, navLastPx = 0, navLastPz = 0;
   var navOrder = BADDIES.map(function () { return 0; }), navBear = BADDIES.map(function () { return 0; });
   BADDIES.forEach(function (b) { b.homeField = new Uint16Array(NAV_CELLS); });   // 26 KB each, once: never a new field in the middle of a frame
 
@@ -1180,7 +1196,7 @@
     var n = 0, i, j, k, b, a, sx = 0, sz = 0, step;
     for (i = 0; i < BADDIES.length; i++) {
       b = BADDIES[i]; b.slotOn = false;
-      if (b.down <= 0 && b.flee <= 0 && b.chase) { navBear[i] = Math.atan2(b.mesh.position.x - px, b.mesh.position.z - pz); navOrder[n++] = i; }
+      if (b.flee <= 0 && b.chase) { navBear[i] = Math.atan2(b.mesh.position.x - px, b.mesh.position.z - pz); navOrder[n++] = i; }
     }
     if (n < 2) return;
     for (i = 1; i < n; i++) { k = navOrder[i]; for (j = i - 1; j >= 0 && navBear[navOrder[j]] > navBear[k]; j--) navOrder[j + 1] = navOrder[j]; navOrder[j + 1] = k; }
@@ -1253,25 +1269,11 @@
     } else if (chasing) {
       // loop 1: 4.6-5.4 rising to 6.9-8.1 at full dread. MASTER QUEST: 5.75-6.75 rising to 7.5-8.5, never past MQ_TOP
       speed = d < 1.2 ? 0 : MQ ? Math.min(MQ_TOP, (4.6 + (i % 3) * 0.4) * 1.25 * (1 + 0.3 * dread)) : (4.6 + (i % 3) * 0.4) * (1 + 0.5 * dread);
-      if (d < 1.7 && b.cool <= 0 && pstate.y < 1.2) caught(b);
+      if (d < 1.7 && b.cool <= 0 && restT <= 0 && pstate.y < 1.2) caught(b);
       if (think) { navBudget--; navPlan(b, i, px, pz, d); } else if (b.mode < 1 || b.mode > 3) { b.mode = 2; b.plan = 0; }   // no thinking time left this frame: go straight for now
       if (b.mode === 1) { navSlotPoint(b, px, pz, d); want = Math.atan2(navWx - p.x, navWz - p.z); }
       else if (b.mode === 2) want = Math.atan2(dx, dz);
       else { want = Math.atan2(b.wx - p.x, b.wz - p.z); if (Math.hypot(b.wx - p.x, b.wz - p.z) < 0.45) b.plan = 0; }
-      // first person: if he is sighting along the barrel at you, do not run down the barrel
-      if (fp && speed > 0 && d > 4 && b.mode !== 3) {
-        q = -dx * navAimX - dz * navAimZ;
-        if (q > 0 && Math.abs(-dx * navAimZ + dz * navAimX) < 1.2 + q * 0.05) b.aimed = 0.4;
-      }
-      if (b.aimed > 0) {
-        b.aimed -= h; b.zigT -= h;
-        if (b.zigT <= 0) { b.zig = -b.zig; b.zigT = 0.45 + rnd() * 0.55; }
-        if (speed > 0 && d > 4 && b.mode !== 3) {
-          f = want + b.zig * 0.55;
-          if (navHit(p.x + Math.sin(f) * 1.5, p.z + Math.cos(f) * 1.5)) { b.zig = -b.zig; f = want + b.zig * 0.55; if (navHit(p.x + Math.sin(f) * 1.5, p.z + Math.cos(f) * 1.5)) f = want; }
-          want = f;
-        }
-      }
       if (speed === 0) face = Math.atan2(dx, dz);
     } else {
       speed = 1.8; b.wander -= h; if (think && b.plan < 0) b.plan = 0.25;
@@ -1299,7 +1301,7 @@
       if (raw) { q = Math.min(rl, speed * h) / rl; p.x += (b.ex - p.x) * q; p.z += (b.ez - p.z) * q; }
       else {
         for (k = 0; k < BADDIES.length; k++) {         // separation: lean away from colleagues, never stack
-          o = BADDIES[k]; if (o === b || o.down > 0) continue;
+          o = BADDIES[k]; if (o === b) continue;
           rx = p.x - o.mesh.position.x; rz = p.z - o.mesh.position.z; rl = Math.hypot(rx, rz);
           if (rl < 1.6) { if (rl < 0.01) { rx = i > k ? 1 : -1; rz = 0.3; rl = 1.044; } q = (1.6 - rl) / (1.6 * rl); sx += rx * q; sz += rz * q; }
         }
@@ -1335,13 +1337,11 @@
     v = Math.hypot(px - navLastPx, pz - navLastPz) / dt; k = Math.min(1, dt * 6);
     if (v < 12) { navPvx += ((px - navLastPx) / dt - navPvx) * k; navPvz += ((pz - navLastPz) / dt - navPvz) * k; } else { navPvx = 0; navPvz = 0; }
     navLastPx = px; navLastPz = pz;
-    if (fp) { v = viewDir(); k = Math.hypot(v.x, v.z) || 1; navAimX = v.x / k; navAimZ = v.z / k; }
     if (navT - navSlotAt >= NAV_EVERY) { navSlotAt = navT; navSlots(px, pz); }
     if (navJob) navJobRun(Math.max(3500, dt * 210000));   // ~0.2 ms of flood a frame, whoever it belongs to: done within four
     n = Math.max(1, Math.min(30, Math.ceil(dt * 18))); navBudget = 2 * n;                     // at most two reviewers re-plan per step: no thundering herd   // big frames (timescale, tab switches) are sub-stepped: under half a unit a step, nothing tunnels
     for (k = 0; k < BADDIES.length; k++) {
       b = BADDIES[k]; m = b.mesh;
-      if (b.down > 0) { b.down -= dt; if (b.down <= 0) { m.visible = true; m.position.set(b.home.x, 0, b.home.z); b.flee = 0; b.chase = false; b.plan = 0; b.esc = 0; } continue; }
       b.moved = 0;
       for (s = 0; s < n; s++) navReviewer(b, k, dt / n);
       v = b.moved / dt;                                  // animate what the legs actually did, so a blocked reviewer does not moonwalk
@@ -1380,8 +1380,12 @@
     if (MQ && !(mqTick++ & 7)) mqFit();
     if (toastT > 0) { toastT -= dt; if (toastT <= 0) { if (toastNext && hudOn && !over) showToast(toastNext[0], toastNext[1]); else { toast.hidden = true; toastNext = null; } } }
     if (graceT > 0 && running) graceT -= dt;
+    if (restT > 0 && !dialogOpen) restT -= dt;          // the rest after a catch starts when its demand is closed
     var t = clock.elapsedTime;
-    if (running && dt > 0) { dread = Math.min(1, dread + dt / (endgame ? 4 : DREAD_TIME)); if (window.Riff) Riff.setDread(dread); if (!envLocked) applyDread(t); if (!fp && dread >= FP_AT) enterFP(); }
+    if (running && dt > 0) {
+      dread = Math.min(1, dread + dt / (endgame ? 4 : DREAD_TIME)); if (window.Riff) Riff.setDread(dread); if (!envLocked) applyDread(t);
+      if (!surged && dread >= SURGE_AT) { surged = true; if (window.Riff) Riff.takeover(true); }
+    }
     if (hurtCool > 0) hurtCool -= dt;
     if (over) {
       overT += dt;   // slow tilt to the ground, GTA style
@@ -1393,7 +1397,13 @@
     // the boss module runs inside our clock; while it is `cinematic` it owns the camera and we stand still
     var bossOn = endgame && boss && boss.active, cine = false;
     if (bossOn) { try { boss.update(dt, t); } catch (err) { console.error(err); } cine = !!boss.cinematic; }
-    if (fp) { fpBlend = Math.min(1, fpBlend + dt / 1.2); updateShots(dt); player.visible = fpBlend < 0.85 && !cine; weapon.visible = fpBlend >= 1 && !cine && hudOn; if (fireHeld && !cine) fire(); }
+    if (fp) {
+      if (!cine && fpBlend < 1) {                                                          // the swoop: never behind the dossier card
+        if (fpCue === 1) { fpCue = 2; sfx('reload', { delay: FP_READY }); }
+        fpBlend = Math.min(1, fpBlend + dt / 1.2); if (fpBlend >= 1) fpLanded();
+      }
+      updateShots(dt); player.visible = false; weapon.visible = fpBlend >= 1 && !cine && hudOn; if (fireHeld && !cine) fire();
+    }
     markers.forEach(function (m, i) { m.rotation.y += dt * 2; m.position.y = 3.6 + Math.sin(t * 3 + i) * 0.25; });
     NPCS.forEach(function (n, i) { n.mesh.position.y = Math.abs(Math.sin(t * 4 + i)) * 0.12; });
     if (!endgame) updateBaddies(dt);
@@ -1426,7 +1436,7 @@
     player.rotation.y = pstate.yaw;
 
     // jump physics
-    if (pstate.air) { pstate.vy -= 26 * dt; pstate.y += pstate.vy * dt; if (pstate.y <= 0) { pstate.y = 0; pstate.vy = 0; pstate.air = false; pstate.land = 0.18; blip(200, .05); } }
+    if (pstate.air) { pstate.vy -= 26 * dt; pstate.y += pstate.vy * dt; if (pstate.y <= 0) { pstate.y = 0; pstate.vy = 0; pstate.air = false; pstate.land = 0.18; jumpSfx(false); } }
     if (pstate.land > 0) pstate.land -= dt;
     if (pstate.speed > 0.5) pstate.walkT += dt * pstate.speed * 1.5;
     pose(player, { walk: pstate.walkT, speed: pstate.speed / 9, air: pstate.air, vy: pstate.vy, t: t });
@@ -1438,9 +1448,14 @@
     if (window.__fountain) window.__fountain.children.forEach(function (d) { var ph = (t * 1.6 + d.userData.k / 14) % 1; var ang = d.userData.k / 14 * 6.283; d.position.set(Math.cos(ang) * ph * 2.0, 2.3 + Math.sin(ph * 3.14) * 1.4 - ph * 1.2, Math.sin(ang) * ph * 2.0); });
     clouds.forEach(function (c) { c.position.x += c.userData.v * dt; if (c.position.x > 110) c.position.x = -110; });
 
-    // camera
-    var cx = player.position.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist;
-    var cz = player.position.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
+    // camera. The swoop into first person (k 0 -> 1) leaves from the orbit view he last saw (swoopYaw, kept by enterFP)
+    // and flies straight down that line of sight into his head - a line the player has just seen clear - turning from
+    // looking at him to looking where he looks in its later part. He vanishes once the lens is within 2.2 units (closer,
+    // his head or hair filled the view). The old swoop came straight in along the FINAL view instead, from an orbit he
+    // had never seen: at a north-row door that was behind the building he had just read.
+    var oy = fp ? swoopYaw : camYaw;
+    var cx = player.position.x + Math.sin(oy) * Math.cos(camPitch) * camDist;
+    var cz = player.position.z + Math.cos(oy) * Math.cos(camPitch) * camDist;
     var cy = 1.5 + Math.sin(camPitch) * camDist;
     if (!fp) {
       camera.position.lerp(tmp.set(cx, cy, cz), Math.min(1, dt * 6));
@@ -1449,8 +1464,13 @@
       var k = fpBlend * fpBlend * (3 - 2 * fpBlend), dir = viewDir();
       var hx = player.position.x, hy = 2.25 + player.position.y, hz = player.position.z;
       camera.position.set(cx + (hx - cx) * k, cy + (hy - cy) * k, cz + (hz - cz) * k);
-      var lx = player.position.x + (hx + dir.x * 6 - player.position.x) * k, ly = 1.6 + (hy + dir.y * 6 - 1.6) * k, lz = player.position.z + (hz + dir.z * 6 - player.position.z) * k;
-      camera.lookAt(lx, ly, lz);
+      if (fpBlend < 1) {
+        var tt = Math.min(1, Math.max(0, (fpBlend - 0.35) / 0.65)), kt = tt * tt * (3 - 2 * tt);
+        var ax = player.position.x - cx, ay = 1.6 - cy, az = player.position.z - cz, y0 = Math.atan2(-ax, -az), p0 = Math.asin(ay / (Math.hypot(ax, ay, az) || 1));
+        var yv = y0 + navTurn(camYaw, y0) * kt, pv = p0 + (fpPitch - p0) * kt;
+        camera.lookAt(camera.position.x - Math.sin(yv) * Math.cos(pv), camera.position.y + Math.sin(pv), camera.position.z - Math.cos(yv) * Math.cos(pv));
+        player.visible = camera.position.distanceTo(tmp.set(hx, hy, hz)) > 2.2;
+      } else camera.lookAt(hx + dir.x * 6, hy + dir.y * 6, hz + dir.z * 6);
       pstate.yaw = camYaw + Math.PI; player.rotation.y = pstate.yaw;
     }
     if (shakeT > 0) {
@@ -1466,13 +1486,11 @@
     }
 
     // prompt
-    var near = nearbyTarget();
-    if (fp && near && near.kind === 'baddie') near = null;
+    var near = nearbyTarget();                          // always null in the endgame, so first person never has a prompt
     prompt.hidden = !near || dialogOpen;
     if (near && !dialogOpen) {
       prompt.textContent = near.kind === 'baddie' ? 'F: REBUT' : 'F: TALK';
-      if (fp) { var o = near.obj, ox = o.door ? o.door.x : o.x, oz = o.door ? o.door.z : o.z; tmp.set(ox, 3.2, oz).project(camera); if (tmp.z > 1) prompt.hidden = true; }
-      else tmp.set(player.position.x, 3.4, player.position.z).project(camera);
+      tmp.set(player.position.x, 3.4, player.position.z).project(camera);
       prompt.style.left = ((tmp.x + 1) / 2 * 100) + '%'; prompt.style.top = ((1 - tmp.y) / 2 * 100) + '%';
     }
     sun.position.set(player.position.x + 40, 60, player.position.z + 20); sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
@@ -1493,7 +1511,7 @@
   function setHud(on) {
     hudOn = !!on;
     var hud = root.querySelector('.q-hud'); if (hud) hud.style.visibility = on ? '' : 'hidden';
-    if (cross) cross.hidden = !on || !fp; if (!on) { prompt.hidden = true; toast.hidden = true; if (!dialogOpen) dlg.hidden = true; }
+    if (cross) cross.hidden = !on || !fp || fpBlend < 1; if (!on) { prompt.hidden = true; toast.hidden = true; if (!dialogOpen) dlg.hidden = true; }
   }
   function music(name) {
     var R = window.Riff; if (!R) return;
@@ -1514,7 +1532,7 @@
     player: player, pstate: pstate,
     places: PLACES, fountain: fountain, npcs: NPCS,
     flat: flat, boxMan: boxMan, pose: pose, labelSprite: labelSprite,
-    blip: blip, speak: speak, grunt: grunt, audio: function () { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); return AC; },
+    speak: speak, audio: audio,
     showToast: showToast, notice: notice,
     hurt: hurt, heal: function (n) { hits = Math.max(0, hits - (n || MAX_HITS)); drawHearts(); },
     hearts: function () { return MAX_HITS - hits; },
@@ -1569,12 +1587,12 @@
     if (endgame) return;
     endgame = true; pendingEndgame = false;
     if (dialogOpen) { dialogOpen = false; dlg.hidden = true; if (typing) { clearInterval(typing); typing = null; } }
-    if (!fp) enterFP();
-    hits = 0; drawHearts(); if (hudHitsWrap) hudHitsWrap.hidden = false;
-    BADDIES.forEach(function (b) { b.down = 1e9; b.mesh.visible = false; });     // the ordinary reviewers know when to leave
+    enterFP();                                         // the only way into first person
+    var k = fpKit(); if (k) k.warm(SFX_WARM);
+    BADDIES.forEach(function (b) { b.mesh.visible = false; });                 // the ordinary reviewers know when to leave (and updateBaddies stops)
     markers.forEach(function (m) { m.visible = false; });
     api.setWeapon({ rate: 0.13, speed: 70, gravity: 2.5 });                        // a hundred hits needs a faster arm
-    if (!boss) { showToast('YOU FOUND EVERYTHING. (THE BOSS IS MISSING.)'); return; }
+    if (!boss) { fpCue = 0; showToast('YOU FOUND EVERYTHING. (THE BOSS IS MISSING.)'); return; }
     try { boss.start({ hp: PARAMS.bossHp, skipIntro: PARAMS.skipIntro }); } catch (e) { console.error(e); }
   }
   function retryBoss() {
@@ -1583,7 +1601,11 @@
     shots.forEach(function (sh) { scene.remove(sh.m); }); shots.length = 0;
     camera.rotation.z = 0; setHud(true);
     if (boss) { try { boss.stop(); boss.start({ hp: PARAMS.bossHp, skipIntro: true, retry: true }); } catch (e) { console.error(e); } }
-    blip(440, .06); showToast(MQ && window.QuestMagician ? 'RESUBMITTED. SENT BACK TO REVIEWER 2.' : 'RESUBMITTED. THE EDITOR IS WAITING.');
+    // the scream's fall may not have landed yet: cut it, then ready the gun again (HotD's continue). The boss module's
+    // restart makes its own sound on this same tick, so that is the confirm: a ui.confirm here only made a chord of it.
+    var k = fpKit(); if (k) k.stopAll(0.05, SFX_GROUP);
+    sfx('reload', { delay: 0.2 });
+    showToast(MQ && window.QuestMagician ? 'RESUBMITTED. SENT BACK TO REVIEWER 2.' : 'RESUBMITTED. THE EDITOR IS WAITING.');
   }
   function launchShmup() {
     if (!shmup) { showToast('SPACE IS CLOSED TODAY.'); return; }
@@ -1609,8 +1631,7 @@
     api.teleport(0, 7);                                   // climbs out at the fountain's edge, clear of the trigger
     var got = res && res.hearts ? res.hearts | 0 : 0;
     if (got > 0 && !caveTaken) {
-      caveTaken = true; MAX_HITS += got; drawHearts();
-      if (hudHitsWrap) hudHitsWrap.hidden = false;
+      caveTaken = true; MAX_HITS += got; drawHearts();   // banked: the hearts themselves show up with first person, at the boss
       try { localStorage.setItem('quest.cave', JSON.stringify({ hearts: got, credits: res.credits | 0 })); } catch (e) {}
       showToast('CLOUD COMPUTE SECURED  ·  +' + got + (got > 1 ? ' HEARTS' : ' HEART'));
     } else if (!caveTaken) {
