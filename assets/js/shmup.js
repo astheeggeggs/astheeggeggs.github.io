@@ -11,8 +11,10 @@
    layer and new taunts, and after THE IMPACT FACTOR a WARNING and the True Last Boss, PEER REVIEW (a Hibachi homage in
    five phases: washing machine, needle streams, whip lasers, rank curtain, everything; it is its own continue checkpoint),
    then the true ending, TENURED!, whose PLAY AGAIN goes back to loop 1 (api.restart()).
+   Sound: every effect is Mega Drive FM + PSG synthesis rendered in this file (the audio section says how); the music is riff.js / riff2.js.
    Test hooks: ?shmupstage=2|mid|boss|tlb|ending  ?shmupgod=1 (counts the deaths it spares)
-   ?shmupdbg=1 (window.__qs: info(), bot(on), phase(n), pos(x, y), rank(0..1), sim(seconds), reset())  (and the host's ?shmup=1 ?loop=2 ?timescale=N)
+   ?shmupdbg=1 (window.__qs: info(), bot(on), phase(n), pos(x, y), give(kind, colour), rank(0..1), sim(seconds), reset(), and __qs.sfx: names(), spec(name),
+   render(name, rate), play(name, rate), bus(ctx), log(), stats(), reset())  (and the host's ?shmup=1 ?loop=2 ?timescale=N)
    ============================================================================= */
 (function () {
   'use strict';
@@ -25,51 +27,552 @@
     function rnd(a, b) { return a + Math.random() * (b - a); }
     function mk(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
-    /* ------------------------------------------------------------ audio (all synthesised) */
-    var AC = null, out = null, noiseBuf = null, gates = {};
+    /* ------------------------------------------------------------ audio: Mega Drive sound effects, synthesised once
+       In the idiom of Compile's M.U.S.H.A. (Mega Drive, 1990): the console's two sound chips, in plain JS. FM is the YM2612's:
+       four operators wired in one of its eight algorithms, operator 1 fed back into itself, an envelope per operator (attack,
+       decay, sustain level, second decay, release). The PSG is the SN76489's: squares on its 10-bit divider and noise from its
+       LFSR (Sega's 16-bit register, taps 0 and 3; periodic mode for buzz), volume in 2 dB steps written once per 60 Hz frame,
+       the way a sound driver writes it. Each effect ends on a DC trap, a gentle low-pass and 9-bit quantisation.
+       Effects are rendered once into AudioBuffers by a queue, the likeliest-needed first: 30 ms of it when the shooter starts
+       (under the white flash), then in the browser's idle time (2-10 ms an idle period; without idle callbacks, as in Safari,
+       3 ms after each frame). A voice renders in slices of about CH samples and the queue stops between slices when its time
+       is up, so a budget overruns by one slice at most (about 0.05 ms once the code is warm, a millisecond or two while it is
+       still cold). Nothing renders inside a keypress: a sound wanted before it is ready jumps the queue, the queue gets 10 ms a
+       frame until it is done, and the sound plays then if that is within a quarter of a second (a drone starts the first step
+       it is ready). Sounds play as BufferSources, a random variant (never the same one twice running; the medal's variant is
+       its rung) with a little random detune (their own PRNG: the game's Math.random sequence is untouched), through a fixed
+       pool of NV voices (the cap: a full pool steals its least important voice, or drops the new sound) → one bus → a limiter
+       → the host's AudioContext. Two drones sit beside the pool, each engagement on a gain of its own: the player's held laser
+       and the True Last Boss's lethal beams. The simulation keeps them alive: a step without them fades them out, and a gain
+       watchdog silences them if the frames stop coming altogether. A drone's loop holds tones and buzz that repeat exactly
+       every 0.5 s (under a faint steady hiss in the red and green lasers); anything with a rhythm of its own, like the blue
+       beam's arcs, is a one-shot. */
+    var SR = 48000, SIN = new Float32Array(4096), rr = null, pr0 = rng(0x51f15e), FXN = [], FXI = {}, BANK = {}, bankSR = 0, renderMs = 0, XF = 0.04, CH = 1024;
+    var AC = null, bus = null, busOut = null, VOX = [], NV = 16, loopG = null, loopS = null, loopName = '', loopT = -9, loopKick = 0, arcT = 0, stepN = 0, humN = 0, gates = {}, medalN = 0, medalT = -9, LASTV = null;
+    var beamG = null, beamS = null, beamN = 0, beamLv = 0, beamKick = 0, WQ = [], CTX = {}, WANT = {}, nWant = 0, PEND = {};
+    var vMax = 0, drops = 0, steals = 0, misses = 0, lateMax = 0, overMax = 0, NLOG = 40000, LOGT = DBG ? new Float32Array(NLOG) : null, LOGN = DBG ? new Uint8Array(NLOG) : null, LOGR = DBG ? new Float32Array(NLOG) : null, LOGK = DBG ? new Uint8Array(NLOG) : null, logN = 0;
+    (function () { for (var i = 0; i < 4096; i++) SIN[i] = Math.sin(i / 4096 * TAU); })();
+    function rng(seed) {                                                  // mulberry32; its state lives in a typed array so a call allocates nothing
+      var st = new Int32Array(1); st[0] = seed;
+      return function () { var s = st[0] = st[0] + 0x6D2B79F5 | 0, t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    }
+    function hash(s) { for (var h = 2166136261, i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h; }
+    function cv(p, t) {                                                   // a piecewise-linear curve [t0, v0, t1, v1, ...], held at both ends
+      if (!p) return 0; var n = p.length, i;
+      if (t <= p[0]) return p[1];
+      for (i = 2; i < n; i += 2) if (t < p[i]) return p[i - 1] + (p[i + 1] - p[i - 1]) * (t - p[i - 2]) / (p[i] - p[i - 2]);
+      return p[n - 1];
+    }
+    function nf(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+    function dbk(r) { return Math.pow(10, -r / 20 / SR); }                  // a decay rate in dB/s as a per-sample multiplier
+    /* the FM voice. v: {f Hz, d s, a algorithm 0-7, fb feedback 0-7, op: up to four [ratio, level, attack s, decay dB/s,
+       sustain dB, sustain decay dB/s, release dB/s, detune cents], p: pitch curve in semitones, st: pitch stepped per 60 Hz
+       frame, off: key-off s, vib [Hz, cents], am [Hz, depth], g}. An operator's level is an amplitude for a carrier and a
+       modulation index in radians for a modulator; a sustain level of 0 dB or more means no sustain stage.
+       Every renderer works in slices: it renders from where it stopped until the first control-rate boundary CH samples on,
+       keeps its state in its job (j[5]) and returns false; true when the voice is done. */
+    var FBK = [0, 1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2];              // feedback 1-7 = pi/16 .. 4pi of phase, here in cycles
+    var ALGM = [[0, 1, 2, 4], [0, 0, 3, 4], [0, 0, 2, 5], [0, 1, 0, 6], [0, 1, 0, 4], [0, 1, 1, 1], [0, 1, 0, 0], [0, 0, 0, 0]], ALGC = [8, 8, 8, 8, 10, 14, 14, 15];
+    function ctl(E, S, EM, keyOff) {                                      // envelope stages move at control rate; within one, amp = amp * m + a per sample
+      for (var j = 0, k, st; j < 4; j++) {
+        k = j * 8; st = S[j];
+        if (st === 9) { EM[j] = 0; EM[j + 4] = 0; continue; }
+        if (keyOff && st < 3) st = 3;
+        if (st === 0 && E[k + 7] >= 1) { E[k + 7] = 1; st = 1; }
+        if (st === 1 && E[k + 7] <= E[k + 4]) st = 2;
+        S[j] = st; EM[j] = st === 0 ? 1 : st === 1 ? E[k + 3] : st === 2 ? E[k + 5] : E[k + 6]; EM[j + 4] = st === 0 ? E[k + 2] : 0;
+      }
+    }
+    function fmR(b, t0, v, J) {
+      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), j, o, k, f, t, T = SIN, M = ALGM[v.a || 0], C = ALGC[v.a || 0], Z = J[5], E, S, EM, D;
+      if (N <= 0) return true;
+      if (!Z) {                                                           // the first slice: the operators' constants, per operator 8 slots: ratio, level, attack step, decay, sustain, decay 2, release, amplitude
+        E = new Float64Array(32); S = new Int8Array(4); EM = new Float64Array(8); D = new Float64Array(7); J[5] = Z = [E, S, EM, D];
+        for (j = 0; j < 4; j++) {
+          o = v.op[j]; S[j] = 9; if (!o) continue; k = j * 8;
+          E[k] = o[0] * Math.pow(2, (o[7] || 0) / 1200); E[k + 1] = C >> j & 1 ? o[1] : o[1] / TAU; E[k + 2] = o[2] > 0 ? 1 / (o[2] * SR) : 0;
+          E[k + 3] = dbk(o[3] || 0); E[k + 4] = Math.pow(10, (o[4] === undefined || o[4] >= 0 ? -120 : o[4]) / 20); E[k + 5] = dbk(o[5] === undefined ? o[3] || 0 : o[5]); E[k + 6] = dbk(o[6] || 90);
+          S[j] = o[2] > 0 ? 0 : 1; E[k + 7] = o[2] > 0 ? 0 : 1;
+        }
+      }
+      E = Z[0]; S = Z[1]; EM = Z[2]; D = Z[3];                            // D: where it stopped (sample, the four phases, the feedback history)
+      var fb = FBK[v.fb || 0] / 2, g = v.g === undefined ? 1 : v.g, cr = v.st ? Math.round(SR / 60) : 32, off = v.off === undefined ? N + 1 : Math.round(v.off * SR), one = v.op.length === 1 && (C & 1);
+      var l0 = E[1], l1 = E[9], l2 = E[17], l3 = E[25], r0 = E[0], r1 = E[8], r2 = E[16], r3 = E[24];
+      var m10 = M[1] & 1, m20 = M[2] & 1, m21 = M[2] >> 1 & 1, m30 = M[3] & 1, m31 = M[3] >> 1 & 1, m32 = M[3] >> 2 & 1, c0 = C & 1, c1 = C >> 1 & 1, c2 = C >> 2 & 1, c3 = C >> 3 & 1;
+      var x0 = E[7], x1 = E[15], x2 = E[23], x3 = E[31], e0 = 0, e1 = 0, e2 = 0, e3 = 0, a0 = 0, a1 = 0, a2 = 0, a3 = 0, i0 = 0, i1 = 0, i2 = 0, i3 = 0;
+      var n = D[0], p0 = D[1], p1 = D[2], p2 = D[3], p3 = D[4], h0 = D[5], h1 = D[6], nY = n + CH, y, o0, o1, o2, o3, gg = g, vb = v.vib, tr = v.am, cc = 0;
+      for (; n < N; n++) {
+        if (--cc <= 0) {                                                  // a control-rate boundary: the envelopes and the pitch move, and a slice may end
+          cc = cr;
+          if (n >= nY) { D[0] = n; D[1] = p0; D[2] = p1; D[3] = p2; D[4] = p3; D[5] = h0; D[6] = h1; E[7] = x0; E[15] = x1; E[23] = x2; E[31] = x3; return false; }
+          E[7] = x0; E[15] = x1; E[23] = x2; E[31] = x3; ctl(E, S, EM, n >= off);
+          x0 = E[7]; x1 = E[15]; x2 = E[23]; x3 = E[31]; e0 = EM[0]; e1 = EM[1]; e2 = EM[2]; e3 = EM[3]; a0 = EM[4]; a1 = EM[5]; a2 = EM[6]; a3 = EM[7];
+          t = n / SR; f = v.f * Math.pow(2, (cv(v.p, t) + (vb ? vb[1] / 100 * Math.sin(TAU * vb[0] * t) : 0)) / 12) / SR;
+          i0 = f * r0; i1 = f * r1; i2 = f * r2; i3 = f * r3;
+          gg = tr ? g * (1 - tr[1] * (0.5 - 0.5 * Math.cos(TAU * tr[0] * t))) : g;
+        }
+        x0 = x0 * e0 + a0; if (x0 > 1) x0 = 1;
+        p0 += i0; if (p0 >= 1) p0 -= 1;
+        y = T[((p0 + fb * (h0 + h1)) * 4096) & 4095] * x0; h1 = h0; h0 = y; o0 = y * l0;
+        if (one) { b[s0 + n] += o0 * gg; continue; }                      // a lone operator (a kick, a thump) skips the idle three
+        x1 = x1 * e1 + a1; if (x1 > 1) x1 = 1; x2 = x2 * e2 + a2; if (x2 > 1) x2 = 1; x3 = x3 * e3 + a3; if (x3 > 1) x3 = 1;
+        p1 += i1; if (p1 >= 1) p1 -= 1; p2 += i2; if (p2 >= 1) p2 -= 1; p3 += i3; if (p3 >= 1) p3 -= 1;
+        o1 = T[((p1 + m10 * o0) * 4096) & 4095] * x1 * l1;
+        o2 = T[((p2 + m20 * o0 + m21 * o1) * 4096) & 4095] * x2 * l2;
+        o3 = T[((p3 + m30 * o0 + m31 * o1 + m32 * o2) * 4096) & 4095] * x3 * l3;
+        b[s0 + n] += (c0 * o0 + c1 * o1 + c2 * o2 + c3 * o3) * gg;
+      }
+      return true;
+    }
+    /* the PSG. A volume curve e is in dB, written per frame in 2 dB steps (15 steps down is off) unless v.fine */
+    var PSGC = 3579545 / 32;
+    function psgVol(db, fine) { if (fine) return Math.pow(10, db / 20); var s = Math.round(-db / 2); return s >= 15 ? 0 : Math.pow(10, -s / 10); }
+    function blep(t, dt) { if (t < dt) { t /= dt; return t + t - t * t - 1; } if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; } return 0; }
+    function sqR(b, t0, v, J) {                                           // tone channel: {f, d, p semitones, e dB, g}; the pitch lands on the chip's divider
+      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), cr = Math.round(SR / 60), g = v.g === undefined ? 1 : v.g, D = J[5] || (J[5] = new Float64Array(2));
+      var n = D[0], ph = D[1], p2 = 0, inc = 0, a = 0, t, f, nY = n + CH;
+      for (; n < N; n++) {
+        if (n % cr === 0) { if (n >= nY) { D[0] = n; D[1] = ph; return false; } t = n / SR; f = v.f * Math.pow(2, cv(v.p, t) / 12); f = PSGC / clamp(Math.round(PSGC / f), 1, 1023); inc = f / SR; a = psgVol(cv(v.e, t), v.fine); }
+        ph += inc; if (ph >= 1) ph -= 1; p2 = ph + 0.5; if (p2 >= 1) p2 -= 1;
+        b[s0 + n] += ((ph < 0.5 ? 1 : -1) + blep(ph, inc) - blep(p2, inc)) * a * g;
+      }
+      return true;
+    }
+    function nzR(b, t0, v, J) {                                           // noise channel: {r shift rate Hz, d, p semitones on the rate, e dB, per periodic, g}
+      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), cr = Math.round(SR / 60), g = v.g === undefined ? 1 : v.g, D = J[5];
+      if (!D) { D = J[5] = new Float64Array(5); D[1] = v.per ? 0x8000 : (0x8000 | (rr() * 0x7fff)); D[2] = D[3] = 1; }   // the register's seed comes from the effect's own stream
+      var n = D[0], l = D[1], cur = D[2], prev = D[3], acc = D[4], inc = 0, a = 0, t, w, nY = n + CH;
+      for (; n < N; n++) {
+        if (n % cr === 0) { if (n >= nY) { D[0] = n; D[1] = l; D[2] = cur; D[3] = prev; D[4] = acc; return false; } t = n / SR; inc = Math.min(40000, v.r * Math.pow(2, cv(v.p, t) / 12)) / SR; a = psgVol(cv(v.e, t), v.fine); }
+        acc += inc; w = 0;
+        while (acc >= 1) { acc -= 1; l = v.per ? (l >> 1) | ((l & 1) << 15) : (l >> 1) | (((l ^ (l >> 3)) & 1) << 15); prev = cur; cur = l & 1 ? 1 : -1; w = 1; }
+        b[s0 + n] += (w ? cur * (acc / inc) + prev * (1 - acc / inc) : cur) * a * g;   // a shift mid-sample lands part-way: the cheapest anti-alias
+      }
+      return true;
+    }
+    function crkR(b, t0, v, J) {                                          // debris: sparse bright clicks, thinning out. {d, n clicks/s curve, e dB, g}
+      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), g = v.g === undefined ? 1 : v.g, D = J[5] || (J[5] = new Float64Array(3));
+      var n = D[0], c = D[1], k = D[2], dn = 0, a = 0, t, nY = n + CH;
+      for (; n < N; n++) {
+        if (n % 32 === 0) { if (n >= nY) { D[0] = n; D[1] = c; D[2] = k; return false; } t = n / SR; dn = cv(v.n, t) / SR; a = Math.pow(10, cv(v.e, t) / 20); }
+        if (rr() < dn) { c = a * (0.3 + 0.7 * rr()); k = 12 + (rr() * 30 | 0); }
+        if (k > 0) { b[s0 + n] += (rr() * 2 - 1) * c * g; c *= 0.86; k--; }
+      }
+      return true;
+    }
+    /* a recipe queues its voices, each a job [renderer, buffer, start s, voice, its effect's random stream, saved state];
+       drain() renders them a slice at a time, so no frame pays for a whole explosion */
+    var JOB = null;
+    function fm(b, t0, v) { JOB.push([fmR, b, t0, v, rr, null]); }
+    function sq(b, t0, v) { JOB.push([sqR, b, t0, v, rr, null]); }
+    function nz(b, t0, v) { JOB.push([nzR, b, t0, v, rr, null]); }
+    function crk(b, t0, v) { JOB.push([crkR, b, t0, v, rr, null]); }
+    /* the sound driver's instruments */
+    function brass(b, t, m, d, g) {                                       // lead: two saw-ish pairs, the second a few cents sharp
+      fm(b, t, { f: nf(m), d: d + 0.2, a: 4, fb: 5, off: d, g: g, vib: [5.5, 8], op: [[1, 1.3, 0.003, 14, -9, 3, 80], [1, 0.5, 0.003, 10, -6, 2, 70], [1, 1.1, 0.003, 16, -9, 3, 80, 7], [1, 0.42, 0.003, 10, -6, 2, 70, 7]] });
+    }
+    function bell(b, t, m, d, g) {                                        // an inharmonic modulator that dies long before the tone
+      fm(b, t, { f: nf(m), d: d, a: 4, g: g, op: [[3.5, 2.2, 0, 70], [1, 0.62, 0, 26], [1.01, 0.7, 0, 40], [3, 0.2, 0, 50]] });
+    }
+    function thump(b, t, f, drop, d, g, fb) {                             // an FM kick: one fed-back operator and a falling pitch
+      fm(b, t, { f: f, d: d, a: 7, fb: fb || 3, g: g, op: [[1, 1, 0.001, 42 / d]], p: [0, 0, d * 0.12, drop * 0.55, d * 0.8, drop] });
+    }
+    function explode(b, t, g, d) {                                        // one blast: a PSG crack and body, an FM feedback roar, a falling thump, then debris
+      nz(b, t, { r: 15000, d: 0.3 * d, p: [0, 0, 0.3 * d, -20], e: [0, 0, 0.3 * d, -26], g: 0.7 * g });
+      nz(b, t + 0.06, { r: 6000 + rr() * 1500, d: 0.9 * d, p: [0, 0, 0.9 * d, -24], e: [0, 0, 0.15 * d, -4, 0.9 * d, -28], g: 0.85 * g });
+      fm(b, t, { f: 380 + rr() * 80, d: 0.8 * d, a: 0, fb: 7, op: [[1, 1.3], [1, 1.4], [0.5, 1], [1, 0.6 * g, 0, 45 / d]], p: [0, 0, 0.8 * d, -30] });
+      thump(b, t, 110, -24, d, g);
+      crk(b, t + 0.1, { d: d - 0.1, n: [0, 110, d, 4], e: [0, -2, d, -22], g: 0.6 * g });
+    }
+    function siren(b, t, m, d) {                                          // one half of the WARNING
+      var e = [0.004, 0, 0, 0, 260];
+      fm(b, t, { f: nf(m), d: d + 0.03, a: 4, fb: 5, off: d, vib: [7, 10], p: [0, -1, d, 1], op: [[1, 1.3].concat(e), [1, 0.5].concat(e), [2, 0.7].concat(e), [1, 0.3].concat(e)] });
+      sq(b, t, { f: nf(m - 12), d: d, e: [0, -6, d, -8], g: 0.3 });
+    }
+    /* the effects. p: priority 0-3 (who may steal whose voice), gap: the per-name rate gate (s), len (s), pk: peak into the bus,
+       lp: low-pass Hz, n: variants (one is picked at random, never the last one again; the rapid-fire ones differ in timbre,
+       not in pitch, so a stream of them never plays a tune), cents: random detune per play, loop: a seamless drone loop */
+    var FX = {
+      start: { p: 3, gap: 0.3, len: 0.6, pk: 0.36, lp: 7000, make: function (b) {
+        brass(b, 0, 67, 0.06, 0.8); brass(b, 0.07, 79, 0.06, 0.8); brass(b, 0.14, 86, 0.36, 0.6); brass(b, 0.14, 79, 0.36, 0.45);
+        sq(b, 0.14, { f: nf(91), d: 0.4, e: [0, -8, 0.4, -28], g: 0.25 });
+      } },
+      shotR: { p: 0, gap: 0.07, len: 0.055, pk: 0.1, lp: 4000, n: 3, cents: 25, make: function (b, k) {     // short enough to leave a gap at 12 a second
+        fm(b, 0, { f: 900, d: 0.055, a: 4, fb: [3, 4, 2][k], op: [[3.5, [2.4, 2.1, 2.7][k], 0, 1100], [1, 0.6, 0, 520], [[7.03, 6.97, 7.1][k], 0.6, 0, 1800], [2, 0.2, 0, 800]], p: [0, 0, 0.05, -9] });
+        nz(b, 0, { r: [15000, 12000, 17000][k], d: 0.017, e: [0, -6, 0.017, -6], g: [0.15, 0.2, 0.12][k] });
+      } },
+      hit: { p: 0, gap: 0.055, len: 0.04, pk: 0.075, lp: 5500, n: 2, cents: 30, make: function (b, k) {      // one bright frame, one dim one
+        sq(b, 0, { f: 1760, d: 0.034, e: [0, 0, 0.0166, 0, 0.0167, -8], g: [0.5, 0.42][k] });
+        fm(b, 0, { f: 2200, d: 0.035, a: 4, op: [[[1.41, 1.73][k], [2, 1.6][k], 0, 1400], [1, 0.5, 0, 800]] });
+      } },
+      pop: { p: 1, gap: 0.045, len: 0.28, pk: 0.3, lp: 6500, n: 3, cents: 50, make: function (b, k) {
+        nz(b, 0, { r: 14000 - k * 1500, d: 0.25, p: [0, 0, 0.2, -30], e: [0, 0, 0.03, -3, 0.24, -28], g: 0.9 });
+        thump(b, 0, 200, -24, 0.2, 0.9, 4);
+      } },
+      boom: { p: 1, gap: 0.06, len: 0.55, pk: 0.4, lp: 6000, n: 3, cents: 45, make: function (b, k) {
+        nz(b, 0, { r: 13000, d: 0.5, p: [0, 0, 0.35, -24], e: [0, 0, 0.06, -2, 0.5, -28], g: 0.8 });
+        nz(b, 0.07, { r: 7000 + k * 900, d: 0.3, p: [0, 0, 0.25, -18], e: [0, -2, 0.3, -28], g: 0.6 });
+        fm(b, 0, { f: 320, d: 0.45, a: 0, fb: 7, op: [[1, 1], [1, 1.2], [0.5, 0.8], [1, 0.5, 0, 90]], p: [0, 0, 0.4, -22] });
+        thump(b, 0, 130, -21, 0.45, 1);
+        crk(b, 0.1, { d: 0.4, n: [0, 70, 0.4, 5], e: [0, -4, 0.4, -20], g: 0.5 });
+      } },
+      medal: { p: 0, gap: 0.05, len: 0.09, pk: 0.075, lp: 7000, n: 8, make: function (b, k) {             // one rung of the citation ladder each, its brightness key-scaled down as it climbs
+        fm(b, 0, { f: nf(79 + LADDER[k]), d: 0.09, a: 4, op: [[3.5, 2.2 - k * 0.15, 0, 70], [1, 0.62, 0, 26], [1.01, 0.7, 0, 40], [3, 0.2 - k * 0.015, 0, 50]] });
+      } },
+      laserR: { p: 1, loop: 1, len: 0.5, pk: 0.065, lp: 4200, make: function (b) {          // loops: every period divides 0.5 s
+        fm(b, 0, { f: 146, d: 0.54, a: 4, fb: 5, vib: [8, 14], am: [16, 0.35], op: [[1, 1.7], [2, 0.5], [3, 1.3], [1, 0.4]] });
+        nz(b, 0, { r: 9000, d: 0.54, e: [0, -18], g: 0.5, fine: 1 });
+      } },
+      laserOn: { p: 1, gap: 0.25, len: 0.12, pk: 0.17, lp: 6000, make: function (b) {
+        fm(b, 0, { f: 330, d: 0.12, a: 4, fb: 4, op: [[1, 1.4, 0.004, 60], [1, 0.5, 0.004, 90], [3, 0.8, 0, 200], [1, 0.3, 0, 150]], p: [0, 0, 0.1, 17] });
+      } },
+      laserHit: { p: 0, gap: 0.15, len: 0.06, pk: 0.065, lp: 7000, n: 3, cents: 40, make: function (b) {
+        nz(b, 0, { r: 12000 + rr() * 4000, d: 0.06, e: [0, -2, 0.05, -26], g: 0.8 });
+        crk(b, 0, { d: 0.05, n: [0, 400], e: [0, 0], g: 0.8 });
+      } },
+      shotB: { p: 0, gap: 0.085, len: 0.065, pk: 0.11, lp: 4200, n: 3, cents: 25, make: function (b, k) {     // a buzzier, lower zap
+        fm(b, 0, { f: 300, d: 0.065, a: 6, fb: 6, op: [[1, [1.4, 1.25, 1.55][k], 0, [380, 330, 440][k]], [1, [0.55, 0.65, 0.45][k], 0, 430], [2.01, [0.2, 0.28, 0.14][k], 0, 600], [0.5, 0.25, 0, 430]], p: [0, 9, 0.012, 0, 0.065, -5] });
+        nz(b, 0, { r: 4800, per: 1, d: 0.05, e: [0, -6, 0.05, -22], g: [0.35, 0.28, 0.42][k] });
+        nz(b, 0, { r: [13000, 10000, 16000][k], d: 0.03, e: [0, -3, 0.03, -18], g: 0.4 });
+      } },
+      shotG: { p: 0, gap: 0.12, len: 0.05, pk: 0.085, lp: 5000, n: 3, cents: 20, make: function (b, k) {      // thin and high: every other needle
+        fm(b, 0, { f: 1570, d: 0.05, a: 4, op: [[2, [1.3, 1.1, 1.5][k], 0, 1500], [1, 0.6, 0, 700], [[5.01, 4.99, 6.01][k], 0.6, 0, 2400], [1, 0.25, 0, 900, 0, 0, 0, 9]], p: [0, 2, 0.045, -3] });
+        nz(b, 0, { r: [20000, 17000, 23000][k], d: 0.012, e: [0, -8, 0.012, -20], g: 0.25 });
+      } },
+      laserB: { p: 1, loop: 1, len: 0.5, pk: 0.035, lp: 5000, make: function (b) {           // the buzz only: its arcs are arcB, thrown at random while the beam is held
+        nz(b, 0, { r: 1920, per: 1, d: 0.54, e: [0, -10], g: 0.6 });                        // periodic noise: a 120 Hz mains buzz
+        fm(b, 0, { f: 120, d: 0.54, a: 4, fb: 6, am: [30, 0.5], op: [[1, 1.2], [1, 0.3], [4, 0.6], [2, 0.12]] });
+      } },
+      arcB: { p: 0, gap: 0.05, len: 0.22, pk: 0.053, lp: 5500, n: 6, cents: 80, make: function (b) {       // a few cracks of blue thunder and their crackle, a different handful each time
+        var n = 2 + (rr() * 2 | 0), i;
+        for (i = 0; i < n; i++) nz(b, i * 0.05 + rr() * 0.04, { r: 9000 + rr() * 5000, d: 0.03 + rr() * 0.03, e: [0, -2 - rr() * 6, 0.05, -24], g: 0.9 });
+        crk(b, 0, { d: 0.2, n: [0, 90, 0.2, 50], e: [0, -6, 0.2, -14], g: 0.6 });
+      } },
+      laserG: { p: 1, loop: 1, len: 0.5, pk: 0.05, lp: 6500, make: function (b) {
+        fm(b, 0, { f: 590, d: 0.54, a: 4, fb: 1, vib: [12, 18], am: [24, 0.3], op: [[1, 0.7], [1, 0.4], [4, 0.35], [2, 0.14]] });
+        nz(b, 0, { r: 16000, d: 0.54, e: [0, -20], g: 0.3, fine: 1 });
+      } },
+      power: { p: 2, gap: 0.1, len: 0.8, pk: 0.42, lp: 7000, make: function (b) {         // ka-chunk, a clank, then the arpeggio
+        nz(b, 0, { r: 9000, d: 0.04, e: [0, 0, 0.04, -20], g: 0.6 });
+        thump(b, 0, 170, -14, 0.14, 0.9, 4);
+        fm(b, 0.012, { f: 540, d: 0.09, a: 4, op: [[3.5, 2.5, 0, 500], [1, 0.4, 0, 300]] });
+        brass(b, 0.07, 72, 0.06, 0.55); brass(b, 0.13, 79, 0.06, 0.55); brass(b, 0.19, 84, 0.06, 0.6);
+        brass(b, 0.25, 88, 0.42, 0.55); brass(b, 0.25, 84, 0.42, 0.4);
+        sq(b, 0.25, { f: nf(96), d: 0.4, e: [0, -12, 0.4, -28], g: 0.3 });
+      } },
+      weapon: { p: 2, gap: 0.1, len: 0.55, pk: 0.38, lp: 7000, make: function (b) {
+        nz(b, 0, { r: 7000, d: 0.05, p: [0, 0, 0.05, -12], e: [0, 0, 0.05, -18], g: 0.6 });
+        thump(b, 0, 210, -10, 0.12, 0.8, 4);
+        bell(b, 0.05, 76, 0.45, 0.6); bell(b, 0.11, 83, 0.4, 0.6);
+      } },
+      speed: { p: 2, gap: 0.1, len: 0.45, pk: 0.33, lp: 7000, make: function (b) {
+        fm(b, 0, { f: 330, d: 0.3, a: 4, fb: 4, st: 1, op: [[1, 1.2, 0, 30], [1, 0.5, 0, 40], [2, 0.6, 0, 60], [1, 0.3, 0, 50]], p: [0, 0, 0.25, 24] });
+        for (var i = 0; i < 4; i++) sq(b, 0.2 + i * 0.05, { f: nf(84 + [0, 4, 7, 12][i]), d: 0.05, e: [0, -4, 0.05, -14], g: 0.35 });
+      } },
+      bombUp: { p: 2, gap: 0.1, len: 0.5, pk: 0.38, lp: 6000, make: function (b) {
+        thump(b, 0, 120, -12, 0.25, 1, 4);
+        nz(b, 0, { r: 6000, d: 0.06, e: [0, 0, 0.06, -20], g: 0.5 });
+        brass(b, 0.06, 55, 0.08, 0.6); brass(b, 0.14, 62, 0.25, 0.6); brass(b, 0.14, 67, 0.25, 0.4);
+      } },
+      bonus: { p: 2, gap: 0.1, len: 0.35, pk: 0.3, lp: 7500, make: function (b) {
+        bell(b, 0, 83, 0.1, 0.6); bell(b, 0.06, 88, 0.3, 0.7);
+        sq(b, 0, { f: nf(95), d: 0.06, e: [0, -10, 0.06, -20], g: 0.3 }); sq(b, 0.06, { f: nf(100), d: 0.2, e: [0, -10, 0.2, -28], g: 0.3 });
+      } },
+      bigBoom: { p: 2, gap: 0.14, len: 1.35, pk: 0.55, lp: 5500, n: 2, cents: 35, make: function (b) { explode(b, 0, 1, 1.1); explode(b, 0.14, 0.55, 0.9); } },   // two blasts
+      cancel: { p: 1, gap: 0.2, len: 0.5, pk: 0.26, lp: 8000, make: function (b) {
+        for (var i = 0; i < 6; i++) bell(b, i * 0.04, [84, 86, 88, 91, 93, 96][i], 0.25, 0.5);
+        nz(b, 0, { r: 16000, d: 0.45, e: [0, -18, 0.1, -10, 0.45, -28], g: 0.4 });
+      } },
+      chainBreak: { p: 1, gap: 0.3, len: 0.38, pk: 0.22, lp: 5000, make: function (b) {
+        var e = [0, 10, 0, 0, 200];
+        fm(b, 0, { f: nf(67), d: 0.15, a: 4, fb: 5, st: 1, off: 0.12, p: [0, 0, 0.13, -3], op: [[1, 1.2].concat(e), [1, 0.5].concat(e), [2, 0.5].concat(e), [1, 0.25].concat(e)] });
+        fm(b, 0.15, { f: nf(60), d: 0.22, a: 4, fb: 5, st: 1, off: 0.17, p: [0, 0, 0.2, -5], op: [[1, 1.2].concat(e), [1, 0.5].concat(e), [2, 0.5].concat(e), [1, 0.25].concat(e)] });
+      } },
+      hitHard: { p: 0, gap: 0.075, len: 0.07, pk: 0.16, lp: 6000, n: 2, cents: 25, make: function (b, k) {
+        fm(b, 0, { f: 760, d: 0.07, a: 4, fb: [2, 3][k], op: [[2.76, [2.6, 2.1][k], 0, [900, 1300][k]], [1, 0.6, 0, 420], [5.4, [1.2, 1.6][k], 0, 1200], [1.5, 0.3, 0, 600]], p: [0, 0, 0.07, -3] });
+        nz(b, 0, { r: [11000, 8000][k], d: 0.02, e: [0, -6, 0.02, -18], g: [0.3, 0.38][k] });
+      } },
+      deflect: { p: 0, gap: 0.09, len: 0.06, pk: 0.11, lp: 3500, n: 2, cents: 30, make: function (b, k) {
+        fm(b, 0, { f: 420, d: 0.06, a: 4, fb: [0, 3][k], p: [0, 0, 0.06, -4], op: [[1.73, [1.5, 1.9][k], 0, [1000, 1400][k]], [1, 0.6, 0, 600]] });
+      } },
+      revenge: { p: 0, gap: 0.1, len: 0.09, pk: 0.13, lp: 7000, n: 2, cents: 30, make: function (b, k) {      // backwards: it swells, then stops dead
+        fm(b, 0, { f: 880, d: 0.085, a: 4, off: 0.07, p: [0, 0, 0.08, 12], op: [[2.5, [1.5, 1.3][k], 0.07, 0, 0, 0, [1500, 2200][k]], [1, 0.6, 0.07, 0, 0, 0, 1500]] });
+      } },
+      extend: { p: 3, gap: 0.3, len: 1.25, pk: 0.45, lp: 7500, make: function (b) {
+        var s = [72, 76, 79, 84, 88, 91, 88, 91], i;
+        for (i = 0; i < s.length; i++) { brass(b, i * 0.07, s[i], 0.06, 0.5); sq(b, i * 0.07, { f: nf(s[i] + 12), d: 0.06, e: [0, -8, 0.06, -12], g: 0.25 }); }
+        brass(b, 0.56, 96, 0.5, 0.55); brass(b, 0.56, 91, 0.5, 0.35); bell(b, 0.56, 100, 0.6, 0.35);
+      } },
+      death: { p: 3, gap: 0.2, len: 1.6, pk: 0.62, lp: 5500, make: function (b) {
+        fm(b, 0, { f: 1500, d: 0.95, a: 4, fb: 6, vib: [11, 40], p: [0, 0, 0.12, -14, 0.9, -48], op: [[1, 1.4, 0, 20], [1, 0.5, 0, 25], [1.41, 1.6, 0, 30], [1, 0.4, 0, 30]] });
+        explode(b, 0, 1, 1.4); explode(b, 0.25, 0.6, 1.1);
+      } },
+      bomb: { p: 3, gap: 0.3, len: 2.7, pk: 0.68, lp: 5000, make: function (b) {
+        fm(b, 0, { f: 60, d: 0.5, a: 0, fb: 7, p: [0, 0, 0.48, 24], op: [[1, 1.2], [1, 1.2], [0.5, 1], [1, 0.7, 0.45]] });   // the skull swells
+        thump(b, 0, 90, -12, 0.3, 0.8);
+        explode(b, 0.45, 1, 2.1); explode(b, 0.6, 0.7, 1.6);
+        fm(b, 0.45, { f: 45, d: 2.2, a: 7, fb: 4, p: [0, 0, 2.2, -5], op: [[1, 1, 0.08, 16]] });
+      } },
+      alert: { p: 3, gap: 1, len: 1.0, pk: 0.34, lp: 6000, make: function (b) { for (var i = 0; i < 2; i++) { siren(b, i * 0.44, 81, 0.2); siren(b, i * 0.44 + 0.22, 76, 0.2); } } },
+      ding: { p: 1, gap: 0.5, len: 1.0, pk: 0.26, lp: 8000, make: function (b) {         // the typesetter's carriage-return bell
+        fm(b, 0, { f: nf(91), d: 1, a: 5, op: [[3.5, 2.4, 0, 30], [1, 0.5, 0, 9], [2, 0.35, 0, 14, 0, 0, 0, 5], [4.2, 0.15, 0, 30]] });
+        fm(b, 0, { f: 2400, d: 0.02, a: 7, op: [[1, 0.4, 0, 1500]] });
+      } },
+      klaxon: { p: 3, gap: 1, len: 3.4, pk: 0.4, lp: 6000, make: function (b) { for (var i = 0; i < 6; i++) { siren(b, i * 0.56, 78, 0.26); siren(b, i * 0.56 + 0.28, 73, 0.26); } } },
+      phaseBreak: { p: 3, gap: 0.3, len: 1.5, pk: 0.6, lp: 6000, make: function (b) {
+        explode(b, 0, 0.9, 1.1);
+        fm(b, 0, { f: 196, d: 1.4, a: 5, fb: 4, op: [[1, 2.4, 0, 30], [2.76, 0.4, 0, 18], [5.4, 0.25, 0, 26], [1, 0.45, 0, 20]] });   // the clang
+        for (var i = 0; i < 5; i++) bell(b, 0.35 + i * 0.07, [79, 83, 86, 91, 95][i], 0.4, 0.3);
+      } },
+      bossBreak: { p: 3, gap: 0.3, len: 1.9, pk: 0.62, lp: 5500, make: function (b) {        // a metal scream over the first blast
+        fm(b, 0.05, { f: 1250, d: 1.6, a: 4, fb: 5, off: 1.2, vib: [9, 60], p: [0, 0, 1.5, -30], op: [[1.41, 2.2, 0, 8, 0, 0, 40], [1, 0.5, 0.01, 6, 0, 0, 40], [2.01, 1, 0, 10, 0, 0, 40], [1, 0.4, 0.01, 6, 0, 0, 40]] });
+        explode(b, 0, 1, 1.5);
+      } },
+      bossDie: { p: 3, gap: 0.3, len: 3.4, pk: 0.68, lp: 5000, make: function (b) {         // four blasts, each bigger, then the rumble and the debris
+        explode(b, 0, 0.8, 1); explode(b, 0.28, 0.85, 1.1); explode(b, 0.62, 0.95, 1.3); explode(b, 1.1, 1, 2.2);
+        fm(b, 0.9, { f: 55, d: 2.4, a: 7, fb: 5, p: [0, 0, 2.4, -7], op: [[1, 0.9, 0.05, 14]] });
+        nz(b, 1.1, { r: 3000, d: 2.3, p: [0, 0, 2.3, -24], e: [0, -2, 2.3, -40], g: 0.6, fine: 1 });
+        crk(b, 1.2, { d: 2.1, n: [0, 150, 2.1, 3], e: [0, -4, 2.1, -30], g: 0.6 });
+      } },
+      count: { p: 2, gap: 0.3, len: 0.15, pk: 0.28, lp: 6000, make: function (b) {
+        sq(b, 0, { f: nf(84), d: 0.05, e: [0, 0, 0.034, -6, 0.05, -12], g: 0.5 });
+        fm(b, 0, { f: nf(72), d: 0.15, a: 4, op: [[2.5, 1.5, 0, 200], [1, 0.6, 0, 160]] });
+      } },
+      gameOver: { p: 3, gap: 1, len: 1.7, pk: 0.36, lp: 5000, make: function (b) {
+        brass(b, 0, 67, 0.16, 0.5); brass(b, 0.2, 63, 0.16, 0.5); brass(b, 0.4, 60, 0.16, 0.5); brass(b, 0.6, 55, 0.8, 0.55); brass(b, 0.6, 51, 0.8, 0.4);
+      } },
+      pause: { p: 2, gap: 0.08, len: 0.16, pk: 0.22, lp: 6000, make: function (b) {
+        sq(b, 0, { f: nf(88), d: 0.05, e: [0, -2, 0.05, -8], g: 0.5 }); sq(b, 0.066, { f: nf(81), d: 0.08, e: [0, -2, 0.08, -14], g: 0.5 });
+      } },
+      beamWarn: { p: 2, gap: 0.5, len: 1.05, pk: 0.28, lp: 6500, make: function (b) {         // the True Last Boss's lasers, charging
+        fm(b, 0, { f: 200, d: 1.05, a: 4, fb: 3, p: [0, 0, 1, 27], am: [22, 0.6], op: [[1, 0.4, 0.8], [1, 0.5, 0.6], [2, 0.2, 0.9], [1, 0.25, 0.7]] });
+        nz(b, 0, { r: 5000, d: 1.0, p: [0, 0, 1, 18], e: [0, -26, 1, -8], g: 0.4 });
+      } },
+      beamFire: { p: 2, gap: 0.3, len: 0.6, pk: 0.4, lp: 5500, make: function (b) {         // ... and biting
+        fm(b, 0, { f: 160, d: 0.58, a: 0, fb: 7, p: [0, 5, 0.05, 0], op: [[1, 1.4], [1, 1.2], [2, 0.8], [1, 0.8, 0, 50]] });
+        nz(b, 0, { r: 1600, per: 1, d: 0.5, e: [0, 0, 0.5, -24], g: 0.5 });
+        nz(b, 0, { r: 14000, d: 0.12, e: [0, 0, 0.12, -20], g: 0.6 });
+      } },
+      beamHum: { p: 2, loop: 1, len: 0.5, pk: 0.07, lp: 3500, make: function (b) {          // ... and the drone while they stay lethal: a 100 Hz FM growl, its buzz and a sizzle, every period dividing 0.5 s
+        fm(b, 0, { f: 100, d: 0.54, a: 4, fb: 5, am: [20, 0.45], op: [[1, 1.8], [2, 0.6], [3, 1.2], [1, 0.4]] });
+        nz(b, 0, { r: 1600, per: 1, d: 0.54, e: [0, -8], g: 0.5 });
+        fm(b, 0, { f: 1600, d: 0.54, a: 4, am: [40, 0.8], op: [[2, 0.8], [1, 0.25]] });
+      } },
+      coreOpen: { p: 2, gap: 0.3, len: 0.6, pk: 0.33, lp: 8000, make: function (b) {
+        for (var i = 0; i < 4; i++) bell(b, i * 0.05, [76, 80, 83, 88][i], 0.45, 0.6);
+        nz(b, 0, { r: 8000, d: 0.3, p: [0, 0, 0.3, 12], e: [0, -20, 0.1, -12, 0.3, -28], g: 0.4 });
+      } },
+      coreShut: { p: 2, gap: 0.3, len: 0.5, pk: 0.36, lp: 5000, make: function (b) {
+        fm(b, 0, { f: 140, d: 0.4, a: 5, fb: 4, op: [[1, 2.2, 0, 90], [2.76, 0.45, 0, 110], [5.4, 0.25, 0, 160], [1, 0.5, 0, 90]] });
+        thump(b, 0, 100, -10, 0.2, 0.9);
+        nz(b, 0.03, { r: 7000, d: 0.35, e: [0, -6, 0.35, -26], g: 0.45 });
+      } },
+      rankUp: { p: 1, gap: 1, len: 0.7, pk: 0.24, lp: 3500, make: function (b) {            // a minor second, low: the reviewers are getting organised
+        fm(b, 0, { f: nf(45), d: 0.7, a: 4, fb: 4, op: [[1, 1.4, 0.02, 20], [1, 0.6, 0.02, 30], [1, 1.2, 0.02, 20, 0, 0, 0, 100], [1, 0.5, 0.02, 30, 0, 0, 0, 100]] });
+      } },
+      respawn: { p: 1, gap: 0.5, len: 0.7, pk: 0.2, lp: 6500, make: function (b) {
+        nz(b, 0, { r: 1500, d: 0.65, p: [0, 0, 0.6, 36], e: [0, -24, 0.35, -6, 0.65, -28], g: 0.6 });
+        fm(b, 0, { f: 180, d: 0.6, a: 4, fb: 2, p: [0, 0, 0.6, 24], op: [[1, 0.8, 0.3, 40], [1, 0.4, 0.3, 40]] });
+      } },
+      flyOff: { p: 3, gap: 1, len: 1.9, pk: 0.4, lp: 6500, make: function (b) {
+        nz(b, 0, { r: 900, d: 1.8, p: [0, 0, 1.5, 40], e: [0, -20, 1.0, -2, 1.8, -28], g: 0.8 });
+        fm(b, 0, { f: 70, d: 1.7, a: 0, fb: 6, off: 1.2, p: [0, 0, 1.6, 36], op: [[1, 1], [1, 1], [1, 0.8], [1, 0.5, 0.8, 0, 0, 0, 40]] });
+        bell(b, 1.35, 100, 0.5, 0.5);
+      } },
+      stamp: { p: 3, gap: 1, len: 0.5, pk: 0.5, lp: 4500, make: function (b) {               // PUBLISHED! / TENURED!: the rubber stamp and its rebound
+        thump(b, 0, 100, -12, 0.35, 1);
+        nz(b, 0, { r: 5000, d: 0.06, p: [0, 0, 0.06, -12], e: [0, 0, 0.06, -20], g: 0.8 });
+        thump(b, 0.075, 150, -8, 0.12, 0.45);
+        nz(b, 0.075, { r: 4000, d: 0.04, e: [0, -8, 0.04, -24], g: 0.5 });
+      } },
+      firework: { p: 1, gap: 0.15, len: 1.0, pk: 0.26, lp: 6000, n: 2, cents: 60, make: function (b) {
+        nz(b, 0, { r: 11000, d: 0.12, p: [0, 0, 0.12, -14], e: [0, 0, 0.12, -24], g: 0.7 });
+        thump(b, 0, 240, -12, 0.15, 0.6);
+        crk(b, 0.12, { d: 0.85, n: [0, 220, 0.85, 20], e: [0, -4, 0.85, -22], g: 0.8 });
+      } }
+    };
+    var SHOTS = ['shotR', 'shotB', 'shotG'], LASERS = ['laserR', 'laserB', 'laserG'], LADDER = [0, 2, 4, 7, 9, 12, 14, 16];   // from G5: the top rung is B6, under 2 kHz
+    var FIRST = ['start', 'shotR', 'hit', 'bomb', 'death', 'laserOn', 'laserR', 'laserHit', 'pop', 'boom', 'medal', 'bigBoom', 'cancel', 'shotB', 'shotG',
+      'laserB', 'arcB', 'laserG', 'power', 'weapon', 'speed', 'bombUp', 'bonus', 'respawn', 'chainBreak', 'extend', 'pause'];   // the head of the queue: what a fresh game can ask for first
+    (function () { for (var k in FX) if (FX.hasOwnProperty(k)) { FXI[k] = FXN.length; FXN.push(k); } LASTV = new Int8Array(FXN.length); })();
+    function finish(b, f, out, J) {                                       // DC trap, the console's soft top end, level, 9 bits; then the loop seam or a tail fade. In three passes of slices
+      var D = J[5] || (J[5] = new Float64Array(6)), i = D[1], e, x, xp = D[2], hp = D[3], y = D[4], pk = D[5], q, a = Math.exp(-TAU * f.lp / SR), hk = Math.exp(-TAU * 20 / SR), X = Math.round(XF * SR), n = f.loop ? b.length - X : b.length;
+      if (D[0] === 0) {                                                   // the filters, then the loop seam
+        for (e = Math.min(b.length, i + 4 * CH); i < e; i++) { x = b[i]; hp = hk * (hp + x - xp); xp = x; y = hp + a * (y - hp); b[i] = y; }
+        D[2] = xp; D[3] = hp; D[4] = y;
+        if (i < b.length) { D[1] = i; return false; }
+        if (f.loop) for (i = 0; i < X; i++) b[i] = b[i] * (i / X) + b[n + i] * (1 - i / X);
+        D[0] = 1; D[1] = 0; return false;
+      }
+      if (D[0] === 1) {                                                   // the peak
+        for (e = Math.min(n, i + 8 * CH); i < e; i++) if (Math.abs(b[i]) > pk) pk = Math.abs(b[i]);
+        D[5] = pk; D[1] = i; if (i >= n) { D[0] = 2; D[1] = 0; }
+        return false;
+      }
+      q = pk > 0 ? 256 / pk : 0;                                          // level and 9 bits
+      for (e = Math.min(n, i + 4 * CH); i < e; i++) b[i] = Math.round(b[i] * q) / 256 * f.pk;
+      if (i < n) { D[1] = i; return false; }
+      if (!f.loop) { X = Math.min(n, Math.round(0.004 * SR)); for (i = 0; i < X; i++) b[n - 1 - i] *= i / X; }
+      out.push(f.loop ? b.subarray(0, n) : b);
+      return true;
+    }
+    function begin(name) {                                                // run the recipe for every variant: its voices are queued, not yet heard, then a finish per variant
+      var f = FX[name], c = { name: name, out: [], jobs: [], ji: 0 }, bufs = [], k, b;
+      JOB = c.jobs;
+      for (k = 0; k < (f.n || 1); k++) { rr = rng(hash(name) + k * 7919); b = new Float32Array(Math.round((f.len + (f.loop ? XF : 0)) * SR)); bufs.push(b); f.make(b, k); }
+      for (k = 0; k < bufs.length; k++) JOB.push([finish, bufs[k], f, c.out, rr, null]);
+      JOB = null; return c;
+    }
+    function drain(c, until) {                                            // resume the queued jobs a slice at a time until they are done (→ true) or the time is up
+      var j;
+      while (c.ji < c.jobs.length) {
+        j = c.jobs[c.ji]; rr = j[4];
+        if (j[0](j[1], j[2], j[3], j)) c.jobs[c.ji++] = null;
+        if (until && nowSec() > until) break;
+      }
+      return c.ji >= c.jobs.length;
+    }
+    function complete(c) {                                                // bank every finished variant as an AudioBuffer
+      var out = [], k, x, ab;
+      for (k = 0; k < c.out.length; k++) { x = c.out[k]; ab = AC.createBuffer(1, x.length, SR); ab.getChannelData(0).set(x); out.push(ab); }
+      BANK[c.name] = out;
+    }
+    function renderRaw(name, sr) {                                        // the debug hook: the finished samples at any rate, the bank untouched
+      var keep = SR, c;
+      SR = sr;
+      try { c = begin(name); drain(c, 0); } finally { SR = keep; }
+      return c.out;
+    }
+    var idleReq = 0;
+    function warmIdle() {                                                 // the queue works in the browser's idle time; without idle callbacks (Safari), 3 ms after each frame
+      if (!self.active || !AC || !WQ.length) return;
+      if (!window.requestIdleCallback) { warm(3); return; }
+      if (!idleReq) idleReq = requestIdleCallback(idleWarm, { timeout: 250 });   // never idle: 2 ms every quarter second anyway
+    }
+    function idleWarm(dl) { idleReq = 0; warm(Math.max(2, Math.min(10, dl.timeRemaining()))); warmIdle(); }
+    function warm(ms) {                                                   // the head of the queue, until the budget is spent
+      if (!self.active || !AC) return;
+      var t0 = nowSec(), until = t0 + ms / 1000, nm, c, t;
+      while (WQ.length && nowSec() < until) {
+        nm = WQ[0];
+        if (BANK[nm]) { WQ.shift(); continue; }
+        c = CTX[nm] || (CTX[nm] = begin(nm));
+        if (drain(c, until)) { complete(c); CTX[nm] = null; WQ.shift(); ready(nm); }
+      }
+      t = nowSec(); renderMs += t - t0; if (t - until > overMax) overMax = t - until;
+    }
+    function want(nm, oneShot, r, k) {                                    // wanted before it is rendered: to the front of the queue, and a one-shot waits for it there
+      var i = WQ.indexOf(nm), p;
+      if (i !== 0) { if (i > 0) WQ.splice(i, 1); WQ.unshift(nm); }
+      if (!WANT[nm]) { WANT[nm] = 1; nWant++; misses++; }
+      if (oneShot) { p = PEND[nm] || (PEND[nm] = { r: 1, k: -1, t: -1 }); p.r = r || 1; p.k = k === undefined ? -1 : k; p.t = AC.currentTime; }
+    }
+    function ready(nm) {                                                  // just banked: a sound that waited for it plays now, unless it has gone stale
+      var p = PEND[nm], d;
+      if (WANT[nm]) { WANT[nm] = 0; nWant--; }
+      if (p && p.t >= 0) { d = AC.currentTime - p.t; p.t = -1; if (d <= 0.25) { if (d > lateMax) lateMax = d; play(nm, p.r, p.k); } else drops++; }
+    }
+    function mkBus(ctx) {                                                 // limiter → trim: a pile-up (a boss dying under a bomb) squashes rather than clips
+      var lim = ctx.createDynamicsCompressor(), o = ctx.createGain();      // the low threshold keeps the big blasts near 0.38, leaving the music's peaks (up to 0.78) room in the OS mix; the trim keeps the shots where they were
+      lim.threshold.value = -13; lim.knee.value = 2; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.15; o.gain.value = 0.59;
+      lim.connect(o); return [lim, o];
+    }
     function audioInit() {
       try {
-        AC = api.audio(); out = AC.createGain(); out.gain.value = 0.55; out.connect(AC.destination);
-        var n = AC.sampleRate; noiseBuf = AC.createBuffer(1, n, n);
-        var d = noiseBuf.getChannelData(0); for (var i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
-      } catch (e) { AC = null; }
+        AC = api.audio(); if (!AC) return;
+        if (bankSR !== AC.sampleRate) { BANK = {}; CTX = {}; bankSR = SR = AC.sampleRate; }
+        var c = mkBus(AC), i, g; bus = c[0]; busOut = c[1]; busOut.connect(AC.destination);
+        VOX = []; for (i = 0; i < NV; i++) { g = AC.createGain(); g.connect(bus); VOX.push({ g: g, s: null, end: 0, pri: 0 }); }
+        WQ = FIRST.slice(); for (i = 0; i < FXN.length; i++) if (WQ.indexOf(FXN[i]) < 0) WQ.push(FXN[i]);
+        WANT = {}; nWant = 0; PEND = {}; loopG = loopS = beamG = beamS = null; loopName = ''; gates = {};
+      } catch (e) { AC = null; bus = null; }
     }
-    function gate(name, gap) { if (!AC) return false; var t = AC.currentTime; if (gates[name] !== undefined && t - gates[name] < gap && t >= gates[name]) return false; gates[name] = t; return true; }
-    function tone(f0, f1, dur, vol, type, delay) {
+    function logSfx(i, r, k) { if (DBG && logN < NLOG) { LOGT[logN] = G ? G.t : 0; LOGN[logN] = i; LOGR[logN] = r; LOGK[logN] = k || 0; logN++; } }
+    function play(name, rate, k) {                                        // → true if it sounded. k: a given variant (the medal's rung), else one at random
+      if (!AC || !bus) return false;
+      var f = FX[name], fi = FXI[name], t = AC.currentTime, bufs = BANK[name], i, v, best = -1, free = -1, bs = 1e9, sc, alive = 0, nb, s, pr, at = t;
+      if (f.gap && gates[name] !== undefined && t - gates[name] < f.gap && t >= gates[name]) return false;
+      if (!bufs) { want(name, true, rate, k); return false; }
+      for (i = 0; i < NV; i++) {                                          // a free voice, else the least important one nearest its end, if it matters no more than this
+        v = VOX[i];
+        if (v.end <= t) { if (free < 0) free = i; continue; }
+        alive++; sc = v.pri * 100 + v.end - t;
+        if (v.pri <= f.p && sc < bs) { bs = sc; best = i; }
+      }
+      if (free >= 0) best = free; else if (best < 0) { drops++; return false; }
+      gates[name] = t; v = VOX[best]; nb = bufs.length;
+      if (!(k >= 0)) k = nb > 1 ? (LASTV[fi] + 1 + (pr0() * (nb - 1) | 0)) % nb : 0;
+      LASTV[fi] = k;
+      pr = (rate || 1) * (f.cents ? Math.pow(2, (pr0() * 2 - 1) * f.cents / 1200) : 1);
+      if (v.end > t) { steals++; alive--; at = t + 0.006; v.g.gain.setTargetAtTime(0, t, 0.0015); try { v.s.stop(at); } catch (e) {} }
+      s = AC.createBufferSource(); s.buffer = bufs[k]; s.playbackRate.value = pr; s.connect(v.g); v.g.gain.setValueAtTime(1, at); s.start(at);
+      v.s = s; v.end = at + bufs[k].duration / pr; v.pri = f.p;
+      alive += 1 + (loopS ? 1 : 0) + (beamS ? 1 : 0); if (alive > vMax) vMax = alive;
+      logSfx(fi, pr, k);
+      return true;
+    }
+    function unhook() { try { this.__g.disconnect(); } catch (e) {} }     // a stopped drone takes its gain with it
+    function droneOn(buf, t, lv, ramp) {                                  // a new drone on a gain of its own, its watchdog armed from the start
+      var g = AC.createGain(), s = AC.createBufferSource();
+      g.connect(bus); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(lv, t + ramp); g.gain.setTargetAtTime(0, t + 0.5, 0.05);
+      s.buffer = buf; s.loop = true; s.connect(g); s.__g = g; s.onended = unhook; s.start(t);
+      return s;
+    }
+    function droneOff(s, t, tau, after) {                                 // let a drone go: its own gain fades, its source stops once that is inaudible
+      var gn = s.__g.gain;
+      gn.cancelScheduledValues(t); gn.setValueAtTime(gn.value, t); gn.setTargetAtTime(0, t, tau);
+      try { s.stop(t + after); } catch (e) {}
+    }
+    function hum(name) {                                                  // every step the laser is held: start, switch or keep alive its drone
+      if (!AC || !bus) return;
+      var t = AC.currentTime, gn, lt, bufs, fresh;
+      humN = stepN;
+      if (loopName !== name) {
+        bufs = BANK[name]; if (!bufs) { want(name, false); return; }     // not rendered yet: it starts the first step it is
+        fresh = !loopS;
+        if (loopS) droneOff(loopS, t, 0.008, 0.06);                       // a new colour mid-beam: a quick crossfade
+        else if (t - loopT > 0.3) play('laserOn');
+        loopS = droneOn(bufs[0], t, 1, fresh ? 0.04 : 0.012); loopG = loopS.__g; loopName = name; loopKick = t; arcT = 0;
+        logSfx(FXI[name], 1);
+      }
+      loopT = t;
+      if (name === 'laserB' && t >= arcT) { play('arcB'); arcT = t + 0.06 + pr0() * 0.16; }   // blue thunder: its arcs land at random, never in a pattern
+      if (t - loopKick > 0.1) {                                           // the watchdog: no refresh for half a second of audio time and it goes quiet on its own
+        lt = t - loopKick > 0.45; loopKick = t; gn = loopG.gain;
+        gn.cancelScheduledValues(t); gn.setValueAtTime(lt ? gn.value : 1, t); if (lt) gn.linearRampToValueAtTime(1, t + 0.03);   // back from a stall: fade up, no click
+        gn.setTargetAtTime(0, t + 0.5, 0.05);
+      }
+    }
+    function beamSnd() {                                                  // every play step: the True Last Boss's lasers hum faintly while they charge and roar while they bite
+      if (!AC || !bus) return;
+      var lv = BEAM[2] ? 1 : BEAM[3] * 0.3, t = AC.currentTime, gn, bufs;
+      beamN = stepN;
+      if (!beamS) {
+        if (lv < 0.01) return;
+        bufs = BANK.beamHum; if (!bufs) { want('beamHum', false); return; }
+        beamS = droneOn(bufs[0], t, lv, 0.05); beamG = beamS.__g; beamLv = lv; beamKick = t; logSfx(FXI.beamHum, lv); return;
+      }
+      if (lv < 0.01) { beamOff(t); return; }
+      if (Math.abs(lv - beamLv) > 0.04 || t - beamKick > 0.1) {           // a new level, or the watchdog's refresh
+        gn = beamG.gain; gn.cancelScheduledValues(t); gn.setValueAtTime(gn.value, t); gn.setTargetAtTime(lv, t, lv > beamLv ? 0.01 : 0.04); gn.setTargetAtTime(0, t + 0.5, 0.05);
+        if (lv !== beamLv) logSfx(FXI.beamHum, lv);
+        beamLv = lv; beamKick = t;
+      }
+    }
+    function beamOff(t) { droneOff(beamS, t, 0.05, 0.4); beamS = beamG = null; beamLv = 0; logSfx(254, 0); }
+    function hush(force) {                                                // at the top of every step: a drone the last step did not keep alive fades out
+      stepN++;
       if (!AC) return;
-      try {
-        var t = AC.currentTime + (delay || 0), o = AC.createOscillator(), a = AC.createGain();
-        o.type = type || 'square'; o.frequency.setValueAtTime(f0, t); if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-        a.gain.setValueAtTime(vol, t); a.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        o.connect(a); a.connect(out); o.start(t); o.stop(t + dur + 0.02);
-      } catch (e) {}
+      var t = AC.currentTime;
+      if (loopS && (force || stepN - humN >= 2)) { droneOff(loopS, t, 0.015, 0.12); loopS = loopG = null; loopName = ''; logSfx(255, 0); }
+      if (beamS && (force || stepN - beamN >= 2)) beamOff(t);
     }
-    function noise(dur, vol, f0, f1, delay) {
-      if (!AC || !noiseBuf) return;
-      try {
-        var t = AC.currentTime + (delay || 0), s = AC.createBufferSource(), lp = AC.createBiquadFilter(), a = AC.createGain();
-        s.buffer = noiseBuf; s.loop = true; lp.type = 'lowpass'; lp.frequency.setValueAtTime(f0, t); lp.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur);
-        a.gain.setValueAtTime(vol, t); a.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        s.connect(lp); lp.connect(a); a.connect(out); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
-      } catch (e) {}
-    }
-    var sfx = {
-      shot: function () { if (gate('shot', 0.075)) tone(1400, 800, 0.03, 0.010, 'square'); },
-      laser: function () { if (gate('laser', 0.1)) tone(196, 185, 0.11, 0.016, 'sawtooth'); },
-      hit: function () { if (gate('hit', 0.06)) tone(880, 520, 0.03, 0.014, 'triangle'); },
-      boom: function () { if (gate('boom', 0.05)) { noise(0.22, 0.2, 2600, 180); tone(190, 45, 0.18, 0.12, 'square'); } },
-      bigBoom: function () { if (gate('bigBoom', 0.12)) { noise(0.8, 0.45, 2000, 70); tone(130, 28, 0.7, 0.3, 'sawtooth'); tone(61, 30, 0.9, 0.3, 'sine'); } },
-      bomb: function () { noise(2.2, 0.6, 5000, 50); tone(70, 24, 2.2, 0.55, 'sine'); tone(420, 38, 1.3, 0.2, 'sawtooth'); tone(880, 55, 0.5, 0.12, 'square'); },
-      pickup: function () { tone(523, 0, 0.07, 0.07, 'square'); tone(659, 0, 0.07, 0.07, 'square', 0.06); tone(784, 0, 0.07, 0.07, 'square', 0.12); tone(1047, 0, 0.14, 0.07, 'square', 0.18); },
-      extend: function () { for (var i = 0; i < 6; i++) tone(440 * Math.pow(1.189, i), 0, 0.09, 0.08, 'square', i * 0.07); },
-      medal: function () { if (gate('medal', 0.045)) tone(1760, 2100, 0.04, 0.018, 'triangle'); },
-      cancel: function () { for (var i = 0; i < 5; i++) tone(1200 + i * 220, 0, 0.06, 0.035, 'triangle', i * 0.035); },
-      chainBreak: function () { tone(330, 110, 0.2, 0.08, 'square'); },
-      death: function () { noise(1.1, 0.5, 3200, 90); tone(520, 36, 0.95, 0.3, 'sawtooth'); },
-      klaxon: function () { for (var i = 0; i < 6; i++) { tone(392, 392, 0.24, 0.13, 'sawtooth', i * 0.56); tone(294, 294, 0.24, 0.13, 'sawtooth', i * 0.56 + 0.28); } },
-      count: function () { tone(660, 0, 0.09, 0.08, 'square'); },
-      start: function () { tone(440, 0, 0.08, 0.08, 'square'); tone(880, 0, 0.16, 0.08, 'square', 0.08); },
-      pause: function () { tone(600, 0, 0.06, 0.06, 'square'); tone(400, 0, 0.08, 0.06, 'square', 0.07); }
+    var sfx = {};
+    (function () { FXN.forEach(function (k) { if (!FX[k].loop) sfx[k] = function (rate) { play(k, rate); }; }); })();
+    sfx.medal = function () {                                             // a run of citations climbs the ladder, then trills on its top two rungs; a pause starts it again
+      if (!AC) return;
+      var t = AC.currentTime, top = LADDER.length - 1, k = t - medalT < 0.45 ? (medalN < top ? medalN + 1 : top - 1) : 0;
+      if (play('medal', Math.pow(2, (pr0() * 2 - 1) * (k >= top - 1 ? 25 : 10) / 1200), k)) { medalN = k; medalT = t; }
     };
 
     /* ------------------------------------------------------------ pools (fixed capacity, nothing allocated while playing) */
@@ -81,7 +584,7 @@
     var PCOL = ['#ffffff', '#fcd34d', '#fb923c', '#e3625b', '#8ad4ff', '#a78bfa', '#34d399', '#9aa3b8', '#ff4fa3'];
     var NS = 140, sx_ = new Float32Array(NS), sy_ = new Float32Array(NS), svx = new Float32Array(NS), svy = new Float32Array(NS), sdm = new Float32Array(NS), sk = new Uint8Array(NS), sal = new Uint8Array(NS), sCur = 0;
     var NE = 64, EN = [], NK = 8, PK = [], NT = 20, TX = [], NR = 14, RG = [], NSP = 16, SP = [], i0;
-    for (i0 = 0; i0 < NE; i0++) EN.push({ on: false, type: '', def: null, x: 0, y: 0, x0: 0, vx: 0, vy: 0, hp: 0, mhp: 0, t: 0, ft: 0, ft2: 0, ft3: 0, ft4: 0, a: 0, a2: 0, a3: 0, path: 0, ty: 0, stay: 0, flash: 0, drop: '', n: 0, phase: 0, boss: false, dying: 0, fired: 0, hw: 0, hh: 0, lt: 0, shut: 0, tl: null });
+    for (i0 = 0; i0 < NE; i0++) EN.push({ on: false, type: '', def: null, x: 0, y: 0, x0: 0, vx: 0, vy: 0, hp: 0, mhp: 0, t: 0, ft: 0, ft2: 0, ft3: 0, ft4: 0, a: 0, a2: 0, a3: 0, path: 0, ty: 0, stay: 0, flash: 0, drop: '', n: 0, phase: 0, boss: false, dying: 0, fired: 0, hw: 0, hh: 0, lt: 0, shut: 0, tl: null, snd: false });
     var L2 = false, BSP = 1, HPM = 1, SM = 1;                        // the second loop: bullet speed (per step), enemy HP and score multipliers (per game)
     var BEAM = new Float32Array(6);                                   // the True Last Boss's two lasers: [angle0, angle1, lethal, alpha, x, y]
     for (i0 = 0; i0 < NK; i0++) PK.push({ on: false, kind: '', x: 0, y: 0, vx: 0, vy: 0, t: 0 });
@@ -105,11 +608,13 @@
       px[i] = x; py[i] = y; pvx[i] = vx; pvy[i] = vy; pl[i] = life; pml[i] = life; pc[i] = col; ps[i] = size;
     }
     function ring(x, y, r, vr, life, col) { for (var i = 0; i < NR; i++) if (!RG[i].on) { var o = RG[i]; o.on = true; o.x = x; o.y = y; o.r = r; o.vr = vr; o.life = o.ml = life; o.col = col; return; } }
-    function boom(x, y, size) {                                                         // size 1 popcorn .. 4 boss chunk
+    function boom(x, y, size, quiet) {                                                  // size 1 popcorn .. 4 boss chunk; quiet: a bigger sound already covers it
       var n = 5 + size * 5, k, a, v;
       for (k = 0; k < n; k++) { a = Math.random() * TAU; v = rnd(20, 60 + size * 45); spark(x, y, Math.cos(a) * v, Math.sin(a) * v, rnd(0.25, 0.4 + size * 0.15), (Math.random() * 4) | 0, 1 + ((Math.random() * (1 + size)) | 0)); }
       ring(x, y, 3, 60 + size * 40, 0.25 + size * 0.06, size > 2 ? '#fff' : '#fcd34d');
-      if (size > 2) { sfx.bigBoom(); G.shake = Math.max(G.shake, 0.35); } else sfx.boom();
+      if (size > 2) G.shake = Math.max(G.shake, 0.35);
+      if (quiet) return;
+      if (G.mode === 'ending') sfx.firework(); else if (size > 2) sfx.bigBoom(); else if (size > 1) sfx.boom(); else sfx.pop();
     }
     function floatText(s, x, y, col) { for (var i = 0; i < NT; i++) if (!TX[i].on) { var o = TX[i]; o.on = true; o.s = s; o.x = clamp(x, 30, W - 30); o.y = y; o.life = 0.9; o.col = col || '#fff'; return; } }
     function cancelBullets(toMedals) {
@@ -299,7 +804,7 @@
       L2 = loop === 2 || JUMP === 'tlb'; HPM = L2 ? 1.3 : 1; SM = L2 ? 2 : 1; BSP = 1; BEAM[2] = BEAM[3] = 0;
       G = { mode: 'play', t: 0, loop: L2 ? 2 : 1, stage: 1, st: 0, si: 0, script: null, hold: false, score: 0, hi: hi, lives: 3, bombs: 3, chain: 0, maxChain: 0, gauge: 0, cites: 0, continues: 0, kills: 0,
         weapon: 0, level: 1, speed: 0, extend: 0, paused: false, wipe: 0, flash: 1, shake: 0, cardT: 0, cardDur: 1, cardTitle: '', cardSub: '', warnT: 0, warnKind: 1, boss: null, contT: 0,
-        who: '', say: '', sayT: 0, sayN: 0, endT: 0, scroll: 0, girderY: -200, girderSide: 0, girderOn: false, tauntT: 0, tauntI: 0, rank: 0, tlb: false, tlbLv: 1, ghosts: 0, bPeak: 0, revenge: 0 };
+        who: '', say: '', sayT: 0, sayN: 0, endT: 0, scroll: 0, girderY: -200, girderSide: 0, girderOn: false, tauntT: 0, tauntI: 0, rank: 0, tlb: false, tlbLv: 1, ghosts: 0, bPeak: 0, revenge: 0, rankQ: 0 };
       G.script = scriptFor(1);
       clearPools(); P.x = W / 2; P.y = H + 30; P.inv = 3; P.dead = 0; P.bombT = 0; P.holdT = 0; P.shotT = 0; P.laser = false;
     }
@@ -325,18 +830,18 @@
       if (G.weapon === 0) { n = 1 + L * 2; for (k = 0; k < n; k++) { a = -Math.PI / 2 + (k / (n - 1) - 0.5) * (0.2 + L * 0.2); playerShot(P.x, P.y - 12, Math.cos(a) * 540, Math.sin(a) * 540, 1, 0); } P.cd = 0.085; }
       else if (G.weapon === 1) { n = 1 + L; for (k = 0; k < n; k++) { a = -Math.PI / 2 + (k / (n - 1) - 0.5) * 0.5; playerShot(P.x + (k - (n - 1) / 2) * 5, P.y - 10, Math.cos(a) * 480, Math.sin(a) * 480, 1.2, 1); } P.cd = 0.1; }
       else { n = L < 3 ? 2 : L; for (k = 0; k < n; k++) playerShot(P.x + (k - (n - 1) / 2) * 7, P.y - 12, 0, -720, 0, 2); P.cd = 0.065; }
-      sfx.shot();
+      play(SHOTS[G.weapon]);
     }
     function fireLaser(dt) {
-      var L = G.level - 1, i, e, hitAny = false, hw, dps;
+      var L = G.level - 1, i, e, hitAny = false, lit = false, hw, dps;
       P.top = -10; P.nLock = 0;
       if (G.weapon === 0) {                                             // DoDonPachi beam: stops at the first thing it meets
         hw = [5, 6, 7, 9][L]; dps = [64, 84, 106, 130][L]; var best = null, bb = -1e9;
         for (i = 0; i < NE; i++) { e = EN[i]; if (e.on && e.y < P.y && Math.abs(e.x - P.x) < e.hw + hw && e.y + e.hh > bb && e.y > -e.hh) { bb = e.y + e.hh; best = e; } }
-        if (best) { P.top = Math.min(P.y - 14, bb - 2); hurt(best, dps * dt, true); hitAny = best.mhp >= 36; if (Math.random() < dt * 40) spark(P.x + rnd(-hw, hw), P.top, rnd(-80, 80), rnd(20, 120), 0.25, 2, 2); }
+        if (best) { lit = true; P.top = Math.min(P.y - 14, bb - 2); hurt(best, dps * dt, true); hitAny = best.mhp >= 36; if (Math.random() < dt * 40) spark(P.x + rnd(-hw, hw), P.top, rnd(-80, 80), rnd(20, 120), 0.25, 2, 2); }
       } else if (G.weapon === 2) {                                      // sniper beam: goes through everything
         hw = [3, 3, 4, 5][L]; dps = [48, 62, 78, 96][L];
-        for (i = 0; i < NE; i++) { e = EN[i]; if (e.on && e.y - e.hh < P.y && Math.abs(e.x - P.x) < e.hw + hw && e.y > -e.hh) { hurt(e, dps * dt, true); if (e.mhp >= 36) hitAny = true; if (Math.random() < dt * 25) spark(P.x, e.y + e.hh, rnd(-90, 90), rnd(-20, 60), 0.2, 6, 2); } }
+        for (i = 0; i < NE; i++) { e = EN[i]; if (e.on && e.y - e.hh < P.y && Math.abs(e.x - P.x) < e.hw + hw && e.y > -e.hh) { lit = true; hurt(e, dps * dt, true); if (e.mhp >= 36) hitAny = true; if (Math.random() < dt * 25) spark(P.x, e.y + e.hh, rnd(-90, 90), rnd(-20, 60), 0.2, 6, 2); } }
       } else {                                                          // thunder: arcs to the nearest few, no aiming required
         var want = 2 + L, n = 0, k, d, j;
         for (i = 0; i < NE; i++) {
@@ -347,12 +852,12 @@
           while (k > 0 && lockD[k - 1] > d) { lockD[k] = lockD[k - 1]; lockI[k] = lockI[k - 1]; k--; }
           lockD[k] = d; lockI[k] = i; if (n < want) n++;
         }
-        P.nLock = n; dps = [60, 78, 96, 116][L] / Math.sqrt(n || 1);
+        P.nLock = n; lit = n > 0; dps = [60, 78, 96, 116][L] / Math.sqrt(n || 1);
         for (j = 0; j < n; j++) { e = EN[lockI[j]]; hurt(e, dps * dt, true); if (e.on && e.mhp >= 36) hitAny = true; if (Math.random() < dt * 20) spark(e.x + rnd(-e.hw, e.hw), e.y + rnd(-e.hh, e.hh), rnd(-60, 60), rnd(-60, 60), 0.2, 4, 2); }
       }
       for (i = 0; i < NE; i++) { e = EN[i]; if (e.on && Math.abs(e.x - P.x) < e.hw + 16 && Math.abs(e.y - P.y) < e.hh + 18) hurt(e, 45 * dt, true); }   // the aura bites too
       if (hitAny) { if (G.chain > 0) G.gauge = Math.max(G.gauge, 0.5); P.contact += dt; if (P.contact > 0.22) { P.contact = 0; chainUp(1); addScore(10 * Math.round(mult()) * SM); } }
-      sfx.laser();
+      hum(LASERS[G.weapon]); if (lit) sfx.laserHit();
     }
     function useBomb() {
       if (!G || G.mode !== 'play' || G.paused || G.bombs <= 0 || P.bombT > 0 || P.dead > 0) return;
@@ -362,7 +867,7 @@
     function killPlayer() {
       if (P.inv > 0 || P.dead > 0 || P.bombT > 0 || G.mode !== 'play') return;
       if (GOD) { G.ghosts++; P.inv = 1; return; }                                  // god mode counts the death it would have been, then a second's grace
-      boom(P.x, P.y, 3); ring(P.x, P.y, 4, 260, 0.5, '#8ad4ff'); sfx.death(); cancelBullets(false); chainBreak();
+      boom(P.x, P.y, 3, true); ring(P.x, P.y, 4, 260, 0.5, '#8ad4ff'); sfx.death(); cancelBullets(false); chainBreak();
       G.lives--; G.shake = 0.8; P.dead = 1.3; P.laser = false; G.rank = Math.max(0, G.rank - 0.3);
       if (G.level > 1) { G.level--; pickup('P', P.x, P.y - 10); }
       if (G.lives < 0) { G.lives = 0; G.mode = 'continue'; G.contT = 9.99; P.dead = 1e9; }
@@ -372,7 +877,7 @@
     function updatePlayer(dt) {
       if (P.inv > 0) P.inv -= dt;
       if (P.bombT > 0) updateBomb(dt);
-      if (P.dead > 0) { P.dead -= dt; if (P.dead <= 0) respawn(); return; }
+      if (P.dead > 0) { P.dead -= dt; if (P.dead <= 0) { respawn(); sfx.respawn(); } return; }
       if (botOn) botThink();
       var firing = keys.fire || touch.on;
       if (firing) P.holdT += dt; else P.holdT = 0;
@@ -411,13 +916,14 @@
     }
     function pickup(kind, x, y) { for (var i = 0; i < NK; i++) if (!PK[i].on) { var o = PK[i]; o.on = true; o.kind = kind; o.x = x; o.y = y; o.vx = Math.random() < 0.5 ? -26 : 26; o.vy = 24; o.t = 0; return; } }
     function collect(o) {
-      var s = '', c = '#fff';
-      if (o.kind === 'W') { var w = Math.floor(o.t / 1.1) % 3; c = WEAP[w].col; if (w === G.weapon) { if (G.level < 4) { G.level++; s = 'POWER UP'; } else { addScore(5000); s = '5000'; } } else { G.weapon = w; s = WEAP[w].name; } }
-      else if (o.kind === 'P') { c = '#fb923c'; if (G.level < 4) { G.level++; s = 'POWER UP'; } else { addScore(5000); s = '5000'; } }
-      else if (o.kind === 'S') { c = '#8ad4ff'; if (G.speed < 3) { G.speed++; s = 'SPEED UP'; } else { addScore(3000); s = '3000'; } }
-      else if (o.kind === 'B') { if (G.bombs < 6) { G.bombs++; s = 'BOMB +1'; } else { addScore(5000); s = '5000'; } }
-      else { G.lives++; s = '1UP'; c = '#34d399'; sfx.extend(); }
-      o.on = false; sfx.pickup(); floatText(s, o.x, o.y - 10, c); ring(o.x, o.y, 4, 120, 0.3, c);
+      var s = '', c = '#fff', snd = 'power', r = 1;
+      if (o.kind === 'W') { var w = Math.floor(o.t / 1.1) % 3; c = WEAP[w].col; if (w === G.weapon) { if (G.level < 4) { G.level++; s = 'POWER UP'; } else { addScore(5000); s = '5000'; snd = 'bonus'; } } else { G.weapon = w; s = WEAP[w].name; snd = 'weapon'; r = [1, 1.26, 1.5][w]; } }
+      else if (o.kind === 'P') { c = '#fb923c'; if (G.level < 4) { G.level++; s = 'POWER UP'; } else { addScore(5000); s = '5000'; snd = 'bonus'; } }
+      else if (o.kind === 'S') { c = '#8ad4ff'; snd = 'speed'; if (G.speed < 3) { G.speed++; s = 'SPEED UP'; } else { addScore(3000); s = '3000'; snd = 'bonus'; } }
+      else if (o.kind === 'B') { snd = 'bombUp'; if (G.bombs < 6) { G.bombs++; s = 'BOMB +1'; } else { addScore(5000); s = '5000'; snd = 'bonus'; } }
+      else { G.lives++; s = '1UP'; c = '#34d399'; snd = 'extend'; }
+      if (snd === 'power') r = Math.pow(2, (G.level - 2) / 6);            // each power level a whole tone higher; a colour change is R, B, G up a major triad
+      o.on = false; play(snd, r); floatText(s, o.x, o.y - 10, c); ring(o.x, o.y, 4, 120, 0.3, c);
     }
     function updateItems(dt) {
       var i, o, d, dx, dy, alive = P.dead <= 0 && G.mode === 'play';
@@ -469,7 +975,7 @@
       for (var i = 0; i < NE; i++) {
         var e = EN[i]; if (e.on) continue;
         var d = ET[type]; e.on = true; e.type = type; e.def = d; e.boss = !!d.boss; e.hp = e.mhp = d.hp * (d.tlb ? 1 : HPM); e.hw = d.hw; e.hh = d.hh;
-        e.path = path || 'down'; e.x = e.x0 = x; e.y = -d.hh - 4; e.ty = ty || 90; e.vx = 0; e.vy = 0; e.t = 0; e.flash = 0; e.drop = drop || ''; e.phase = 0; e.dying = 0; e.lt = 0; e.fired = 0; e.shut = 0;
+        e.path = path || 'down'; e.x = e.x0 = x; e.y = -d.hh - 4; e.ty = ty || 90; e.vx = 0; e.vy = 0; e.t = 0; e.flash = 0; e.drop = drop || ''; e.phase = 0; e.dying = 0; e.lt = 0; e.fired = 0; e.shut = 0; e.snd = false;
         e.ft = rnd(0.5, 1.1); e.ft2 = rnd(1.2, 2); e.ft3 = 2; e.ft4 = 1; e.a = Math.random() * TAU; e.a2 = W / 2; e.a3 = 0; e.n = i; e.stay = type === 'sat' ? 9 : 6.5; e.tl = L2 && d.taunts2 ? d.taunts2 : d.taunts;
         if (path === 'arcR') { e.x = -14; e.y = e.ty; } else if (path === 'arcL') { e.x = W + 14; e.y = e.ty; }
         if (e.boss) { e.y = -d.hh - 10; e.ty = type === 'impact' ? 118 : type === 'hive' ? 96 : 84; e.a = 0; e.ft = 1; }
@@ -479,25 +985,25 @@
     }
     function hurt(e, d, fromLaser) {
       if (!e.on || e.dying > 0) return;
-      if (e.boss && (e.y < e.ty - 1 || e.lt > 0 || e.shut > 0)) return;         // no damage while it makes its entrance, catches its breath or seals its core
-      e.hp -= d; e.flash = 0.05; if (!fromLaser) sfx.hit();
+      if (e.boss && (e.y < e.ty - 1 || e.lt > 0 || e.shut > 0)) { if (!fromLaser && P.bombT <= 0) sfx.deflect(); return; }   // no damage while it makes its entrance, catches its breath or seals its core
+      e.hp -= d; e.flash = 0.05; if (!fromLaser && P.bombT <= 0) { if (e.boss) sfx.hitHard(); else sfx.hit(); }            // under a bomb, the bomb is the sound
       if (e.hp > 0) return;
       if (e.boss && e.phase < e.def.phases.length - 1) {
         e.phase++; e.hp = e.mhp = e.def.phases[e.phase] * (e.def.tlb ? 1 : HPM); e.lt = 1.8; e.ft = 0.6; e.ft2 = 1.5; e.ft3 = 2.5; e.ft4 = 1.2; e.a = 0; e.shut = 0; BEAM[2] = BEAM[3] = 0;
         var n = cancelBullets(true); addScore((Math.round(10000 * mult() / 10) * 10 + n * 100) * SM); chainUp(10);
-        boom(e.x, e.y, 4); boom(e.x - 30, e.y + 10, 3); boom(e.x + 30, e.y - 6, 3); G.shake = 0.7; G.flash = Math.max(G.flash, 0.5);
+        boom(e.x, e.y, 4, true); boom(e.x - 30, e.y + 10, 3, true); boom(e.x + 30, e.y - 6, 3, true); G.shake = 0.7; G.flash = Math.max(G.flash, 0.5); sfx.phaseBreak();
         floatText('PHASE BREAK', e.x, e.y + e.hh + 14, '#fcd34d'); say(e.def.name, e.def.breaks[e.phase - 1] || '...');
-        if ((e.type === 'impact' && e.phase === 2) || e.type === 'hive') for (var k = 0; k < 6; k++) boom(e.x + Math.cos(k / 6 * TAU) * 80, e.y + Math.sin(k / 6 * TAU) * 80, 3);
+        if ((e.type === 'impact' && e.phase === 2) || e.type === 'hive') for (var k = 0; k < 6; k++) boom(e.x + Math.cos(k / 6 * TAU) * 80, e.y + Math.sin(k / 6 * TAU) * 80, 3, true);
         return;
       }
-      if (e.boss) { e.dying = e.type === 'hive' ? 6 : e.type === 'impact' ? 4.2 : 2.6; e.hp = 0; cancelBullets(true); BEAM[2] = BEAM[3] = 0; say(e.def.name, e.def.last); api.music('silence'); return; }
+      if (e.boss) { e.dying = e.type === 'hive' ? 6 : e.type === 'impact' ? 4.2 : 2.6; e.hp = 0; cancelBullets(true); BEAM[2] = BEAM[3] = 0; say(e.def.name, e.def.last); api.music('silence'); sfx.bossBreak(); return; }
       kill(e);
     }
     function kill(e) {
       var d = e.def, k, s = Math.round(d.score * mult() * SM / 10) * 10;
       e.on = false; G.kills++; chainUp(1); addScore(s);
       if (L2 && P.dead <= 0 && e.y < P.y - 24 && Math.abs(e.x - P.x) + Math.abs(e.y - P.y) > 48) {   // ura mode: the dead take a shot at you, more of them as the chain and the rank grow
-        var a = aimAt(e.x, e.y), x = G.chain >= 250 ? 2 : G.chain >= 100 ? 1 : 0; G.revenge++;
+        var a = aimAt(e.x, e.y), x = G.chain >= 250 ? 2 : G.chain >= 100 ? 1 : 0; G.revenge++; sfx.revenge();
         if (G.rank > 0.7) x++;
         if (d.hp >= 10) { fireB(e.x, e.y, a, 150, 4); fan(e.x, e.y, a, 2 + x, 0.3 + x * 0.1, 128, 0); }
         else fan(e.x, e.y, a, 1 + x, 0.1 * x, 150, 4);
@@ -556,7 +1062,8 @@
         if (e.ft <= 0) { e.ft = 0.09; boom(e.x + rnd(-e.hw, e.hw), e.y + rnd(-e.hh, e.hh), (Math.random() * 3 | 0) + 1); medal(e.x + rnd(-e.hw, e.hw), e.y + rnd(-e.hh, e.hh), true); }
         if (e.dying <= 0) {
           e.on = false; G.boss = null; G.shake = 1.2; G.flash = 1; addScore(Math.round(e.def.score * mult() * SM / 10) * 10); chainUp(20);
-          for (k = 0; k < 10; k++) boom(e.x + rnd(-e.hw, e.hw), e.y + rnd(-e.hh, e.hh), 4);
+          for (k = 0; k < 10; k++) boom(e.x + rnd(-e.hw, e.hw), e.y + rnd(-e.hh, e.hh), 4, true);
+          sfx.bossDie();
           for (k = 0; k < e.def.cit; k++) medal(e.x + rnd(-60, 60), e.y + rnd(-40, 40), true);
           if (e.type === 'hive' || (e.type === 'impact' && !L2)) { G.mode = 'outro'; G.endT = 0; api.stinger('victory'); }
           else if (e.type === 'impact') tlbWarning();                              // the second loop is not over. it has a True Last Boss
@@ -577,7 +1084,8 @@
       if (e.type === 'hive') { updateHive(e, dt); return; }
       if (e.type === 'typesetter') {
         if (e.phase === 0) {
-          var cyc = e.a % 6.6;
+          var cyc = e.a % 6.6, cr = cyc >= 3.2 && cyc < 6.2;
+          if (cr && !e.snd) sfx.ding(); e.snd = cr;
           if (cyc < 3.2) { if (e.ft <= 0) { e.ft = 0.52; e.fired++; var cx = e.x + (e.fired % 2 ? -72 : 72); fan(cx, e.y + 34, aimAt(cx, e.y + 34), 3, 0.4, 116, 4); } }
           else if (cyc < 6.2 && e.ft2 <= 0) {                                       // the carriage return: a broken line swept across the page
             e.ft2 = 0.07; e.fired++;
@@ -623,9 +1131,12 @@
       return false;
     }
     function wedge(e, t0, ph, on, dt) {                                            // the two lasers: a V that swings and opens. It fades in dim (harmless) before it bites
+      var was = BEAM[3], bit = BEAM[2];
       BEAM[0] = t0 - ph; BEAM[1] = t0 + ph; BEAM[4] = e.x; BEAM[5] = e.y + 8;
       BEAM[3] = on ? Math.min(1, BEAM[3] + dt) : Math.max(0, BEAM[3] - dt * 3);
       BEAM[2] = on && BEAM[3] >= 1 ? 1 : 0;
+      if (on && was <= 0) sfx.beamWarn();                                          // heard charging, then heard biting
+      if (BEAM[2] && !bit) sfx.beamFire();
     }
     var CELLX = [-96, 96, -48, 48];                                                // the four needle cells, fired in an order that crosses the hive
     function cellVolley(e, n, spd) {                                               // an aimed needle stream from the next cell, two strays either side of it
@@ -655,7 +1166,7 @@
         if (e.ft2 <= 0) { e.ft2 = 0.6; burst(e.x, e.y + 24, aimAt(e.x, e.y + 24) + rnd(-0.05, 0.05), 2, 230, 40, 5); }
       } else {                                                                    // everything at once, and the core only opens between volleys
         cyc = e.a % 7.4; open = cyc >= 4.8;
-        if (open === (e.shut > 0)) { e.shut = open ? 0 : 1; if (open) { floatText('CORE EXPOSED', e.x, e.y + 62, '#34d399'); sfx.cancel(); } else sfx.pause(); }
+        if (open === (e.shut > 0)) { e.shut = open ? 0 : 1; if (open) { floatText('CORE EXPOSED', e.x, e.y + 62, '#34d399'); sfx.coreOpen(); } else sfx.coreShut(); }
         if (open) {
           wedge(e, (BEAM[0] + BEAM[1]) / 2, (BEAM[1] - BEAM[0]) / 2, false, dt);
           if (e.ft3 <= 0) { e.ft3 = 0.11; e.a3 += 0.3 * Math.sin(e.a * 0.8); for (k = 0; k < 4; k++) fireB(e.x, e.y + 8, e.a3 + k * TAU / 4, 118, 4); }
@@ -753,7 +1264,7 @@
         s = G.script[G.si++];
         if (s[1] === 'card') card(s[2], s[3], s[4]);
         else if (s[1] === 'msg') say(s[2], s[3]);
-        else if (s[1] === 'midboss') { G.hold = true; G.boss = spawnEnemy('typesetter', W / 2); G.tauntT = 1.5; G.tauntI = 0; card('MID-BOSS', 'THE TYPESETTER', 2.6); }
+        else if (s[1] === 'midboss') { G.hold = true; G.boss = spawnEnemy('typesetter', W / 2); G.tauntT = 1.5; G.tauntI = 0; card('MID-BOSS', 'THE TYPESETTER', 2.6); sfx.alert(); }
         else if (s[1] === 'warn') { G.hold = true; G.warnT = 4.4; sfx.klaxon(); api.music('silence'); }
         else if (s[1] === 'next') { G.stage = 2; G.script = scriptFor(2); G.si = 0; G.st = 0; }
         else for (i = 0; i < NSP; i++) if (!SP[i].on) { o = SP[i]; o.on = true; o.type = s[1]; o.x = s[2]; o.path = s[3]; o.n = s[4] || 1; o.gap = s[5] || 0; o.dx = s[6] || 0; o.drop = s[7] || ''; o.ty = s[8] || 90; o.timer = 0; o.k = 0; break; }
@@ -795,12 +1306,12 @@
     }
     function step(dt) {
       var i;
-      G.t += dt; updateFx(dt);
-      if (G.mode === 'continue') { var was = Math.ceil(G.contT); G.contT -= dt; if (Math.ceil(G.contT) !== was) sfx.count(); if (G.contT <= 0) { G.mode = 'gameover'; G.contT = 0; sfx.chainBreak(); } return; }
+      G.t += dt; updateFx(dt); hush();
+      if (G.mode === 'continue') { var was = Math.ceil(G.contT); G.contT -= dt; if (Math.ceil(G.contT) !== was) sfx.count(Math.pow(2, (Math.ceil(G.contT) - 9) / 12)); if (G.contT <= 0) { G.mode = 'gameover'; G.contT = 0; sfx.gameOver(); } return; }
       if (G.mode === 'gameover') { G.contT += dt; return; }
       if (G.mode === 'ending') { G.endT += dt; if (Math.random() < dt * 2.2) { var fx = rnd(30, W - 30), fy = rnd(40, H * 0.6); boom(fx, fy, 2); for (i = 0; i < 5; i++) medal(fx, fy, false); } updateItems(dt); return; }
       if (G.mode === 'outro') {
-        G.endT += dt;
+        G.endT += dt; if (G.endT > 2.6 && G.endT - dt <= 2.6) sfx.flyOff();
         if (G.endT > 2.6) { P.y -= (120 + (G.endT - 2.6) * 500) * dt; P.laser = false; P.top = -10; P.nLock = 0; P.flame += dt; if (G.endT > 3.5) G.flash = Math.min(1, G.flash + dt * 3); }
         else updatePlayer(dt);
         updateShots(dt); updateItems(dt);
@@ -810,10 +1321,12 @@
       if (L2) {                                                                  // RANK: climbs with a held chain, falls with a death; everything shoots a little faster for it
         if (G.chain > 0) G.rank = Math.min(1, G.rank + dt * (0.008 + Math.min(G.chain, 400) / 40000)); else G.rank = Math.max(0, G.rank - dt * 0.015);
         BSP = 1.3 + 0.12 * G.rank;
+        var q = (G.rank * 4) | 0; if (q > G.rankQ) { G.rankQ = q; sfx.rankUp(); } else if (G.rank < G.rankQ * 0.25 - 0.08) G.rankQ = q;   // each new quarter of rank is announced; falling back re-arms it
       } else BSP = 1;
       if (bLive > G.bPeak) G.bPeak = bLive;
       runScript(dt); updatePlayer(dt);
       for (i = 0; i < NE; i++) if (EN[i].on) updateEnemy(EN[i], dt);
+      beamSnd();
       updateShots(dt); updateBullets(dt); updateItems(dt);
       if (G.chain > 0) { G.gauge -= dt / 2.6; if (G.gauge <= 0) chainBreak(); }
     }
@@ -837,6 +1350,7 @@
       saveHi();
       api.music('silence');
       if (L2) { if (!api.stinger('tenure')) api.stinger('ending'); } else api.stinger('ending');
+      sfx.stamp();
       if (bombBtn) bombBtn.hidden = true; if (pauseBtn) pauseBtn.hidden = true; if (exitBtn) exitBtn.hidden = true;
       var c = G.continues, L = api.links || {}, year = new Date().getFullYear();
       var quip = L2 ? 'YOU MAY NOW BE WRONG FOR THE REST OF YOUR CAREER.' : c === 0 ? 'ACCEPTED WITHOUT A SINGLE RESUBMISSION. NOBODY WILL BELIEVE YOU.' : c < 3 ? 'ACCEPTED AFTER ' + c + ' RESUBMISSION' + (c > 1 ? 'S' : '') + '. ABOUT AVERAGE, FRANKLY.' : 'ACCEPTED AFTER ' + c + ' RESUBMISSIONS. PERSISTENCE IS ALSO A METHOD.';
@@ -1334,7 +1848,7 @@
       if (!(dtr > 0)) dtr = 0; else if (dtr > 0.1) dtr = 0.1;
       if ((frameN++ % 12) === 0) { checkVis(); checkSize(); }
       if (G.paused) {                                                       // paused or scrolled away: one last frame, then stop burning the machine
-        acc = 0; lastT = 0;
+        acc = 0; lastT = 0; hush(true);
         if (dirty) paint();
         sleepLoop(false);
         return;
@@ -1345,6 +1859,7 @@
       while (acc >= STEP && n < MAXSTEP) { acc -= STEP; n++; try { step(STEP); } catch (err) { oops(err); acc = 0; break; } }
       if (acc > 0.75) acc = 0;
       paint();
+      if (nWant) warm(10); else warmIdle();                                // a sound is waiting for its render: the queue gets 10 ms a frame until it is done
     }
     function wake() {                                                       // anything that could need a frame calls this; it is free if we are awake
       if (!self.active || finished || !G) return;
@@ -1415,7 +1930,7 @@
         var on = !api.musicWanted();
         api.setMusicWanted(on);
         if (on && (G.mode === 'play' || G.mode === 'continue') && G.warnT <= 0 && !(G.boss && G.boss.dying > 0)) api.music(G.tlb && G.boss ? bossMusic() : stageMusic());   // not over a WARNING, a dying boss or an ending
-        floatText(on ? 'MUSIC ON' : 'MUSIC OFF', W / 2, H - 140, '#8ad4ff');
+        floatText(on ? 'MUSIC ON' : 'MUSIC OFF', W / 2, H - 140, '#8ad4ff'); sfx.pause();
       } catch (e) {}
     }
     function ptDown(e) {
@@ -1450,7 +1965,7 @@
     }
     function onBlur() { keys.l = keys.r = keys.u = keys.d = keys.fire = keys.focus = false; touch.on = false; touch.id = -1; touch.count = 0; }
     function onVis() {
-      if (document.hidden) { onBlur(); saveHi(); if (G && !G.paused) { G.paused = true; autoPaused = true; dirty = true; } }
+      if (document.hidden) { onBlur(); saveHi(); hush(true); if (G && !G.paused) { G.paused = true; autoPaused = true; dirty = true; } }
       else { checkVis(); wake(); }
       lastT = 0;
     }
@@ -1528,10 +2043,21 @@
         reset: function () { if (G) { G.ghosts = 0; G.bPeak = 0; } },
         rank: function (v) { if (G) G.rank = clamp(+v || 0, 0, 1); return G ? G.rank : 0; },
         pos: function (x, y) { P.x = clamp(x, 9, W - 9); P.y = clamp(y, 18, H - 12); },
+        give: function (kind, colour) { if (G) collect({ on: true, kind: kind, t: (colour || 0) * 1.1, x: P.x, y: P.y - 20 }); },   // as if the ship flew into a W (colour 0-2), P, S, B or 1
         sim: function (sec) {                                                  // advance the fixed-step simulation without waiting for frames (a loaded box starves rAF)
           if (!G || G.paused || !scr) return 0; var n = Math.round(sec / STEP), k;
           for (k = 0; k < n && G && G.mode !== 'ending'; k++) { if (G.wipe > 0) G.wipe = Math.max(0, G.wipe - STEP * 1.3); try { step(STEP); } catch (err) { oops(err); break; } }
           dirty = true; paint(); return k * STEP;
+        },
+        sfx: {                                                                 // the sound bank, for offline measurement
+          names: function () { return FXN.slice(); },
+          spec: function (n) { var f = FX[n]; return f ? { p: f.p, gap: f.gap || 0, len: f.len, pk: f.pk, lp: f.lp, n: f.n || 1, cents: f.cents || 0, loop: !!f.loop } : null; },
+          render: function (n, rate) { return FX[n] ? renderRaw(n, rate || 48000) : null; },
+          play: function (n, rate) { return FX[n] && !FX[n].loop ? play(n, rate) : false; },
+          bus: function (ctx) { var c = mkBus(ctx); c[1].connect(ctx.destination); return c[0]; },
+          log: function () { var o = [], i; for (i = 0; i < logN; i++) o.push([+LOGT[i].toFixed(3), LOGN[i] === 255 ? 'hush' : LOGN[i] === 254 ? 'beamOff' : FXN[LOGN[i]], +LOGR[i].toFixed(4), LOGK[i]]); return o; },
+          stats: function () { var n = 0; for (var k in BANK) if (BANK.hasOwnProperty(k)) n++; return { vMax: vMax, drops: drops, steals: steals, misses: misses, lateMs: Math.round(lateMax * 1000), overMs: +(overMax * 1000).toFixed(2), plays: logN, warm: n + '/' + FXN.length, renderMs: Math.round(renderMs * 1000), rate: bankSR }; },
+          reset: function () { logN = 0; vMax = 0; drops = 0; steals = 0; misses = 0; lateMax = 0; overMax = 0; }
         }
       };
     }
@@ -1552,6 +2078,7 @@
         layout();
         applyJump();
         dbgInstall();
+        warm(30);                                                           // the head of the queue now, behind the white flash
         sfx.start();
         if (G.mode === 'play' && G.warnT <= 0) api.music(stageMusic());
         lastT = 0; acc = 0; frameN = 0;
@@ -1569,8 +2096,9 @@
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
       overlay = styleEl = scr = sx = g = endEl = bombBtn = pauseBtn = exitBtn = null;
-      try { if (out) out.disconnect(); } catch (e) {}
-      out = null; gates = {};                                               // the AudioContext belongs to the host: never close it
+      hush(true); try { if (busOut) busOut.disconnect(); } catch (e) {}
+      if (idleReq && window.cancelIdleCallback) cancelIdleCallback(idleReq); idleReq = 0;
+      bus = busOut = loopG = null; VOX = []; gates = {};                   // the AudioContext belongs to the host: never close it. The rendered bank is kept
       try { clearPools(); } catch (e) {}
       G = null; tgtName = ''; tgtLines = null; sayKey = ''; sayPanel = null; bandKey = ''; bandLines = null; released = false; finished = false; dirty = true;
       botOn = false; L2 = false; BSP = 1; BEAM[2] = BEAM[3] = 0;
