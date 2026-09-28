@@ -38,16 +38,16 @@ files, so nothing to license). Each game has a ♫ toggle in its HUD.
   sections, 3 minutes 33 seconds, looping seamlessly. It is written by hand as
   note data (`composeOverworld()` in `riff.js`), with a hook, call and response
   between flute and bell, a moving bass and sections that thin out and build.
-  A `dread` value rises linearly, reaching 0.7 at 90 seconds (`DREAD_TIME`,
-  `FP_AT` in `quest.js`), at which point the camera blends into first person
-  and F or a click throws rebuttals; two hits retire a reviewer for 22 seconds.
-  The score stays one continuous piece. Tempo dips to 96 around dread 0.4 and
+  A `dread` value rises linearly with play time, reaching 0.7 at 90 seconds
+  (`DREAD_TIME` in `quest.js`), and the world and the score darken with it.
+  The camera stays in third person throughout: first person starts only when
+  all eight facts are found and the endgame begins. The score stays one continuous piece. Tempo dips to 96 around dread 0.4 and
   then accelerates to 160. Whole four-bar phrases are re-read through darker
   modes as dread crosses 0.3, 0.5, 0.7 and 0.85, never single wrong notes.
   Palm-muted bass stabs, a tritone drone, heavy drums and the odd shriek phase
-  in over the back half. Five reviewer hits in first person end the game with a
-  GTA-style REJECTED! screen; Space, F or a click resubmits and resets dread.
-  The sky, fog, lights, trees and water follow the same `dread` value.
+  in over the back half. The sky, fog, lights, trees and water follow the same
+  `dread` value. Reviewers speed up with dread but never outrun the player, and
+  after a REVISIONS demand is closed nobody can catch him for 1.5 seconds.
 
 ## The title sequence
 
@@ -69,7 +69,9 @@ is 4×4 ordered dithering, with no gradients and no alpha blending.
 
 ## The endgame
 
-Collecting all eight facts forces first person and starts the reckoning.
+Collecting all eight facts switches to first person and starts the reckoning. F or a click
+throws rebuttals, and hearts appear. Running out of hearts shows a GTA-style REJECTED!
+screen, and Space, F or a click retries the fight.
 
 | Module | What it is |
 | --- | --- |
@@ -89,7 +91,7 @@ the true ending returns to loop 1.
 
 | Part | What changes |
 | --- | --- |
-| Overworld (`quest.js`) | MASTER QUEST: the town is mirrored left to right, nine faster reviewers, first person at 57 s, three hearts, no floating markers (a read building's door and sign turn green), a gold LOOP 2 pill, harsher reviewer lines, and a green Link cap on the player. Reviewers are capped below the player's speed and there is a 6-second grace period after PRESS START. |
+| Overworld (`quest.js`) | MASTER QUEST: the town is mirrored left to right, nine faster reviewers, dread that peaks sooner (0.7 at 57 s), three hearts in the fight, no floating markers (a read building's door and sign turn green), a gold LOOP 2 pill, harsher reviewer lines, and a green Link cap on the player. Reviewers are capped below the player's speed and there is a 6-second grace period after PRESS START. |
 | Boss (`magician.js`, `window.QuestMagician`) | REVIEWER 2, TYPE 0002, in the mould of the Magician from The House of the Dead 2: a hovering, horned figure of crimson sinew and bone plates with red tendrils. He teleports between rooftops and the street, throws burning manuscripts (shoot them down), dashes, and sends a line of ground fire. Only the three CONFLICTS OF INTEREST count, the pink flesh his chest doors and hip plates uncover when he winds up, after a dash, and when a manuscript is shot down. REBUTTAL ACCEPTED, then a blast-off in the departmental shuttle. There is no BFG in this loop. |
 | Shooter (`shmup.js`) | A DoDonPachi DaiOuJou second loop: revenge bullets from every kill, faster and denser waves, rank, doubled scores and harder bosses. After THE IMPACT FACTOR comes the True Last Boss, PEER REVIEW, a Hibachi homage in five phases, then the TENURED! true ending. |
 
@@ -130,8 +132,25 @@ adds the second loop's tracks through the plug-in hook (`Riff.addStyle`,
 
 `Riff.render(style, seconds, opts)` renders any style offline into an `AudioBuffer`
 without disturbing live playback, and `Riff.analyse(buffer)` returns peak, RMS and
-onset figures. Nobody has listened to the tracks yet; offline renders for
-auditioning are written to `.dev/tmp/render/`.
+onset figures. Offline renders for auditioning are written to `.dev/tmp/render/`.
+
+### Sound effects
+
+All synthesised at runtime, like the music, and rendered once into buffers so
+playing them is cheap.
+
+- **First person** (`assets/js/fpsfx.js`, `window.FPSFX`): one shared kit for the
+  player's gun, the BFG, being hit, REJECTED!, THE EDITOR-IN-CHIEF and REVIEWER 2.
+  It crosses DOOM's gritty 11 kHz, 8-bit effects with House of the Dead's
+  arcade gun cracks, flesh hits and weak-point tones. `FPSFX.kit(audioContext)`
+  returns the kit; `.dev/sfx-contract.md` lists every sound, its level and its use.
+- **Shooter** (inside `shmup.js`): a Mega Drive kit after M.U.S.H.A. Aleste,
+  with a small 4-operator FM voice and the PSG's square and noise channels. The
+  three weapon colours sound different, and `?shmupdbg=1` exposes the bank as
+  `__qs.sfx`.
+
+The third-person town keeps its square-wave blips and Banjo-style voices, and the
+fountain level keeps its own sounds.
 
 ## Test hooks
 
@@ -141,8 +160,11 @@ Query-string hooks on the home page, all optional:
 `?shmupgod=1` `?shmupdbg=1` `?cave=1` `?cavequiz=1` `?cavecow=1` `?cavegod=1` `?timescale=1..20`
 `?dread=0.71` `?maxhits=1` `?bossdbg=1` `?loop=2`
 
+`?dread=` only sets the starting dread; it no longer switches to first person.
+Use `?endgame=1&maxhits=1` to reach REJECTED!.
+
 `?shmupstage=tlb` needs `?loop=2`, and `?shmupstage=ending` shows the true ending in loop 2.
-`?bossdbg=1` exposes `window.__qb` for whichever boss is active, and `?shmupdbg=1`
+`?bossdbg=1` exposes `window.__qb` for REVIEWER 2 (THE EDITOR-IN-CHIEF has no handle), and `?shmupdbg=1`
 exposes `window.__qs` for the shooter.
 
 ## Testing the game

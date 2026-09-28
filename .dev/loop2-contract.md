@@ -59,7 +59,7 @@ Dry academic humour throughout: peer review, editors, grant finance, impact fact
 
 ## The host API (`api`, built in quest.js — read the "endgame" section near the bottom of quest.js)
 Everything in `.dev/endgame-contract.md` still holds (THREE, root, view, scene, camera, renderer, WORLD, EYE, colliders,
-collide, safeSpot, player, pstate, places, fountain, npcs, flat, boxMan, pose, labelSprite, blip, speak, grunt, audio,
+collide, safeSpot, player, pstate, places, fountain, npcs, flat, boxMan, pose, labelSprite, speak, audio,
 showToast, notice, hurt, heal, hearts, teleport, lookAt, shake, setHud, lockEnvironment, setWeapon, music, musicWanted,
 setMusicWanted, stinger, isOver, params, links, onBossDefeated, restart). New or changed:
 ```

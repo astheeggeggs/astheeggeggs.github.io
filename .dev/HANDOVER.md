@@ -1,5 +1,26 @@
 # Handover — astheeggeggs.github.io (updated 2026-09-27; the 2026-09-21 text follows below)
 
+## 2026-09-28: SFX upgrade + first person only after eight facts (built, tested, committed, not pushed)
+Duncan (after playing): "upgrade the sound effects for each section. For the shmup section, take inspiration from
+m.u.s.h.a aleste. Similarly for the fps section - take inspiration from doom and house of the dead for sound
+effects. Finally - we currently zoom into fps mode after a little while. Let's stop doing that and only do it after
+the 8 items are collected." He likes the music: riff.js and riff2.js are unchanged (hash-checked).
+Built by workflow `wf_754b5f5b-ee7` (session 142cdeff; journal under its subagents/workflows folder), then review,
+verify, fix and an integration pass that was green in both loops end to end.
+- `assets/js/fpsfx.js` (window.FPSFX): shared first-person kit, 49 sounds, contract and as-shipped wiring in
+  `.dev/sfx-contract.md`. Wired into quest.js, boss.js and magician.js (tagged groups, stopAll per group).
+- `shmup.js`: its own Mega Drive FM/PSG bank (about 47 effects), idle-time warm-up, a 16-voice cap; `__qs.sfx` under
+  ?shmupdbg=1.
+- quest.js: first person only via startEndgame; dread, the music and the world still darken over time. Reviewers
+  can no longer be shot, so the ACCEPTED counter is gone from index.md. CAUGHT_REST (1.5 s without catches after a
+  demand closes) applies to BOTH loops, a deliberate change to loop 1 for fairness at dread 1 in third person.
+Duncan auditioned the two short montages on 2026-09-28: "they sound good to me". Audition `.dev/tmp/render/sfx-fps/_short-montage.m4a` and
+`.dev/tmp/render/sfx-shmup/_short-montage.m4a` (full montages and per-sound files beside them; per-host mixes in
+`sfx-quest/`, `sfx-boss/`, `.dev/tmp/magsfx/render/`). Known limits: music and SFX run on separate AudioContexts and
+can sum past full scale for a fraction of a millisecond (the real fix is a shared final limiter via riff.js, which
+was off limits); the first play of a big kit sound can block 60-130 ms if not warmed (both bosses warm during the
+card); boss.js has no `__qb` debug handle.
+
 ## 2026-09-27: the second loop is BUILT, reviewed, integration-tested and COMMITTED (not pushed)
 Duncan's 2026-09-26 request (verbatim in `.dev/loop2-contract.md`, with his two addenda) is done: the title
 cinematic and MR. E are gone, the overworld theme is rewritten by hand, and the SECOND LOOP exists end to end
@@ -22,7 +43,7 @@ never returns early (it burns its whole budget); `.dev/tmp/integ/fast.mjs` has a
 commit `237ea8f` was squashed into them. Nothing is pushed; push only when Duncan asks. Never add Co-Authored-By.
 The preview artifact is not republished (only on request).
 
-**Open, for Duncan to judge (nobody has played or listened):**
+**Open, for Duncan to judge (he has since played it and called the soundtrack great):**
 - Music: all verified by measurement only. Audition files: `.dev/tmp/render/*.m4a` (overworld, master quest,
   title, magician, space2 with the full form, true last boss).
 - Magician time-to-kill: 177 game-s with a scripted aimer at 100 HP (target 90-180), about 133 s simulated for a

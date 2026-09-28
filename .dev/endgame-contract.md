@@ -64,13 +64,11 @@ api.flat(hex)             // MeshLambertMaterial
 api.boxMan(opts)          // box character ~2.9 units tall. opts {suit, hair, tie, glasses:false, angry:true}. userData {la, ra, ll, rl} limb meshes pivoted at shoulder/hip
 api.pose(char, {walk, speed, air})
 api.labelSprite(text, bgCss, fgCss)   // pixel-font THREE.Sprite sign
-api.blip(freq, seconds, waveform)     // tiny UI beep
 api.speak(voice, char)                // Banjo-Kazooie syllable blip; voice = {base: Hz, wave, spread}
-api.grunt()                           // the Doom-guy "urgh"
 api.audio()                           // shared AudioContext for your own synthesised SFX
 api.showToast(text)                   // green pixel toast, top centre, ~2.6 s
 api.notice({title, text, voice})      // non-blocking typed caption box at the bottom with gibberish voice
-api.hurt(n) → bool                    // player takes n hits: red flash + grunt + heart lost; has 0.9 s i-frames; shows REJECTED! at 0 hearts. Returns false if ignored.
+api.hurt(n) → bool                    // player takes n hits: red flash + pain grunt and heart sting (FPSFX); has 0.9 s i-frames; shows REJECTED! at 0 hearts. Returns false if ignored.
 api.heal(n), api.hearts()             // hearts are 5 by default
 api.teleport(x, z)                    // to nearest safe spot
 api.lookAt(x, y, z)                   // turn the first-person view to a world point
