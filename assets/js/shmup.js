@@ -11,10 +11,10 @@
    layer and new taunts, and after THE IMPACT FACTOR a WARNING and the True Last Boss, PEER REVIEW (a Hibachi homage in
    five phases: washing machine, needle streams, whip lasers, rank curtain, everything; it is its own continue checkpoint),
    then the true ending, TENURED!, whose PLAY AGAIN goes back to loop 1 (api.restart()).
-   Sound: every effect is Mega Drive FM + PSG synthesis rendered in this file (the audio section says how); the music is riff.js / riff2.js.
+   Sound: every effect is written for and rendered on a model of the Mega Drive's YM2612 in this file (the audio section says how); the music is riff.js / riff2.js.
    Test hooks: ?shmupstage=2|mid|boss|tlb|ending  ?shmupgod=1 (counts the deaths it spares)
    ?shmupdbg=1 (window.__qs: info(), bot(on), phase(n), pos(x, y), give(kind, colour), rank(0..1), sim(seconds), reset(), and __qs.sfx: names(), spec(name),
-   render(name, rate), play(name, rate), bus(ctx), log(), stats(), reset())  (and the host's ?shmup=1 ?loop=2 ?timescale=N)
+   render(name, rate, parts, raw), ym(score, seconds, lfo), play(name, rate), bus(ctx), log(), stats(), reset())  (and the host's ?shmup=1 ?loop=2 ?timescale=N)
    ============================================================================= */
 (function () {
   'use strict';
@@ -27,407 +27,293 @@
     function rnd(a, b) { return a + Math.random() * (b - a); }
     function mk(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
-    /* ------------------------------------------------------------ audio: Mega Drive sound effects, synthesised once
-       In the idiom of Compile's M.U.S.H.A. (Mega Drive, 1990): the console's two sound chips, in plain JS. FM is the YM2612's:
-       four operators wired in one of its eight algorithms, operator 1 fed back into itself, an envelope per operator (attack,
-       decay, sustain level, second decay, release). The PSG is the SN76489's: squares on its 10-bit divider and noise from its
-       LFSR (Sega's 16-bit register, taps 0 and 3; periodic mode for buzz), volume in 2 dB steps written once per 60 Hz frame,
-       the way a sound driver writes it. Each effect ends on a DC trap, a gentle low-pass and 9-bit quantisation.
-       Effects are rendered once into AudioBuffers by a queue, the likeliest-needed first: 30 ms of it when the shooter starts
-       (under the white flash), then in the browser's idle time (2-10 ms an idle period; without idle callbacks, as in Safari,
-       3 ms after each frame). A voice renders in slices of about CH samples and the queue stops between slices when its time
-       is up, so a budget overruns by one slice at most (about 0.05 ms once the code is warm, a millisecond or two while it is
-       still cold). Nothing renders inside a keypress: a sound wanted before it is ready jumps the queue, the queue gets 10 ms a
-       frame until it is done, and the sound plays then if that is within a quarter of a second (a drone starts the first step
-       it is ready). Sounds play as BufferSources, a random variant (never the same one twice running; the medal's variant is
-       its rung) with a little random detune (their own PRNG: the game's Math.random sequence is untouched), through a fixed
-       pool of NV voices (the cap: a full pool steals its least important voice, or drops the new sound) → one bus → a limiter
-       → the host's AudioContext. Two drones sit beside the pool, each engagement on a gain of its own: the player's held laser
-       and the True Last Boss's lethal beams. The simulation keeps them alive: a step without them fades them out, and a gain
-       watchdog silences them if the frames stop coming altogether. A drone's loop holds tones and buzz that repeat exactly
-       every 0.5 s (under a faint steady hiss in the red and green lasers); anything with a rhythm of its own, like the blue
-       beam's arcs, is a one-shot. */
-    var SR = 48000, SIN = new Float32Array(4096), rr = null, pr0 = rng(0x51f15e), FXN = [], FXI = {}, BANK = {}, bankSR = 0, renderMs = 0, XF = 0.04, CH = 1024;
+    /* ------------------------------------------------------------ audio: the effects on a Yamaha YM2612, rendered once
+       Written the way a Sega sound designer wrote effects for SMPS or GEMS around 1990 (Compile's M.U.S.H.A. Aleste is the
+       model) and played on a model of the Mega Drive's FM chip, in plain JS. Nothing is sampled. The music is riff.js's.
+       THE CHIP, from the documented behaviour (Yamaha's OPN manuals, Nemesis's YM2612 measurements): a channel is four
+       operators wired in one of the eight algorithms, operator 1 fed back into itself (the average of its last two outputs;
+       levels 1-7 = pi/16 .. 4pi). An operator is a 20-bit phase counter stepped by ((F-number << block) >> 1 + DT1) x MUL
+       (MUL 0 = 1/2); its top 10 bits read a quarter-wave log-sine table, its envelope attenuation (10 bits of 0.09375 dB,
+       plus TL x 0.75 dB and the LFO's tremolo) is added in the log domain, and an exp table turns the sum into a 13-bit
+       magnitude with a sign. A modulator's output, halved, is added to the next operator's 10-bit phase. The envelope steps
+       every third sample on a global counter: rate = 2R + (keycode >> (3 - KS)) (release 4RR + 2 + the same), capped at 63,
+       with the documented counter shift and eight-step increment pattern per rate; the attack is attenuation +=
+       (~attenuation x increment) >> 4 (rates 62-63 jump), decay and release are linear, SL 1-14 = 3 dB a step, 15 = 93 dB.
+       The LFO (3.8-69 Hz) drives vibrato (PMS) and tremolo (AMS); channel 3's special mode gives each operator a frequency.
+       The output rate is 7.67 MHz / 144 = 53,267 Hz with nothing interpolated, so a bright patch aliases as the chip does.
+       A channel's carriers are summed, clipped to 14 bits and cut to 9 for the DAC, which has the Model 1's ladder effect:
+       the step between -1 and 0 is eight times the others (+4 at or above zero, -3 below), crossover distortion that grits
+       every quiet tail. Channel 6 may instead be the DAC: an 8-bit sample (synthesised here) written at 8 kHz (drivers used
+       8-13 kHz) and held. The SN76489's noise channel (16-bit LFSR, taps 0 and 3, volume in 2 dB steps a frame) seasons a few
+       effects. The Model 1's analogue stage is a first-order low-pass at about 3.4 kHz; after it the sum is brought to the
+       AudioContext's rate by linear interpolation (the chip's own aliasing is in the 53,267 Hz stream and stays; a zero-order
+       hold would fold images of its own, at 53,267 Hz ± f, into the band), then a DC trap and the level.
+       THE DRIVER: an effect is a score of tracks, one per channel, stepped at 60 Hz as SMPS steps them: notes with lengths in
+       frames (a new note re-keys, note fill keys off early, a tie does not re-key), the volume as TL on the carriers, SMPS
+       modulation (after `wait` frames, every `speed` frames add `change` to the F-number, `steps` times, then reverse) for the
+       zippering sweeps, and per-frame pitch and volume tables for the lasers' growl (their periods divide 30 frames).
+       Effects are rendered once into AudioBuffers by a queue, the likeliest-needed first: 30 ms of it when the shooter
+       starts (under the white flash), then in the browser's idle time (2-10 ms an idle period; without idle callbacks,
+       as in Safari, 3 ms after each frame). A channel renders in slices of about CH samples (the DAC synthesises its
+       sample a block ahead of what it writes) and the queue stops between slices when its time is up, so a budget
+       overruns by one slice at most. Nothing renders inside a keypress: a sound wanted before it is ready jumps the
+       queue, the queue gets 10 ms a frame until it is done, and the sound plays then if that is within a quarter of a
+       second (a drone starts the first step it is ready). Sounds play as BufferSources, a random variant (never the
+       same one twice running; the medal's variant is its rung) with a little random detune (their own PRNG: the game's
+       Math.random sequence is untouched), through a fixed pool of NV voices (the cap: a full pool steals its least
+       important voice, or drops the new sound) → one bus → a limiter and a soft ceiling → the host's AudioContext. Two
+       drones sit beside the pool, each engagement on a gain of its own: the player's held laser and the True Last
+       Boss's lethal beams. The simulation keeps them alive: a step without them fades them out, and a gain watchdog
+       silences them if the frames stop coming. A drone's loop is about 0.5 s, cut within one period of its lowest tone
+       where the waves meet in phase; anything with a rhythm of its own, like the blue beam's arcs, is a one-shot.
+       THE MIX: the music leads (the mix meter in .dev/tmp/mixmeter: K-weighted 400 ms windows of each stream as heard):
+       in the median window the sustained effects sit 14.5 dB under the space score in loop 1, 10 under space2 and 12
+       under the True Last Boss's score. The held fire is lowest: each shot colour about 25 dB under the score, each
+       laser drone 21-23; the hit confirmations above them, most of their loudness in 1.5-5 kHz so they are heard in
+       that band; kills and explosions under the music; the one-off events at or under its level (the klaxon and a
+       boss's break within 2 dB of it, a bomb 4-5 dB and a boss's death 6-7 dB under). Each sound's `pk` is its level,
+       because the bus is linear up to its last stage: a -6 dB trim ahead of the limiter keeps every single sound under
+       its threshold, and the soft ceiling after it (linear to 0.35, never above 0.42) only shaves the peaks of the
+       loudest (the second loop's hit, a bomb, a boss's death) and of pile-ups, for under 0.1 dB of loudness, so a score
+       peak has room. The second loop's scores (space2, tlb) are 8-9 dB brighter in that band than loop 1's, so the hits
+       there play louder (`l2`): the bank holds a louder copy of each of their variants for the second loop, a copy
+       rather than a gain so that the logged variant is what was heard. Even so, about 30% of a loop-2 boss's hits
+       (hitHard) fall more than 6 dB under the tlb score's brightest passage in that band: a boss's hits fill most of a
+       fight's windows, so their level is the fight's level, and louder puts the music behind them again (3.5 dB louder
+       leaves 8% under and takes 2.7 dB off the music's lead). Music and effects play on separate contexts, so an effect
+       landing on a score peak can still sum past 1.0 for a sample. */
+    var SR = 48000, rr = null, pr0 = rng(0x51f15e), FXN = [], FXI = {}, BANK = {}, bankSR = 0, renderMs = 0, XF = 0.04, CH = 1024;
     var AC = null, bus = null, busOut = null, VOX = [], NV = 16, loopG = null, loopS = null, loopName = '', loopT = -9, loopKick = 0, arcT = 0, stepN = 0, humN = 0, gates = {}, medalN = 0, medalT = -9, LASTV = null;
     var beamG = null, beamS = null, beamN = 0, beamLv = 0, beamKick = 0, WQ = [], CTX = {}, WANT = {}, nWant = 0, PEND = {};
     var vMax = 0, drops = 0, steals = 0, misses = 0, lateMax = 0, overMax = 0, NLOG = 40000, LOGT = DBG ? new Float32Array(NLOG) : null, LOGN = DBG ? new Uint8Array(NLOG) : null, LOGR = DBG ? new Float32Array(NLOG) : null, LOGK = DBG ? new Uint8Array(NLOG) : null, logN = 0;
-    (function () { for (var i = 0; i < 4096; i++) SIN[i] = Math.sin(i / 4096 * TAU); })();
     function rng(seed) {                                                  // mulberry32; its state lives in a typed array so a call allocates nothing
       var st = new Int32Array(1); st[0] = seed;
       return function () { var s = st[0] = st[0] + 0x6D2B79F5 | 0, t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
     }
     function hash(s) { for (var h = 2166136261, i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h; }
-    function cv(p, t) {                                                   // a piecewise-linear curve [t0, v0, t1, v1, ...], held at both ends
-      if (!p) return 0; var n = p.length, i;
-      if (t <= p[0]) return p[1];
-      for (i = 2; i < n; i += 2) if (t < p[i]) return p[i - 1] + (p[i + 1] - p[i - 1]) * (t - p[i - 2]) / (p[i] - p[i - 2]);
-      return p[n - 1];
+    /* the chip's tables. FS: the output rate; FR: samples a 60 Hz driver frame; M1: the Model 1's output low-pass (Hz) */
+    var FS = 7670453 / 144, FR = FS / 60, M1 = 3400, PSGA = 64;
+    var LSIN = new Uint16Array(256), EXPT = new Uint16Array(256), EGI = new Uint8Array(512), EGSH = new Uint8Array(64), DTT = new Uint8Array(96);
+    var LFON = [109, 78, 72, 68, 63, 45, 9, 6], PMSC = [0, 3.4, 6.7, 10, 14, 20, 40, 80], AMSH = [8, 3, 1, 0];   // LFO: samples a step (128 steps a cycle); PMS: cents; AMS: shift of the 0-126 tremolo
+    var ALGM = [[0, 1, 2, 4], [0, 0, 3, 4], [0, 0, 2, 5], [0, 1, 0, 6], [0, 1, 0, 4], [0, 1, 1, 1], [0, 1, 0, 0], [0, 0, 0, 0]], ALGC = [8, 8, 8, 8, 10, 14, 14, 15];   // per algorithm: which operators modulate operators 2-4 (bit 0 = op 1), and the carriers
+    (function () {
+      var i, r, k, lo = ['01010101', '01011101', '01110111', '01111111'], hi = ['11111111', '11121112', '12121212', '12221222'];
+      for (i = 0; i < 256; i++) { LSIN[i] = Math.round(-Math.log(Math.sin((i + 0.5) / 256 * Math.PI / 2)) / Math.LN2 * 256); EXPT[i] = Math.round((Math.pow(2, i / 256) - 1) * 1024); }
+      for (r = 0; r < 64; r++) { EGSH[r] = r < 44 ? 11 - (r >> 2) : 0; for (k = 0; k < 8; k++) EGI[r * 8 + k] = r < 2 ? 0 : r < 48 ? +lo[r & 3][k] : r < 60 ? +hi[r & 3][k] << (r - 48 >> 2) : 8; }
+      DTT.set([0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 8, 8, 8, 8,     // DT1 in phase steps by keycode (Yamaha's table in Hz at 8 MHz / 0.053 Hz)
+        1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 8, 8, 9, 10, 11, 12, 13, 14, 16, 16, 16, 16,
+        2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 8, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 20, 22, 22, 22, 22]);
+    })();
+    function nfb(m, bs) {                                                 // a note (MIDI number, fractions allowed) → [block, F-number], the way a driver's note table sets it; bs lowers the block for sweep headroom
+      var b = clamp(Math.floor(m / 12) - 1 - (bs || 0), 0, 7), n = Math.round(440 * Math.pow(2, (m - 69) / 12) * 1048576 / FS / Math.pow(2, b - 1));
+      while (n > 2047 && b < 7) { b++; n = Math.round(n / 2); }
+      return [b, clamp(n, 1, 2047)];
     }
-    function nf(m) { return 440 * Math.pow(2, (m - 69) / 12); }
-    function dbk(r) { return Math.pow(10, -r / 20 / SR); }                  // a decay rate in dB/s as a per-sample multiplier
-    /* the FM voice. v: {f Hz, d s, a algorithm 0-7, fb feedback 0-7, op: up to four [ratio, level, attack s, decay dB/s,
-       sustain dB, sustain decay dB/s, release dB/s, detune cents], p: pitch curve in semitones, st: pitch stepped per 60 Hz
-       frame, off: key-off s, vib [Hz, cents], am [Hz, depth], g}. An operator's level is an amplitude for a carrier and a
-       modulation index in radians for a modulator; a sustain level of 0 dB or more means no sustain stage.
-       Every renderer works in slices: it renders from where it stopped until the first control-rate boundary CH samples on,
-       keeps its state in its job (j[5]) and returns false; true when the voice is done. */
-    var FBK = [0, 1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2];              // feedback 1-7 = pi/16 .. 4pi of phase, here in cycles
-    var ALGM = [[0, 1, 2, 4], [0, 0, 3, 4], [0, 0, 2, 5], [0, 1, 0, 6], [0, 1, 0, 4], [0, 1, 1, 1], [0, 1, 0, 0], [0, 0, 0, 0]], ALGC = [8, 8, 8, 8, 10, 14, 14, 15];
-    function ctl(E, S, EM, keyOff) {                                      // envelope stages move at control rate; within one, amp = amp * m + a per sample
-      for (var j = 0, k, st; j < 4; j++) {
-        k = j * 8; st = S[j];
-        if (st === 9) { EM[j] = 0; EM[j + 4] = 0; continue; }
-        if (keyOff && st < 3) st = 3;
-        if (st === 0 && E[k + 7] >= 1) { E[k + 7] = 1; st = 1; }
-        if (st === 1 && E[k + 7] <= E[k + 4]) st = 2;
-        S[j] = st; EM[j] = st === 0 ? 1 : st === 1 ? E[k + 3] : st === 2 ? E[k + 5] : E[k + 6]; EM[j + 4] = st === 0 ? E[k + 2] : 0;
-      }
+    function hzfb(hz, b) {                                                // a frequency from a given block up (the drones), to the nearest F-number step
+      var n = Math.round(hz * 1048576 / FS / Math.pow(2, b - 1));
+      while (n > 2047 && b < 7) { b++; n = Math.round(n / 2); }
+      return [b, clamp(n, 1, 2047)];
     }
-    function fmR(b, t0, v, J) {
-      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), j, o, k, f, t, T = SIN, M = ALGM[v.a || 0], C = ALGC[v.a || 0], Z = J[5], E, S, EM, D;
-      if (N <= 0) return true;
-      if (!Z) {                                                           // the first slice: the operators' constants, per operator 8 slots: ratio, level, attack step, decay, sustain, decay 2, release, amplitude
-        E = new Float64Array(32); S = new Int8Array(4); EM = new Float64Array(8); D = new Float64Array(7); J[5] = Z = [E, S, EM, D];
-        for (j = 0; j < 4; j++) {
-          o = v.op[j]; S[j] = 9; if (!o) continue; k = j * 8;
-          E[k] = o[0] * Math.pow(2, (o[7] || 0) / 1200); E[k + 1] = C >> j & 1 ? o[1] : o[1] / TAU; E[k + 2] = o[2] > 0 ? 1 / (o[2] * SR) : 0;
-          E[k + 3] = dbk(o[3] || 0); E[k + 4] = Math.pow(10, (o[4] === undefined || o[4] >= 0 ? -120 : o[4]) / 20); E[k + 5] = dbk(o[5] === undefined ? o[3] || 0 : o[5]); E[k + 6] = dbk(o[6] || 90);
-          S[j] = o[2] > 0 ? 0 : 1; E[k + 7] = o[2] > 0 ? 0 : 1;
+    /* the driver. A track {p: patch, t: start s, n: steps, v: volume (TL units on the carriers), vs: volume slide a frame, m: modulation
+       [wait, speed, change, steps], f: note fill (frames), b: block shift, x3: channel 3 special mode (semitones per operator),
+       w / a: per-frame pitch (F-number) / volume tables, cycled}. A step is [note, frames, volume?] (note 0 = a rest; a note may be
+       [block, F-number] given as {hz, blk}) or a command {v, vs, m, f, tie}. seq() turns a track into its per-frame registers. */
+    function seq(tr) {
+      var st = tr.n, nf = 0, i, j, s, f, g;
+      for (i = 0; i < st.length; i++) if (st[i].length) nf += st[i][1];
+      var K = new Int8Array(nf + 1), FN = new Int16Array(nf * 4), BK = new Int8Array(nf * 4), VO = new Uint8Array(nf), x3 = tr.x3 || [0, 0, 0, 0], w = tr.w, a = tr.a;
+      var vol = tr.v || 0, vs = tr.vs || 0, fill = tr.f || 0, m = tr.m, tie = 0, mw = 0, mc = 0, mn = 0, ms = 0, mo = 0, mk = 0, fr = 0, on = 0, nb = [], o;
+      for (i = 0; i < st.length; i++) {
+        s = st[i];
+        if (!s.length) { if (s.v !== undefined) vol = s.v; if (s.vs !== undefined) vs = s.vs; if (s.m !== undefined) m = s.m; if (s.f !== undefined) fill = s.f; if (s.tie) tie = 1; continue; }
+        if (s[2] !== undefined) vol = s[2];
+        if (s[0]) {
+          for (j = 0; j < 4; j++) nb[j] = s[0].hz ? hzfb(s[0].hz * Math.pow(2, x3[j] / 12), s[0].blk) : nfb(s[0] + x3[j], tr.b);
+          if (!tie) { K[fr] = 1; mo = 0; if (m) { mw = m[0]; ms = m[1]; mc = m[2]; mn = m[3]; mk = 0; } }
+          on = 1;
+        } else if (on) { K[fr] = 2; on = 0; }
+        tie = 0;
+        for (f = 0; f < s[1]; f++, fr++) {
+          if (f && s[0] && fill && f === s[1] - fill) K[fr] = 2;
+          g = w ? w[fr % w.length] : 0;
+          for (j = 0; j < 4; j++) { o = nb[j] || [0, 1]; BK[fr * 4 + j] = o[0]; FN[fr * 4 + j] = clamp(o[1] + mo + g, 1, 2047); }
+          vol = clamp(vol + (fr ? vs : 0), 0, 127); VO[fr] = clamp(vol + (a ? a[fr % a.length] : 0), 0, 127);
+          if (m && s[0]) { if (mw > 0) mw--; else if (--ms <= 0) { ms = m[1]; mo += mc; if (++mk >= mn) { mk = 0; mc = -mc; } } }   // the modulation moves the next frame
         }
       }
-      E = Z[0]; S = Z[1]; EM = Z[2]; D = Z[3];                            // D: where it stopped (sample, the four phases, the feedback history)
-      var fb = FBK[v.fb || 0] / 2, g = v.g === undefined ? 1 : v.g, cr = v.st ? Math.round(SR / 60) : 32, off = v.off === undefined ? N + 1 : Math.round(v.off * SR), one = v.op.length === 1 && (C & 1);
-      var l0 = E[1], l1 = E[9], l2 = E[17], l3 = E[25], r0 = E[0], r1 = E[8], r2 = E[16], r3 = E[24];
-      var m10 = M[1] & 1, m20 = M[2] & 1, m21 = M[2] >> 1 & 1, m30 = M[3] & 1, m31 = M[3] >> 1 & 1, m32 = M[3] >> 2 & 1, c0 = C & 1, c1 = C >> 1 & 1, c2 = C >> 2 & 1, c3 = C >> 3 & 1;
-      var x0 = E[7], x1 = E[15], x2 = E[23], x3 = E[31], e0 = 0, e1 = 0, e2 = 0, e3 = 0, a0 = 0, a1 = 0, a2 = 0, a3 = 0, i0 = 0, i1 = 0, i2 = 0, i3 = 0;
-      var n = D[0], p0 = D[1], p1 = D[2], p2 = D[3], p3 = D[4], h0 = D[5], h1 = D[6], nY = n + CH, y, o0, o1, o2, o3, gg = g, vb = v.vib, tr = v.am, cc = 0;
+      if (on) K[nf] = 2;
+      return { nf: nf, K: K, FN: FN, BK: BK, VO: VO };
+    }
+    function kcode(b, n) { return b << 2 | (n >> 10 & 1) << 1 | (n & 1024 ? (n & 896 ? 1 : 0) : ((n & 896) === 896 ? 1 : 0)); }   // block and the F-number's top bits: the rate key scale and DT1's column
+    function ymInit(tr) {
+      var p = tr.p, s0 = Math.round(tr.t * FS);
+      return { q: seq(tr), alg: p[0], fs: p[1] ? 10 - p[1] : 0, ams: p[2] || 0, pms: p[3] || 0, op: p.slice(4, 8), lfo: tr.lfo === undefined ? -1 : tr.lfo, s0: s0, n: s0, nx: s0, fr: 0,
+        ph: new Int32Array(4), at: new Int32Array([1023, 1023, 1023, 1023]), es: new Int8Array([4, 4, 4, 4]), rt: new Uint8Array(16), sl: new Int32Array(4), tl: new Int32Array(4),
+        ea: new Int32Array([4092, 4092, 4092, 4092]), inc: new Int32Array(4), fn: new Int32Array(4), bk: new Int32Array(4), kc: new Int32Array(4), amv: 0, pmv: 0, ls: -1, h0: 0, h1: 0 };
+    }
+    function ymInc(Z) {                                                   // the phase generator: F-number (bent by the LFO), block, DT1, MUL → a step of the 20-bit counter
+      for (var j = 0, o, fn, d, x; j < 4; j++) {
+        o = Z.op[j]; fn = Z.fn[j]; if (Z.pmv) fn = Math.round(fn * Math.pow(2, PMSC[Z.pms] * Z.pmv / 1200));
+        d = o[1] & 3 ? DTT[((o[1] & 3) - 1) * 32 + Z.kc[j]] : 0;
+        x = ((fn << Z.bk[j]) >> 1) + (o[1] & 4 ? -d : d) & 0x1FFFF;
+        Z.inc[j] = o[0] ? x * o[0] : x >> 1;
+      }
+    }
+    function ymAtt(Z) { for (var j = 0; j < 4; j++) Z.ea[j] = Math.min(1023, Z.at[j] + Z.tl[j] + (Z.op[j][9] ? Z.amv : 0)) << 2; }
+    function ymFrame(Z) {                                                 // a driver frame: key on / off, the frequency registers, the carriers' volume, the envelope rates
+      var q = Z.q, f = Z.fr, g = Math.min(f, q.nf - 1), k = f <= q.nf ? q.K[f] : 0, car = ALGC[Z.alg], j, o, ks;
+      for (j = 0; j < 4; j++) {
+        o = Z.op[j]; Z.fn[j] = q.FN[g * 4 + j]; Z.bk[j] = q.BK[g * 4 + j]; Z.kc[j] = kcode(Z.bk[j], Z.fn[j]); ks = Z.kc[j] >> 3 - (o[8] || 0);
+        Z.tl[j] = Math.min(127, (o[2] || 0) + (car >> j & 1 ? q.VO[g] : 0)) << 3;
+        Z.rt[j * 4] = o[3] ? Math.min(63, 2 * o[3] + ks) : 0; Z.rt[j * 4 + 1] = o[4] ? Math.min(63, 2 * o[4] + ks) : 0; Z.rt[j * 4 + 2] = o[5] ? Math.min(63, 2 * o[5] + ks) : 0;
+        Z.rt[j * 4 + 3] = Math.min(63, 4 * (o[7] || 0) + 2 + ks); Z.sl[j] = (o[6] === 15 ? 31 : o[6] || 0) << 5;
+        if (k === 1) { Z.ph[j] = 0; if (Z.rt[j * 4] >= 62) { Z.at[j] = 0; Z.es[j] = 1; } else Z.es[j] = o[3] ? 0 : 4; }
+        else if (k === 2 && Z.es[j] < 3) Z.es[j] = 3;
+      }
+      Z.fr = f + 1; ymInc(Z); ymAtt(Z);
+    }
+    function ymEG(Z, c) {                                                 // one envelope step (every third sample), c: the global counter
+      for (var j = 0, s, r, a, h, i; j < 4; j++) {
+        s = Z.es[j]; if (s === 4) continue; a = Z.at[j];
+        if (s === 1 && a >= Z.sl[j]) s = Z.es[j] = 2;
+        r = Z.rt[j * 4 + s]; h = EGSH[r];
+        if (!r || c & (1 << h) - 1) continue;
+        i = EGI[r * 8 + (c >> h & 7)];
+        if (s === 0) { a += ~a * i >> 4; if (a <= 0) { a = 0; Z.es[j] = 1; } }
+        else { a += i; if (a >= 1023) { a = 1023; if (s === 3) Z.es[j] = 4; } }
+        Z.at[j] = a;
+      }
+    }
+    function opo(p, e) {                                                  // one operator: a 10-bit phase and an attenuation in log units → a 14-bit signed output
+      var l = LSIN[p & 256 ? ~p & 255 : p & 255] + e;
+      if (l >= 3328) return 0;
+      l = (EXPT[~l & 255] | 1024) << 2 >> (l >> 8);
+      return p & 512 ? -l : l;
+    }
+    /* the renderers work in slices: each renders from where it stopped until the first boundary CH samples on (an envelope step), keeps
+       its state in its job (J[4]) and returns false; true when the channel is done. b is the effect's buffer at the chip's rate. */
+    function ymR(b, tr, J) {                                              // one FM channel
+      var Z = J[4] || (J[4] = ymInit(tr)), N = b.length, n = Z.n, nY = n + CH, q = Z.q, car = ALGC[Z.alg], M = ALGM[Z.alg], fs = Z.fs, lf = Z.lfo, lp = lf >= 0 ? LFON[lf] : 0, P = Z.ph, E = Z.ea, I = Z.inc;
+      var m10 = M[1] & 1, m20 = M[2] & 1, m21 = M[2] >> 1 & 1, m30 = M[3] & 1, m31 = M[3] >> 1 & 1, m32 = M[3] >> 2 & 1, c0 = car & 1, c1 = car >> 1 & 1, c2 = car >> 2 & 1, c3 = car >> 3 & 1;
+      var p0 = P[0], p1 = P[1], p2 = P[2], p3 = P[3], i0 = I[0], i1 = I[1], i2 = I[2], i3 = I[3], e0 = E[0], e1 = E[1], e2 = E[2], e3 = E[3], h0 = Z.h0, h1 = Z.h1, o0, o1, o2, o3, y, s, pv;
       for (; n < N; n++) {
-        if (--cc <= 0) {                                                  // a control-rate boundary: the envelopes and the pitch move, and a slice may end
-          cc = cr;
-          if (n >= nY) { D[0] = n; D[1] = p0; D[2] = p1; D[3] = p2; D[4] = p3; D[5] = h0; D[6] = h1; E[7] = x0; E[15] = x1; E[23] = x2; E[31] = x3; return false; }
-          E[7] = x0; E[15] = x1; E[23] = x2; E[31] = x3; ctl(E, S, EM, n >= off);
-          x0 = E[7]; x1 = E[15]; x2 = E[23]; x3 = E[31]; e0 = EM[0]; e1 = EM[1]; e2 = EM[2]; e3 = EM[3]; a0 = EM[4]; a1 = EM[5]; a2 = EM[6]; a3 = EM[7];
-          t = n / SR; f = v.f * Math.pow(2, (cv(v.p, t) + (vb ? vb[1] / 100 * Math.sin(TAU * vb[0] * t) : 0)) / 12) / SR;
-          i0 = f * r0; i1 = f * r1; i2 = f * r2; i3 = f * r3;
-          gg = tr ? g * (1 - tr[1] * (0.5 - 0.5 * Math.cos(TAU * tr[0] * t))) : g;
+        if (n >= Z.nx || n % 3 === 0) {
+          P[0] = p0; P[1] = p1; P[2] = p2; P[3] = p3;
+          if (n >= Z.nx) {                                                // a driver frame; after the last one, the channel is done once its carriers have died away
+            if (Z.fr > q.nf && (!c0 || Z.es[0] === 4) && (!c1 || Z.es[1] === 4) && (!c2 || Z.es[2] === 4) && (!c3 || Z.es[3] === 4)) return true;
+            ymFrame(Z); Z.nx = Z.s0 + Math.round(Z.fr * FR);
+          }
+          if (n % 3 === 0) {
+            if (n >= nY) { Z.n = n; Z.h0 = h0; Z.h1 = h1; return false; }
+            ymEG(Z, (n / 3 | 0) + 1 & 4095);
+            if (lp) {                                                     // the LFO: a 7-bit counter, tremolo a triangle 0-126, vibrato 32 steps
+              s = (n / lp | 0) & 127;
+              if (s !== Z.ls) { Z.ls = s; Z.amv = (s < 64 ? 126 - 2 * s : 2 * s - 128) >> AMSH[Z.ams]; s >>= 2; pv = s < 8 ? s / 8 : s < 24 ? (16 - s) / 8 : (s - 32) / 8; if (Z.pms && pv !== Z.pmv) { Z.pmv = pv; ymInc(Z); } }
+            }
+            ymAtt(Z);
+          }
+          p0 = P[0]; p1 = P[1]; p2 = P[2]; p3 = P[3]; i0 = I[0]; i1 = I[1]; i2 = I[2]; i3 = I[3]; e0 = E[0]; e1 = E[1]; e2 = E[2]; e3 = E[3];
         }
-        x0 = x0 * e0 + a0; if (x0 > 1) x0 = 1;
-        p0 += i0; if (p0 >= 1) p0 -= 1;
-        y = T[((p0 + fb * (h0 + h1)) * 4096) & 4095] * x0; h1 = h0; h0 = y; o0 = y * l0;
-        if (one) { b[s0 + n] += o0 * gg; continue; }                      // a lone operator (a kick, a thump) skips the idle three
-        x1 = x1 * e1 + a1; if (x1 > 1) x1 = 1; x2 = x2 * e2 + a2; if (x2 > 1) x2 = 1; x3 = x3 * e3 + a3; if (x3 > 1) x3 = 1;
-        p1 += i1; if (p1 >= 1) p1 -= 1; p2 += i2; if (p2 >= 1) p2 -= 1; p3 += i3; if (p3 >= 1) p3 -= 1;
-        o1 = T[((p1 + m10 * o0) * 4096) & 4095] * x1 * l1;
-        o2 = T[((p2 + m20 * o0 + m21 * o1) * 4096) & 4095] * x2 * l2;
-        o3 = T[((p3 + m30 * o0 + m31 * o1 + m32 * o2) * 4096) & 4095] * x3 * l3;
-        b[s0 + n] += (c0 * o0 + c1 * o1 + c2 * o2 + c3 * o3) * gg;
+        p0 = p0 + i0 & 1048575; p1 = p1 + i1 & 1048575; p2 = p2 + i2 & 1048575; p3 = p3 + i3 & 1048575;
+        o0 = e0 < 3328 ? opo((p0 >> 10) + (fs ? h0 + h1 >> fs : 0), e0) : 0; h1 = h0; h0 = o0;
+        o1 = e1 < 3328 ? opo((p1 >> 10) + (m10 ? o0 >> 1 : 0), e1) : 0;
+        o2 = e2 < 3328 ? opo((p2 >> 10) + (m20 * o0 + m21 * o1 >> 1), e2) : 0;
+        o3 = e3 < 3328 ? opo((p3 >> 10) + (m30 * o0 + m31 * o1 + m32 * o2 >> 1), e3) : 0;
+        y = c0 * o0 + c1 * o1 + c2 * o2 + c3 * o3; y = (y > 8191 ? 8191 : y < -8192 ? -8192 : y) >> 5;
+        b[n] += y < 0 ? y - 7 : y;                                        // 9 bits and the ladder (the idle level, +4, is DC and left out)
       }
-      return true;
+      Z.n = n; return true;
     }
-    /* the PSG. A volume curve e is in dB, written per frame in 2 dB steps (15 steps down is off) unless v.fine */
-    var PSGC = 3579545 / 32;
-    function psgVol(db, fine) { if (fine) return Math.pow(10, db / 20); var s = Math.round(-db / 2); return s >= 15 ? 0 : Math.pow(10, -s / 10); }
-    function blep(t, dt) { if (t < dt) { t /= dt; return t + t - t * t - 1; } if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; } return 0; }
-    function sqR(b, t0, v, J) {                                           // tone channel: {f, d, p semitones, e dB, g}; the pitch lands on the chip's divider
-      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), cr = Math.round(SR / 60), g = v.g === undefined ? 1 : v.g, D = J[5] || (J[5] = new Float64Array(2));
-      var n = D[0], ph = D[1], p2 = 0, inc = 0, a = 0, t, f, nY = n + CH;
+    function dacR(b, tr, J) {                                             // channel 6 as the DAC: an 8-bit sample at tr.r Hz, written once a period and held; tr.s() synthesises it a block ahead of the write
+      var s0 = Math.round(tr.t * FS), Z = J[4] || (J[4] = { d: new Uint8Array(Math.round(tr.d * tr.r)), g: 0, ph: 0, l1: 0, l2: 0, n: s0 }), d = Z.d, k = tr.r / FS, N = Math.min(b.length, s0 + Math.floor(d.length / k)), n = Z.n, nY = n + 8 * CH, v, j;
       for (; n < N; n++) {
-        if (n % cr === 0) { if (n >= nY) { D[0] = n; D[1] = ph; return false; } t = n / SR; f = v.f * Math.pow(2, cv(v.p, t) / 12); f = PSGC / clamp(Math.round(PSGC / f), 1, 1023); inc = f / SR; a = psgVol(cv(v.e, t), v.fine); }
-        ph += inc; if (ph >= 1) ph -= 1; p2 = ph + 0.5; if (p2 >= 1) p2 -= 1;
-        b[s0 + n] += ((ph < 0.5 ? 1 : -1) + blep(ph, inc) - blep(p2, inc)) * a * g;
+        if (n >= nY) { Z.n = n; return false; }
+        j = (n - s0) * k | 0; if (j >= Z.g) tr.s(tr, Z, Math.min(d.length, j + 1024));
+        v = d[j] - 128 << 1; b[n] += v < 0 ? v - 7 : v;
       }
+      if (Z.g < d.length) tr.s(tr, Z, d.length);                         // the few samples never written, so the variant's PRNG moves on as it always has
       return true;
     }
-    function nzR(b, t0, v, J) {                                           // noise channel: {r shift rate Hz, d, p semitones on the rate, e dB, per periodic, g}
-      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), cr = Math.round(SR / 60), g = v.g === undefined ? 1 : v.g, D = J[5];
-      if (!D) { D = J[5] = new Float64Array(5); D[1] = v.per ? 0x8000 : (0x8000 | (rr() * 0x7fff)); D[2] = D[3] = 1; }   // the register's seed comes from the effect's own stream
-      var n = D[0], l = D[1], cur = D[2], prev = D[3], acc = D[4], inc = 0, a = 0, t, w, nY = n + CH;
+    function nzR(b, tr, J) {                                              // the PSG's noise channel: {t, z: shift rate Hz (or one a frame: tone 3 driving it), e: attenuation a frame, 0-15 in 2 dB steps}
+      var s0 = Math.round(tr.t * FS), Z = J[4] || (J[4] = { n: s0, l: 0x8000 | rr() * 0x7fff, c: 0, f: -1, nx: s0, a: 0, i: 0 }), E = tr.e, N = Math.min(b.length, s0 + Math.round(E.length * FR)), n = Z.n, nY = n + 8 * CH, l = Z.l, c = Z.c, a = Z.a, i = Z.i, z;
       for (; n < N; n++) {
-        if (n % cr === 0) { if (n >= nY) { D[0] = n; D[1] = l; D[2] = cur; D[3] = prev; D[4] = acc; return false; } t = n / SR; inc = Math.min(40000, v.r * Math.pow(2, cv(v.p, t) / 12)) / SR; a = psgVol(cv(v.e, t), v.fine); }
-        acc += inc; w = 0;
-        while (acc >= 1) { acc -= 1; l = v.per ? (l >> 1) | ((l & 1) << 15) : (l >> 1) | (((l ^ (l >> 3)) & 1) << 15); prev = cur; cur = l & 1 ? 1 : -1; w = 1; }
-        b[s0 + n] += (w ? cur * (acc / inc) + prev * (1 - acc / inc) : cur) * a * g;   // a shift mid-sample lands part-way: the cheapest anti-alias
+        if (n >= Z.nx) {
+          if (n >= nY) { Z.n = n; Z.l = l; Z.c = c; Z.a = a; Z.i = i; return false; }
+          Z.f++; Z.nx = s0 + Math.round((Z.f + 1) * FR); z = tr.z.length ? tr.z[Math.min(Z.f, tr.z.length - 1)] : tr.z;
+          a = E[Z.f] >= 15 ? 0 : PSGA * Math.pow(10, -E[Z.f] / 10); i = z / FS;
+        }
+        c += i; while (c >= 1) { c -= 1; l = l >> 1 | ((l ^ l >> 3) & 1) << 15; }
+        b[n] += l & 1 ? a : -a;
       }
       return true;
     }
-    function crkR(b, t0, v, J) {                                          // debris: sparse bright clicks, thinning out. {d, n clicks/s curve, e dB, g}
-      var s0 = Math.round(t0 * SR), N = Math.min(b.length - s0, Math.round(v.d * SR)), g = v.g === undefined ? 1 : v.g, D = J[5] || (J[5] = new Float64Array(3));
-      var n = D[0], c = D[1], k = D[2], dn = 0, a = 0, t, nY = n + CH;
-      for (; n < N; n++) {
-        if (n % 32 === 0) { if (n >= nY) { D[0] = n; D[1] = c; D[2] = k; return false; } t = n / SR; dn = cv(v.n, t) / SR; a = Math.pow(10, cv(v.e, t) / 20); }
-        if (rr() < dn) { c = a * (0.3 + 0.7 * rr()); k = 12 + (rr() * 30 | 0); }
-        if (k > 0) { b[s0 + n] += (rr() * 2 - 1) * c * g; c *= 0.86; k--; }
+    function boomS(tr, Z, n) {                                            // the DAC's "recording" of a blast: a falling thump under low-passed noise, clipped a little hot, 8-bit unsigned (Z.d from Z.g up to n)
+      var r = tr.r, s = Z.d, i, t, ph = Z.ph, l1 = Z.l1, l2 = Z.l2, c, e, x;
+      for (i = Z.g; i < n; i++) {
+        t = i / r; e = Math.min(1, t / 0.003) * Math.exp(-t / tr.e);
+        ph += (tr.f1 + (tr.f0 - tr.f1) * Math.exp(-t / 0.07)) / r;
+        c = 1 - Math.exp(-TAU * (150 + tr.c * Math.exp(-t / 0.2)) / r); l1 += c * (rr() * 2 - 1 - l1); l2 += c * (l1 - l2);
+        x = (Math.sin(TAU * ph) * (1 - tr.k) + l2 * 4 * tr.k) * e * tr.g;
+        s[i] = clamp(Math.round(x * 127) + 128, 0, 255);
       }
-      return true;
+      Z.g = n; Z.ph = ph; Z.l1 = l1; Z.l2 = l2;
     }
-    /* a recipe queues its voices, each a job [renderer, buffer, start s, voice, its effect's random stream, saved state];
-       drain() renders them a slice at a time, so no frame pays for a whole explosion */
-    var JOB = null;
-    function fm(b, t0, v) { JOB.push([fmR, b, t0, v, rr, null]); }
-    function sq(b, t0, v) { JOB.push([sqR, b, t0, v, rr, null]); }
-    function nz(b, t0, v) { JOB.push([nzR, b, t0, v, rr, null]); }
-    function crk(b, t0, v) { JOB.push([crkR, b, t0, v, rr, null]); }
-    /* the sound driver's instruments */
-    function brass(b, t, m, d, g) {                                       // lead: two saw-ish pairs, the second a few cents sharp
-      fm(b, t, { f: nf(m), d: d + 0.2, a: 4, fb: 5, off: d, g: g, vib: [5.5, 8], op: [[1, 1.3, 0.003, 14, -9, 3, 80], [1, 0.5, 0.003, 10, -6, 2, 70], [1, 1.1, 0.003, 16, -9, 3, 80, 7], [1, 0.42, 0.003, 10, -6, 2, 70, 7]] });
-    }
-    function bell(b, t, m, d, g) {                                        // an inharmonic modulator that dies long before the tone
-      fm(b, t, { f: nf(m), d: d, a: 4, g: g, op: [[3.5, 2.2, 0, 70], [1, 0.62, 0, 26], [1.01, 0.7, 0, 40], [3, 0.2, 0, 50]] });
-    }
-    function thump(b, t, f, drop, d, g, fb) {                             // an FM kick: one fed-back operator and a falling pitch
-      fm(b, t, { f: f, d: d, a: 7, fb: fb || 3, g: g, op: [[1, 1, 0.001, 42 / d]], p: [0, 0, d * 0.12, drop * 0.55, d * 0.8, drop] });
-    }
-    function explode(b, t, g, d) {                                        // one blast: a PSG crack and body, an FM feedback roar, a falling thump, then debris
-      nz(b, t, { r: 15000, d: 0.3 * d, p: [0, 0, 0.3 * d, -20], e: [0, 0, 0.3 * d, -26], g: 0.7 * g });
-      nz(b, t + 0.06, { r: 6000 + rr() * 1500, d: 0.9 * d, p: [0, 0, 0.9 * d, -24], e: [0, 0, 0.15 * d, -4, 0.9 * d, -28], g: 0.85 * g });
-      fm(b, t, { f: 380 + rr() * 80, d: 0.8 * d, a: 0, fb: 7, op: [[1, 1.3], [1, 1.4], [0.5, 1], [1, 0.6 * g, 0, 45 / d]], p: [0, 0, 0.8 * d, -30] });
-      thump(b, t, 110, -24, d, g);
-      crk(b, t + 0.1, { d: d - 0.1, n: [0, 110, d, 4], e: [0, -2, d, -22], g: 0.6 * g });
-    }
-    function siren(b, t, m, d) {                                          // one half of the WARNING
-      var e = [0.004, 0, 0, 0, 260];
-      fm(b, t, { f: nf(m), d: d + 0.03, a: 4, fb: 5, off: d, vib: [7, 10], p: [0, -1, d, 1], op: [[1, 1.3].concat(e), [1, 0.5].concat(e), [2, 0.7].concat(e), [1, 0.3].concat(e)] });
-      sq(b, t, { f: nf(m - 12), d: d, e: [0, -6, d, -8], g: 0.3 });
-    }
-    /* the effects. p: priority 0-3 (who may steal whose voice), gap: the per-name rate gate (s), len (s), pk: peak into the bus,
-       lp: low-pass Hz, n: variants (one is picked at random, never the last one again; the rapid-fire ones differ in timbre,
-       not in pitch, so a stream of them never plays a tune), cents: random detune per play, loop: a seamless drone loop */
-    var FX = {
-      start: { p: 3, gap: 0.3, len: 0.6, pk: 0.36, lp: 7000, make: function (b) {
-        brass(b, 0, 67, 0.06, 0.8); brass(b, 0.07, 79, 0.06, 0.8); brass(b, 0.14, 86, 0.36, 0.6); brass(b, 0.14, 79, 0.36, 0.45);
-        sq(b, 0.14, { f: nf(91), d: 0.4, e: [0, -8, 0.4, -28], g: 0.25 });
-      } },
-      shotR: { p: 0, gap: 0.07, len: 0.055, pk: 0.1, lp: 4000, n: 3, cents: 25, make: function (b, k) {     // short enough to leave a gap at 12 a second
-        fm(b, 0, { f: 900, d: 0.055, a: 4, fb: [3, 4, 2][k], op: [[3.5, [2.4, 2.1, 2.7][k], 0, 1100], [1, 0.6, 0, 520], [[7.03, 6.97, 7.1][k], 0.6, 0, 1800], [2, 0.2, 0, 800]], p: [0, 0, 0.05, -9] });
-        nz(b, 0, { r: [15000, 12000, 17000][k], d: 0.017, e: [0, -6, 0.017, -6], g: [0.15, 0.2, 0.12][k] });
-      } },
-      hit: { p: 0, gap: 0.055, len: 0.04, pk: 0.075, lp: 5500, n: 2, cents: 30, make: function (b, k) {      // one bright frame, one dim one
-        sq(b, 0, { f: 1760, d: 0.034, e: [0, 0, 0.0166, 0, 0.0167, -8], g: [0.5, 0.42][k] });
-        fm(b, 0, { f: 2200, d: 0.035, a: 4, op: [[[1.41, 1.73][k], [2, 1.6][k], 0, 1400], [1, 0.5, 0, 800]] });
-      } },
-      pop: { p: 1, gap: 0.045, len: 0.28, pk: 0.3, lp: 6500, n: 3, cents: 50, make: function (b, k) {
-        nz(b, 0, { r: 14000 - k * 1500, d: 0.25, p: [0, 0, 0.2, -30], e: [0, 0, 0.03, -3, 0.24, -28], g: 0.9 });
-        thump(b, 0, 200, -24, 0.2, 0.9, 4);
-      } },
-      boom: { p: 1, gap: 0.06, len: 0.55, pk: 0.4, lp: 6000, n: 3, cents: 45, make: function (b, k) {
-        nz(b, 0, { r: 13000, d: 0.5, p: [0, 0, 0.35, -24], e: [0, 0, 0.06, -2, 0.5, -28], g: 0.8 });
-        nz(b, 0.07, { r: 7000 + k * 900, d: 0.3, p: [0, 0, 0.25, -18], e: [0, -2, 0.3, -28], g: 0.6 });
-        fm(b, 0, { f: 320, d: 0.45, a: 0, fb: 7, op: [[1, 1], [1, 1.2], [0.5, 0.8], [1, 0.5, 0, 90]], p: [0, 0, 0.4, -22] });
-        thump(b, 0, 130, -21, 0.45, 1);
-        crk(b, 0.1, { d: 0.4, n: [0, 70, 0.4, 5], e: [0, -4, 0.4, -20], g: 0.5 });
-      } },
-      medal: { p: 0, gap: 0.05, len: 0.09, pk: 0.075, lp: 7000, n: 8, make: function (b, k) {             // one rung of the citation ladder each, its brightness key-scaled down as it climbs
-        fm(b, 0, { f: nf(79 + LADDER[k]), d: 0.09, a: 4, op: [[3.5, 2.2 - k * 0.15, 0, 70], [1, 0.62, 0, 26], [1.01, 0.7, 0, 40], [3, 0.2 - k * 0.015, 0, 50]] });
-      } },
-      laserR: { p: 1, loop: 1, len: 0.5, pk: 0.065, lp: 4200, make: function (b) {          // loops: every period divides 0.5 s
-        fm(b, 0, { f: 146, d: 0.54, a: 4, fb: 5, vib: [8, 14], am: [16, 0.35], op: [[1, 1.7], [2, 0.5], [3, 1.3], [1, 0.4]] });
-        nz(b, 0, { r: 9000, d: 0.54, e: [0, -18], g: 0.5, fine: 1 });
-      } },
-      laserOn: { p: 1, gap: 0.25, len: 0.12, pk: 0.17, lp: 6000, make: function (b) {
-        fm(b, 0, { f: 330, d: 0.12, a: 4, fb: 4, op: [[1, 1.4, 0.004, 60], [1, 0.5, 0.004, 90], [3, 0.8, 0, 200], [1, 0.3, 0, 150]], p: [0, 0, 0.1, 17] });
-      } },
-      laserHit: { p: 0, gap: 0.15, len: 0.06, pk: 0.065, lp: 7000, n: 3, cents: 40, make: function (b) {
-        nz(b, 0, { r: 12000 + rr() * 4000, d: 0.06, e: [0, -2, 0.05, -26], g: 0.8 });
-        crk(b, 0, { d: 0.05, n: [0, 400], e: [0, 0], g: 0.8 });
-      } },
-      shotB: { p: 0, gap: 0.085, len: 0.065, pk: 0.11, lp: 4200, n: 3, cents: 25, make: function (b, k) {     // a buzzier, lower zap
-        fm(b, 0, { f: 300, d: 0.065, a: 6, fb: 6, op: [[1, [1.4, 1.25, 1.55][k], 0, [380, 330, 440][k]], [1, [0.55, 0.65, 0.45][k], 0, 430], [2.01, [0.2, 0.28, 0.14][k], 0, 600], [0.5, 0.25, 0, 430]], p: [0, 9, 0.012, 0, 0.065, -5] });
-        nz(b, 0, { r: 4800, per: 1, d: 0.05, e: [0, -6, 0.05, -22], g: [0.35, 0.28, 0.42][k] });
-        nz(b, 0, { r: [13000, 10000, 16000][k], d: 0.03, e: [0, -3, 0.03, -18], g: 0.4 });
-      } },
-      shotG: { p: 0, gap: 0.12, len: 0.05, pk: 0.085, lp: 5000, n: 3, cents: 20, make: function (b, k) {      // thin and high: every other needle
-        fm(b, 0, { f: 1570, d: 0.05, a: 4, op: [[2, [1.3, 1.1, 1.5][k], 0, 1500], [1, 0.6, 0, 700], [[5.01, 4.99, 6.01][k], 0.6, 0, 2400], [1, 0.25, 0, 900, 0, 0, 0, 9]], p: [0, 2, 0.045, -3] });
-        nz(b, 0, { r: [20000, 17000, 23000][k], d: 0.012, e: [0, -8, 0.012, -20], g: 0.25 });
-      } },
-      laserB: { p: 1, loop: 1, len: 0.5, pk: 0.035, lp: 5000, make: function (b) {           // the buzz only: its arcs are arcB, thrown at random while the beam is held
-        nz(b, 0, { r: 1920, per: 1, d: 0.54, e: [0, -10], g: 0.6 });                        // periodic noise: a 120 Hz mains buzz
-        fm(b, 0, { f: 120, d: 0.54, a: 4, fb: 6, am: [30, 0.5], op: [[1, 1.2], [1, 0.3], [4, 0.6], [2, 0.12]] });
-      } },
-      arcB: { p: 0, gap: 0.05, len: 0.22, pk: 0.053, lp: 5500, n: 6, cents: 80, make: function (b) {       // a few cracks of blue thunder and their crackle, a different handful each time
-        var n = 2 + (rr() * 2 | 0), i;
-        for (i = 0; i < n; i++) nz(b, i * 0.05 + rr() * 0.04, { r: 9000 + rr() * 5000, d: 0.03 + rr() * 0.03, e: [0, -2 - rr() * 6, 0.05, -24], g: 0.9 });
-        crk(b, 0, { d: 0.2, n: [0, 90, 0.2, 50], e: [0, -6, 0.2, -14], g: 0.6 });
-      } },
-      laserG: { p: 1, loop: 1, len: 0.5, pk: 0.05, lp: 6500, make: function (b) {
-        fm(b, 0, { f: 590, d: 0.54, a: 4, fb: 1, vib: [12, 18], am: [24, 0.3], op: [[1, 0.7], [1, 0.4], [4, 0.35], [2, 0.14]] });
-        nz(b, 0, { r: 16000, d: 0.54, e: [0, -20], g: 0.3, fine: 1 });
-      } },
-      power: { p: 2, gap: 0.1, len: 0.8, pk: 0.42, lp: 7000, make: function (b) {         // ka-chunk, a clank, then the arpeggio
-        nz(b, 0, { r: 9000, d: 0.04, e: [0, 0, 0.04, -20], g: 0.6 });
-        thump(b, 0, 170, -14, 0.14, 0.9, 4);
-        fm(b, 0.012, { f: 540, d: 0.09, a: 4, op: [[3.5, 2.5, 0, 500], [1, 0.4, 0, 300]] });
-        brass(b, 0.07, 72, 0.06, 0.55); brass(b, 0.13, 79, 0.06, 0.55); brass(b, 0.19, 84, 0.06, 0.6);
-        brass(b, 0.25, 88, 0.42, 0.55); brass(b, 0.25, 84, 0.42, 0.4);
-        sq(b, 0.25, { f: nf(96), d: 0.4, e: [0, -12, 0.4, -28], g: 0.3 });
-      } },
-      weapon: { p: 2, gap: 0.1, len: 0.55, pk: 0.38, lp: 7000, make: function (b) {
-        nz(b, 0, { r: 7000, d: 0.05, p: [0, 0, 0.05, -12], e: [0, 0, 0.05, -18], g: 0.6 });
-        thump(b, 0, 210, -10, 0.12, 0.8, 4);
-        bell(b, 0.05, 76, 0.45, 0.6); bell(b, 0.11, 83, 0.4, 0.6);
-      } },
-      speed: { p: 2, gap: 0.1, len: 0.45, pk: 0.33, lp: 7000, make: function (b) {
-        fm(b, 0, { f: 330, d: 0.3, a: 4, fb: 4, st: 1, op: [[1, 1.2, 0, 30], [1, 0.5, 0, 40], [2, 0.6, 0, 60], [1, 0.3, 0, 50]], p: [0, 0, 0.25, 24] });
-        for (var i = 0; i < 4; i++) sq(b, 0.2 + i * 0.05, { f: nf(84 + [0, 4, 7, 12][i]), d: 0.05, e: [0, -4, 0.05, -14], g: 0.35 });
-      } },
-      bombUp: { p: 2, gap: 0.1, len: 0.5, pk: 0.38, lp: 6000, make: function (b) {
-        thump(b, 0, 120, -12, 0.25, 1, 4);
-        nz(b, 0, { r: 6000, d: 0.06, e: [0, 0, 0.06, -20], g: 0.5 });
-        brass(b, 0.06, 55, 0.08, 0.6); brass(b, 0.14, 62, 0.25, 0.6); brass(b, 0.14, 67, 0.25, 0.4);
-      } },
-      bonus: { p: 2, gap: 0.1, len: 0.35, pk: 0.3, lp: 7500, make: function (b) {
-        bell(b, 0, 83, 0.1, 0.6); bell(b, 0.06, 88, 0.3, 0.7);
-        sq(b, 0, { f: nf(95), d: 0.06, e: [0, -10, 0.06, -20], g: 0.3 }); sq(b, 0.06, { f: nf(100), d: 0.2, e: [0, -10, 0.2, -28], g: 0.3 });
-      } },
-      bigBoom: { p: 2, gap: 0.14, len: 1.35, pk: 0.55, lp: 5500, n: 2, cents: 35, make: function (b) { explode(b, 0, 1, 1.1); explode(b, 0.14, 0.55, 0.9); } },   // two blasts
-      cancel: { p: 1, gap: 0.2, len: 0.5, pk: 0.26, lp: 8000, make: function (b) {
-        for (var i = 0; i < 6; i++) bell(b, i * 0.04, [84, 86, 88, 91, 93, 96][i], 0.25, 0.5);
-        nz(b, 0, { r: 16000, d: 0.45, e: [0, -18, 0.1, -10, 0.45, -28], g: 0.4 });
-      } },
-      chainBreak: { p: 1, gap: 0.3, len: 0.38, pk: 0.22, lp: 5000, make: function (b) {
-        var e = [0, 10, 0, 0, 200];
-        fm(b, 0, { f: nf(67), d: 0.15, a: 4, fb: 5, st: 1, off: 0.12, p: [0, 0, 0.13, -3], op: [[1, 1.2].concat(e), [1, 0.5].concat(e), [2, 0.5].concat(e), [1, 0.25].concat(e)] });
-        fm(b, 0.15, { f: nf(60), d: 0.22, a: 4, fb: 5, st: 1, off: 0.17, p: [0, 0, 0.2, -5], op: [[1, 1.2].concat(e), [1, 0.5].concat(e), [2, 0.5].concat(e), [1, 0.25].concat(e)] });
-      } },
-      hitHard: { p: 0, gap: 0.075, len: 0.07, pk: 0.16, lp: 6000, n: 2, cents: 25, make: function (b, k) {
-        fm(b, 0, { f: 760, d: 0.07, a: 4, fb: [2, 3][k], op: [[2.76, [2.6, 2.1][k], 0, [900, 1300][k]], [1, 0.6, 0, 420], [5.4, [1.2, 1.6][k], 0, 1200], [1.5, 0.3, 0, 600]], p: [0, 0, 0.07, -3] });
-        nz(b, 0, { r: [11000, 8000][k], d: 0.02, e: [0, -6, 0.02, -18], g: [0.3, 0.38][k] });
-      } },
-      deflect: { p: 0, gap: 0.09, len: 0.06, pk: 0.11, lp: 3500, n: 2, cents: 30, make: function (b, k) {
-        fm(b, 0, { f: 420, d: 0.06, a: 4, fb: [0, 3][k], p: [0, 0, 0.06, -4], op: [[1.73, [1.5, 1.9][k], 0, [1000, 1400][k]], [1, 0.6, 0, 600]] });
-      } },
-      revenge: { p: 0, gap: 0.1, len: 0.09, pk: 0.13, lp: 7000, n: 2, cents: 30, make: function (b, k) {      // backwards: it swells, then stops dead
-        fm(b, 0, { f: 880, d: 0.085, a: 4, off: 0.07, p: [0, 0, 0.08, 12], op: [[2.5, [1.5, 1.3][k], 0.07, 0, 0, 0, [1500, 2200][k]], [1, 0.6, 0.07, 0, 0, 0, 1500]] });
-      } },
-      extend: { p: 3, gap: 0.3, len: 1.25, pk: 0.45, lp: 7500, make: function (b) {
-        var s = [72, 76, 79, 84, 88, 91, 88, 91], i;
-        for (i = 0; i < s.length; i++) { brass(b, i * 0.07, s[i], 0.06, 0.5); sq(b, i * 0.07, { f: nf(s[i] + 12), d: 0.06, e: [0, -8, 0.06, -12], g: 0.25 }); }
-        brass(b, 0.56, 96, 0.5, 0.55); brass(b, 0.56, 91, 0.5, 0.35); bell(b, 0.56, 100, 0.6, 0.35);
-      } },
-      death: { p: 3, gap: 0.2, len: 1.6, pk: 0.62, lp: 5500, make: function (b) {
-        fm(b, 0, { f: 1500, d: 0.95, a: 4, fb: 6, vib: [11, 40], p: [0, 0, 0.12, -14, 0.9, -48], op: [[1, 1.4, 0, 20], [1, 0.5, 0, 25], [1.41, 1.6, 0, 30], [1, 0.4, 0, 30]] });
-        explode(b, 0, 1, 1.4); explode(b, 0.25, 0.6, 1.1);
-      } },
-      bomb: { p: 3, gap: 0.3, len: 2.7, pk: 0.68, lp: 5000, make: function (b) {
-        fm(b, 0, { f: 60, d: 0.5, a: 0, fb: 7, p: [0, 0, 0.48, 24], op: [[1, 1.2], [1, 1.2], [0.5, 1], [1, 0.7, 0.45]] });   // the skull swells
-        thump(b, 0, 90, -12, 0.3, 0.8);
-        explode(b, 0.45, 1, 2.1); explode(b, 0.6, 0.7, 1.6);
-        fm(b, 0.45, { f: 45, d: 2.2, a: 7, fb: 4, p: [0, 0, 2.2, -5], op: [[1, 1, 0.08, 16]] });
-      } },
-      alert: { p: 3, gap: 1, len: 1.0, pk: 0.34, lp: 6000, make: function (b) { for (var i = 0; i < 2; i++) { siren(b, i * 0.44, 81, 0.2); siren(b, i * 0.44 + 0.22, 76, 0.2); } } },
-      ding: { p: 1, gap: 0.5, len: 1.0, pk: 0.26, lp: 8000, make: function (b) {         // the typesetter's carriage-return bell
-        fm(b, 0, { f: nf(91), d: 1, a: 5, op: [[3.5, 2.4, 0, 30], [1, 0.5, 0, 9], [2, 0.35, 0, 14, 0, 0, 0, 5], [4.2, 0.15, 0, 30]] });
-        fm(b, 0, { f: 2400, d: 0.02, a: 7, op: [[1, 0.4, 0, 1500]] });
-      } },
-      klaxon: { p: 3, gap: 1, len: 3.4, pk: 0.4, lp: 6000, make: function (b) { for (var i = 0; i < 6; i++) { siren(b, i * 0.56, 78, 0.26); siren(b, i * 0.56 + 0.28, 73, 0.26); } } },
-      phaseBreak: { p: 3, gap: 0.3, len: 1.5, pk: 0.6, lp: 6000, make: function (b) {
-        explode(b, 0, 0.9, 1.1);
-        fm(b, 0, { f: 196, d: 1.4, a: 5, fb: 4, op: [[1, 2.4, 0, 30], [2.76, 0.4, 0, 18], [5.4, 0.25, 0, 26], [1, 0.45, 0, 20]] });   // the clang
-        for (var i = 0; i < 5; i++) bell(b, 0.35 + i * 0.07, [79, 83, 86, 91, 95][i], 0.4, 0.3);
-      } },
-      bossBreak: { p: 3, gap: 0.3, len: 1.9, pk: 0.62, lp: 5500, make: function (b) {        // a metal scream over the first blast
-        fm(b, 0.05, { f: 1250, d: 1.6, a: 4, fb: 5, off: 1.2, vib: [9, 60], p: [0, 0, 1.5, -30], op: [[1.41, 2.2, 0, 8, 0, 0, 40], [1, 0.5, 0.01, 6, 0, 0, 40], [2.01, 1, 0, 10, 0, 0, 40], [1, 0.4, 0.01, 6, 0, 0, 40]] });
-        explode(b, 0, 1, 1.5);
-      } },
-      bossDie: { p: 3, gap: 0.3, len: 3.4, pk: 0.68, lp: 5000, make: function (b) {         // four blasts, each bigger, then the rumble and the debris
-        explode(b, 0, 0.8, 1); explode(b, 0.28, 0.85, 1.1); explode(b, 0.62, 0.95, 1.3); explode(b, 1.1, 1, 2.2);
-        fm(b, 0.9, { f: 55, d: 2.4, a: 7, fb: 5, p: [0, 0, 2.4, -7], op: [[1, 0.9, 0.05, 14]] });
-        nz(b, 1.1, { r: 3000, d: 2.3, p: [0, 0, 2.3, -24], e: [0, -2, 2.3, -40], g: 0.6, fine: 1 });
-        crk(b, 1.2, { d: 2.1, n: [0, 150, 2.1, 3], e: [0, -4, 2.1, -30], g: 0.6 });
-      } },
-      count: { p: 2, gap: 0.3, len: 0.15, pk: 0.28, lp: 6000, make: function (b) {
-        sq(b, 0, { f: nf(84), d: 0.05, e: [0, 0, 0.034, -6, 0.05, -12], g: 0.5 });
-        fm(b, 0, { f: nf(72), d: 0.15, a: 4, op: [[2.5, 1.5, 0, 200], [1, 0.6, 0, 160]] });
-      } },
-      gameOver: { p: 3, gap: 1, len: 1.7, pk: 0.36, lp: 5000, make: function (b) {
-        brass(b, 0, 67, 0.16, 0.5); brass(b, 0.2, 63, 0.16, 0.5); brass(b, 0.4, 60, 0.16, 0.5); brass(b, 0.6, 55, 0.8, 0.55); brass(b, 0.6, 51, 0.8, 0.4);
-      } },
-      pause: { p: 2, gap: 0.08, len: 0.16, pk: 0.22, lp: 6000, make: function (b) {
-        sq(b, 0, { f: nf(88), d: 0.05, e: [0, -2, 0.05, -8], g: 0.5 }); sq(b, 0.066, { f: nf(81), d: 0.08, e: [0, -2, 0.08, -14], g: 0.5 });
-      } },
-      beamWarn: { p: 2, gap: 0.5, len: 1.05, pk: 0.28, lp: 6500, make: function (b) {         // the True Last Boss's lasers, charging
-        fm(b, 0, { f: 200, d: 1.05, a: 4, fb: 3, p: [0, 0, 1, 27], am: [22, 0.6], op: [[1, 0.4, 0.8], [1, 0.5, 0.6], [2, 0.2, 0.9], [1, 0.25, 0.7]] });
-        nz(b, 0, { r: 5000, d: 1.0, p: [0, 0, 1, 18], e: [0, -26, 1, -8], g: 0.4 });
-      } },
-      beamFire: { p: 2, gap: 0.3, len: 0.6, pk: 0.4, lp: 5500, make: function (b) {         // ... and biting
-        fm(b, 0, { f: 160, d: 0.58, a: 0, fb: 7, p: [0, 5, 0.05, 0], op: [[1, 1.4], [1, 1.2], [2, 0.8], [1, 0.8, 0, 50]] });
-        nz(b, 0, { r: 1600, per: 1, d: 0.5, e: [0, 0, 0.5, -24], g: 0.5 });
-        nz(b, 0, { r: 14000, d: 0.12, e: [0, 0, 0.12, -20], g: 0.6 });
-      } },
-      beamHum: { p: 2, loop: 1, len: 0.5, pk: 0.07, lp: 3500, make: function (b) {          // ... and the drone while they stay lethal: a 100 Hz FM growl, its buzz and a sizzle, every period dividing 0.5 s
-        fm(b, 0, { f: 100, d: 0.54, a: 4, fb: 5, am: [20, 0.45], op: [[1, 1.8], [2, 0.6], [3, 1.2], [1, 0.4]] });
-        nz(b, 0, { r: 1600, per: 1, d: 0.54, e: [0, -8], g: 0.5 });
-        fm(b, 0, { f: 1600, d: 0.54, a: 4, am: [40, 0.8], op: [[2, 0.8], [1, 0.25]] });
-      } },
-      coreOpen: { p: 2, gap: 0.3, len: 0.6, pk: 0.33, lp: 8000, make: function (b) {
-        for (var i = 0; i < 4; i++) bell(b, i * 0.05, [76, 80, 83, 88][i], 0.45, 0.6);
-        nz(b, 0, { r: 8000, d: 0.3, p: [0, 0, 0.3, 12], e: [0, -20, 0.1, -12, 0.3, -28], g: 0.4 });
-      } },
-      coreShut: { p: 2, gap: 0.3, len: 0.5, pk: 0.36, lp: 5000, make: function (b) {
-        fm(b, 0, { f: 140, d: 0.4, a: 5, fb: 4, op: [[1, 2.2, 0, 90], [2.76, 0.45, 0, 110], [5.4, 0.25, 0, 160], [1, 0.5, 0, 90]] });
-        thump(b, 0, 100, -10, 0.2, 0.9);
-        nz(b, 0.03, { r: 7000, d: 0.35, e: [0, -6, 0.35, -26], g: 0.45 });
-      } },
-      rankUp: { p: 1, gap: 1, len: 0.7, pk: 0.24, lp: 3500, make: function (b) {            // a minor second, low: the reviewers are getting organised
-        fm(b, 0, { f: nf(45), d: 0.7, a: 4, fb: 4, op: [[1, 1.4, 0.02, 20], [1, 0.6, 0.02, 30], [1, 1.2, 0.02, 20, 0, 0, 0, 100], [1, 0.5, 0.02, 30, 0, 0, 0, 100]] });
-      } },
-      respawn: { p: 1, gap: 0.5, len: 0.7, pk: 0.2, lp: 6500, make: function (b) {
-        nz(b, 0, { r: 1500, d: 0.65, p: [0, 0, 0.6, 36], e: [0, -24, 0.35, -6, 0.65, -28], g: 0.6 });
-        fm(b, 0, { f: 180, d: 0.6, a: 4, fb: 2, p: [0, 0, 0.6, 24], op: [[1, 0.8, 0.3, 40], [1, 0.4, 0.3, 40]] });
-      } },
-      flyOff: { p: 3, gap: 1, len: 1.9, pk: 0.4, lp: 6500, make: function (b) {
-        nz(b, 0, { r: 900, d: 1.8, p: [0, 0, 1.5, 40], e: [0, -20, 1.0, -2, 1.8, -28], g: 0.8 });
-        fm(b, 0, { f: 70, d: 1.7, a: 0, fb: 6, off: 1.2, p: [0, 0, 1.6, 36], op: [[1, 1], [1, 1], [1, 0.8], [1, 0.5, 0.8, 0, 0, 0, 40]] });
-        bell(b, 1.35, 100, 0.5, 0.5);
-      } },
-      stamp: { p: 3, gap: 1, len: 0.5, pk: 0.5, lp: 4500, make: function (b) {               // PUBLISHED! / TENURED!: the rubber stamp and its rebound
-        thump(b, 0, 100, -12, 0.35, 1);
-        nz(b, 0, { r: 5000, d: 0.06, p: [0, 0, 0.06, -12], e: [0, 0, 0.06, -20], g: 0.8 });
-        thump(b, 0.075, 150, -8, 0.12, 0.45);
-        nz(b, 0.075, { r: 4000, d: 0.04, e: [0, -8, 0.04, -24], g: 0.5 });
-      } },
-      firework: { p: 1, gap: 0.15, len: 1.0, pk: 0.26, lp: 6000, n: 2, cents: 60, make: function (b) {
-        nz(b, 0, { r: 11000, d: 0.12, p: [0, 0, 0.12, -14], e: [0, 0, 0.12, -24], g: 0.7 });
-        thump(b, 0, 240, -12, 0.15, 0.6);
-        crk(b, 0.12, { d: 0.85, n: [0, 220, 0.85, 20], e: [0, -4, 0.85, -22], g: 0.8 });
-      } }
-    };
-    var SHOTS = ['shotR', 'shotB', 'shotG'], LASERS = ['laserR', 'laserB', 'laserG'], LADDER = [0, 2, 4, 7, 9, 12, 14, 16];   // from G5: the top rung is B6, under 2 kHz
-    var FIRST = ['start', 'shotR', 'hit', 'bomb', 'death', 'laserOn', 'laserR', 'laserHit', 'pop', 'boom', 'medal', 'bigBoom', 'cancel', 'shotB', 'shotG',
-      'laserB', 'arcB', 'laserG', 'power', 'weapon', 'speed', 'bombUp', 'bonus', 'respawn', 'chainBreak', 'extend', 'pause'];   // the head of the queue: what a fresh game can ask for first
-    (function () { for (var k in FX) if (FX.hasOwnProperty(k)) { FXI[k] = FXN.length; FXN.push(k); } LASTV = new Int8Array(FXN.length); })();
-    function finish(b, f, out, J) {                                       // DC trap, the console's soft top end, level, 9 bits; then the loop seam or a tail fade. In three passes of slices
-      var D = J[5] || (J[5] = new Float64Array(6)), i = D[1], e, x, xp = D[2], hp = D[3], y = D[4], pk = D[5], q, a = Math.exp(-TAU * f.lp / SR), hk = Math.exp(-TAU * 20 / SR), X = Math.round(XF * SR), n = f.loop ? b.length - X : b.length;
-      if (D[0] === 0) {                                                   // the filters, then the loop seam
-        for (e = Math.min(b.length, i + 4 * CH); i < e; i++) { x = b[i]; hp = hk * (hp + x - xp); xp = x; y = hp + a * (y - hp); b[i] = y; }
-        D[2] = xp; D[3] = hp; D[4] = y;
-        if (i < b.length) { D[1] = i; return false; }
-        if (f.loop) for (i = 0; i < X; i++) b[i] = b[i] * (i / X) + b[n + i] * (1 - i / X);
+    function finish(b, f, J) {                                            // the Model 1's output: low-pass, linear interpolation down to the context's rate, a DC trap; then the loop seam or a tail fade, and the level
+      var o = J[5], D = J[4] || (J[4] = new Float64Array(12)), i = D[1], e, x, u, v, m, w, y = D[2], yp = D[7], hp = D[3], xp = D[4], pk = D[5], cj = D[6], a = 1 - Math.exp(-TAU * M1 / FS), hk = Math.exp(-TAU * 20 / SR), k = FS / SR, X = Math.round(XF * SR), P = Math.round(SR / 90), n = D[8] || (f.loop ? o.length - X : o.length), q;
+      if (D[0] === 0) {
+        for (e = Math.min(o.length, i + 4 * CH); i < e; i++) {
+          u = i * k; x = u | 0;
+          for (; cj <= x + 1 && cj < b.length; cj++) { yp = y; y += a * (b[cj] - y); }   // yp, y: the low-passed chip samples x and x + 1
+          v = yp + (u - x) * (y - yp); hp = hk * (hp + v - xp); xp = v; o[i] = hp;
+        }
+        D[2] = y; D[7] = yp; D[3] = hp; D[4] = xp; D[6] = cj;
+        if (i < o.length) { D[1] = i; return false; }
+        D[0] = f.loop ? 3 : 1; D[1] = 0; D[9] = n; D[10] = Infinity; return false;
+      }
+      if (D[0] === 3) {                                                   // a drone's length: of the points up to one period of its lowest tone (P) short of 0.5 s, the one where what follows
+        for (e = Math.min(P, i + 24); i < e; i++) {                       // best matches the loop's head, so the crossfade joins waves in phase (the chip's F-numbers never give a whole number of cycles)
+          m = o.length - X - i; for (u = 0, w = 0; w < X; w += 2) { v = o[w] - o[m + w]; u += v * v; }
+          if (u < D[10]) { D[10] = u; D[9] = m; }
+        }
+        if (i < P) { D[1] = i; return false; }
+        n = D[8] = D[9]; for (i = 0; i < X; i++) o[i] = o[i] * (i / X) + o[n + i] * (1 - i / X);
         D[0] = 1; D[1] = 0; return false;
       }
-      if (D[0] === 1) {                                                   // the peak
-        for (e = Math.min(n, i + 8 * CH); i < e; i++) if (Math.abs(b[i]) > pk) pk = Math.abs(b[i]);
+      if (D[0] === 1) {
+        for (e = Math.min(n, i + 8 * CH); i < e; i++) if (Math.abs(o[i]) > pk) pk = Math.abs(o[i]);
         D[5] = pk; D[1] = i; if (i >= n) { D[0] = 2; D[1] = 0; }
         return false;
       }
-      q = pk > 0 ? 256 / pk : 0;                                          // level and 9 bits
-      for (e = Math.min(n, i + 4 * CH); i < e; i++) b[i] = Math.round(b[i] * q) / 256 * f.pk;
+      q = J[7] ? 1 / 256 : pk > 0 ? f.pk / pk : 0;                        // the level: its peak (raw: one full channel = 1)
+      for (e = Math.min(n, i + 4 * CH); i < e; i++) o[i] *= q;
       if (i < n) { D[1] = i; return false; }
-      if (!f.loop) { X = Math.min(n, Math.round(0.004 * SR)); for (i = 0; i < X; i++) b[n - 1 - i] *= i / X; }
-      out.push(f.loop ? b.subarray(0, n) : b);
+      if (!f.loop) { X = Math.min(n, Math.round(0.004 * SR)); for (i = 0; i < X; i++) o[n - 1 - i] *= i / X; }
+      J[6].push(f.loop ? o.subarray(0, n) : o);
       return true;
     }
-    function begin(name) {                                                // run the recipe for every variant: its voices are queued, not yet heard, then a finish per variant
-      var f = FX[name], c = { name: name, out: [], jobs: [], ji: 0 }, bufs = [], k, b;
-      JOB = c.jobs;
-      for (k = 0; k < (f.n || 1); k++) { rr = rng(hash(name) + k * 7919); b = new Float32Array(Math.round((f.len + (f.loop ? XF : 0)) * SR)); bufs.push(b); f.make(b, k); }
-      for (k = 0; k < bufs.length; k++) JOB.push([finish, bufs[k], f, c.out, rr, null]);
-      JOB = null; return c;
+    function begin(name, parts, raw) {                                   // run the recipe for every variant: its channels are queued, not yet heard, then a finish per variant. parts: 1 FM, 2 DAC, 4 PSG
+      var f = FX[name], c = { name: name, out: [], jobs: [], ji: 0 }, k, i, t, sc, cb, len = f.len + (f.loop ? XF : 0);
+      for (k = 0; k < (f.n || 1); k++) {
+        rr = rng(hash(name) + k * 7919); sc = f.make(k); cb = new Float32Array(Math.ceil(len * FS));
+        for (i = 0; i < sc.length; i++) {
+          t = sc[i]; if (t.p && f.lfo !== undefined) t.lfo = f.lfo;
+          if (!parts || parts & (t.p ? 1 : t.s ? 2 : 4)) c.jobs.push([t.p ? ymR : t.s ? dacR : nzR, cb, t, rr, null]);
+        }
+        c.jobs.push([finish, cb, f, rr, null, new Float32Array(Math.round(len * SR)), c.out, !!raw]);
+      }
+      if (f.l2) c.jobs.push([louder, null, f, rr, null, c.out]);
+      return c;
+    }
+    function louder(b, f, J) {                                            // the second loop's copy of every variant, l2 dB up (they follow the originals: variant k + n)
+      var o = J[5], n = o.length, g = Math.pow(10, f.l2 / 20), i, j, x, y;
+      for (i = 0; i < n; i++) { x = o[i]; y = new Float32Array(x.length); for (j = 0; j < x.length; j++) y[j] = x[j] * g; o.push(y); }
+      return true;
     }
     function drain(c, until) {                                            // resume the queued jobs a slice at a time until they are done (→ true) or the time is up
       var j;
       while (c.ji < c.jobs.length) {
-        j = c.jobs[c.ji]; rr = j[4];
-        if (j[0](j[1], j[2], j[3], j)) c.jobs[c.ji++] = null;
+        j = c.jobs[c.ji]; rr = j[3];
+        if (j[0](j[1], j[2], j)) c.jobs[c.ji++] = null;
         if (until && nowSec() > until) break;
       }
       return c.ji >= c.jobs.length;
@@ -437,12 +323,228 @@
       for (k = 0; k < c.out.length; k++) { x = c.out[k]; ab = AC.createBuffer(1, x.length, SR); ab.getChannelData(0).set(x); out.push(ab); }
       BANK[c.name] = out;
     }
-    function renderRaw(name, sr) {                                        // the debug hook: the finished samples at any rate, the bank untouched
+    function renderRaw(name, sr, parts, raw) {                            // the debug hook: the finished samples at any rate, the bank untouched
       var keep = SR, c;
       SR = sr;
-      try { c = begin(name); drain(c, 0); } finally { SR = keep; }
+      try { c = begin(name, parts, raw); drain(c, 0); } finally { SR = keep; }
       return c.out;
     }
+    function ymScore(sc, secs, lfo) {                                     // the debug hook: a score straight off the chip, at its own rate, before the output stage (9-bit units)
+      var b = new Float32Array(Math.ceil(secs * FS)), i, J, t;
+      rr = rng(1);
+      for (i = 0; i < sc.length; i++) { t = sc[i]; if (t.p && lfo !== undefined) t.lfo = lfo; J = [t.p ? ymR : t.s ? dacR : nzR, b, t, rr, null]; while (!J[0](b, t, J)); }
+      return b;
+    }
+    /* the patches, register by register: [ALG, FB, AMS, PMS, op 1, op 2, op 3, op 4], an operator [MUL, DT1, TL, AR, D1R, D2R, SL, RR, KS, AM]
+       (operators in algorithm order: op 1 is the one fed back) */
+    var OFF = [1, 0, 127, 0, 0, 0, 0, 15];
+    var PT = {
+      zapR: [4, 6, 0, 0, [1, 0, 22, 31, 20, 0, 15, 15], [1, 0, 6, 31, 23, 0, 15, 14], [7, 3, 26, 31, 25, 0, 15, 15], [3, 0, 10, 31, 25, 0, 15, 14]],   // red: a fed-back pair and a bright one, a hard "chk"
+      zapB: [0, 6, 0, 0, [1, 0, 26, 31, 18, 0, 15, 15], [2, 0, 32, 31, 19, 0, 15, 15], [1, 3, 26, 31, 19, 0, 15, 15], [1, 0, 4, 31, 20, 0, 15, 13]],  // blue: four in series, a buzz
+      zapG: [4, 0, 0, 0, [5, 0, 34, 31, 24, 0, 15, 15], [1, 0, 6, 31, 24, 0, 15, 14], [11, 0, 44, 31, 27, 0, 15, 15], [2, 0, 18, 31, 26, 0, 15, 14]], // green: nearly pure, high
+      tink: [4, 3, 0, 0, [14, 3, 30, 31, 26, 0, 15, 15], [4, 0, 4, 31, 24, 0, 15, 15], [11, 7, 34, 31, 27, 0, 15, 15], [3, 0, 8, 31, 25, 0, 15, 15]],
+      tank: [4, 4, 0, 0, [15, 3, 26, 31, 22, 0, 15, 14], [1, 0, 2, 31, 22, 0, 15, 13], [5, 7, 24, 31, 22, 0, 15, 14], [2, 0, 6, 31, 22, 0, 15, 13]],
+      tonk: [4, 2, 0, 0, [3, 0, 36, 31, 22, 0, 15, 14], [1, 0, 4, 31, 22, 0, 15, 14], OFF, OFF],
+      boom: [5, 7, 0, 0, [1, 0, 4, 31, 16, 0, 15, 7], [0, 0, 2, 31, 17, 0, 15, 7], [1, 3, 6, 31, 16, 0, 15, 7], [3, 7, 10, 31, 18, 0, 15, 8]],     // FM noise: op 1 at feedback 7 thrashing three carriers
+      pop: [5, 7, 0, 0, [1, 0, 6, 31, 19, 0, 15, 10], [0, 0, 2, 31, 20, 0, 15, 10], [1, 3, 6, 31, 20, 0, 15, 10], [3, 7, 12, 31, 22, 0, 15, 11]],
+      hiss: [7, 7, 0, 0, [15, 0, 4, 31, 22, 0, 15, 12], OFF, OFF, OFF],                                                                       // FM noise, high: one operator at feedback 7
+      sizz: [4, 7, 0, 0, [2, 0, 20, 31, 20, 0, 15, 12], [5, 0, 4, 31, 20, 0, 15, 12], OFF, OFF],                                               // band-limited FM noise: a fed-back modulator scatters a carrier at 5x (2.6 kHz)
+      fizz: [4, 7, 0, 0, [2, 0, 8, 31, 0, 0, 0, 12], [1, 0, 4, 31, 20, 0, 15, 12], OFF, OFF],                                                  // FM noise at any level: op 1 stays loud enough to stay noise (its own output is its feedback), the carrier's TL is the volume
+      crack: [4, 7, 0, 0, [3, 0, 16, 31, 22, 0, 15, 12], [7, 0, 4, 31, 22, 0, 15, 12], OFF, OFF],
+      kick: [7, 3, 0, 0, [1, 0, 0, 31, 19, 0, 15, 10], OFF, OFF, OFF],                                                                        // a thump: one operator, a little feedback
+      bell: [4, 0, 0, 0, [14, 0, 28, 31, 17, 0, 15, 8], [2, 0, 2, 31, 17, 0, 15, 8], [3, 0, 26, 31, 16, 0, 15, 9], [1, 0, 8, 31, 16, 0, 15, 8]],
+      ping: [4, 0, 0, 0, [14, 0, 28, 31, 21, 0, 15, 12], [2, 0, 2, 31, 21, 0, 15, 12], [3, 0, 26, 31, 20, 0, 15, 12], [1, 0, 8, 31, 20, 0, 15, 12]],
+      brass: [4, 5, 0, 3, [1, 3, 22, 26, 8, 0, 2, 8], [1, 3, 4, 31, 6, 2, 1, 8], [1, 7, 24, 26, 8, 0, 2, 8], [1, 7, 6, 31, 6, 2, 1, 8]],       // two detuned pairs, the modulators a touch slower: the blat
+      saw: [7, 6, 0, 0, [1, 0, 8, 31, 0, 0, 0, 12], OFF, OFF, OFF],                                                                           // feedback 6 alone: a sawtooth
+      siren: [4, 5, 0, 4, [1, 0, 20, 31, 0, 0, 0, 10], [1, 0, 2, 31, 0, 0, 0, 10], [2, 0, 26, 31, 0, 0, 0, 10], [1, 0, 8, 31, 0, 0, 0, 10]],
+      scream: [4, 6, 0, 6, [1, 0, 16, 31, 4, 0, 4, 6], [1, 0, 2, 31, 3, 0, 2, 6], [3, 3, 22, 31, 4, 0, 4, 6], [1, 7, 6, 31, 3, 0, 2, 6]],
+      clang: [4, 3, 0, 0, [1, 0, 24, 31, 14, 0, 15, 6], [1, 0, 4, 31, 12, 0, 15, 6], [1, 0, 20, 31, 15, 0, 15, 6], [1, 0, 8, 31, 11, 0, 15, 6]],   // with channel 3's special mode: inharmonic
+      beam: [4, 5, 0, 0, [1, 0, 20, 31, 0, 0, 0, 10], [1, 0, 4, 31, 0, 0, 0, 10], [3, 0, 28, 31, 0, 0, 0, 10], [2, 0, 10, 31, 0, 0, 0, 10]],
+      buzz: [4, 7, 0, 0, [1, 0, 16, 31, 0, 0, 0, 10], [1, 0, 2, 31, 0, 0, 0, 10], [2, 0, 24, 31, 0, 0, 0, 10], [4, 0, 16, 31, 0, 0, 0, 10]],
+      whine: [4, 1, 2, 0, [4, 0, 34, 31, 0, 0, 0, 10], [1, 0, 6, 31, 0, 0, 0, 10, 0, 1], [2, 0, 40, 31, 0, 0, 0, 10], [1, 0, 14, 31, 0, 0, 0, 10, 0, 1]],
+      rumble: [0, 7, 0, 0, [1, 0, 8, 31, 12, 0, 15, 6], [1, 0, 24, 31, 12, 0, 15, 6], [1, 0, 30, 31, 12, 0, 15, 6], [1, 0, 0, 31, 13, 0, 15, 6]]
+    };
+    function pat(p, e) { p = p.map(function (x) { return x.slice ? x.slice() : x; }); e(p); return p; }   // a patch edited for a variant
+    function tk(p, t, n, o) { var r = { p: p, t: t, n: n }, k; if (o) for (k in o) r[k] = o[k]; return r; }   // an FM channel: patch, start (s), steps, options
+    function dac(t, o) { var r = { s: boomS, t: t, r: 8000, d: 0.8, f0: 150, f1: 38, c: 2500, k: 0.55, e: 0.16, g: 1 }, k; for (k in o) r[k] = o[k]; return r; }   // channel 6 as the DAC
+    function psg(t, e, z) { return { t: t, e: e, z: z || 6991 }; }        // the PSG's noise: attenuations a frame; 6991 Hz = its clock / 512
+    function ramp(a, b, n) { for (var o = [], i = 0; i < n; i++) o.push(Math.round(a + (b - a) * i / Math.max(1, n - 1))); return o; }
+    function kicks(t, s) { return tk(PT.kick, t, s, { m: [0, 1, -70, 255], b: 1, v: 2 }); }   // one thump channel, re-keyed for each blast
+    function blast(t, m, fr, v) { return [tk(PT.boom, t, [[m, fr]], { m: [0, 1, -14, 255], b: 1, v: v || 0 }), tk(PT.kick, t, [[m - 12, 8]], { m: [0, 1, -70, 255], b: 1, v: (v || 0) + 2 })]; }   // an explosion: FM noise falling, and its thump
+    function brassT(t, s, o) { return tk(PT.brass, t, s, o); }
+    /* the effects. p: priority 0-3 (who may steal whose voice), gap: the per-name rate gate (s), len (s), pk: peak into the bus,
+       n: variants (one is picked at random, never the last one again; the rapid-fire ones differ in timbre, not in pitch, so a
+       stream of them never plays a tune), cents: random detune per play, loop: a seamless drone loop, lfo: the chip's LFO rate,
+       l2: dB louder in the second loop (the hits). make(k) returns variant k's score. */
+    var FX = {
+      start: { p: 3, gap: 0.3, len: 0.8, pk: 0.179, make: function () {
+        return [brassT(0, [[67, 4], [79, 4], [86, 22]], { m: [10, 1, 3, 2] }), brassT(8 / 60, [[79, 22]], { v: 6 }), tk(PT.bell, 8 / 60, [[91, 22]], { v: 12 })];
+      } },
+      shotR: { p: 0, gap: 0.07, len: 0.065, pk: 0.078, n: 3, cents: 20, make: function (k) {     // a spread shot twelve times a second: three frames, falling five semitones
+        return [tk(pat(PT.zapR, function (p) { p[1] = [6, 5, 7][k]; p[6][0] = [7, 6, 9][k]; }), 0, [[88, 3]], { m: [0, 1, -200, 255], b: 1 })];
+      } },
+      hit: { p: 0, gap: 0.055, len: 0.055, pk: 0.226, l2: 4.5, n: 2, cents: 30, make: function (k) {      // three frames of tin, inside the gate
+        return [tk(pat(PT.tink, function (p) { p[4][0] = [14, 12][k]; }), 0, [[79, 3]])];
+      } },
+      pop: { p: 1, gap: 0.045, len: 0.3, pk: 0.141, n: 3, cents: 50, make: function (k) {
+        return [tk(PT.pop, 0, [[[64, 62, 66][k], 7]], { m: [0, 1, -60, 255], b: 1 }), tk(PT.kick, 0, [[50, 4]], { m: [0, 1, -90, 255], b: 1, v: 6 })];
+      } },
+      boom: { p: 1, gap: 0.06, len: 0.6, pk: 0.245, n: 3, cents: 45, make: function (k) {
+        return blast(0, [57, 55, 59][k], 16).concat([psg(0, ramp(2, 15, 9), [6991, 6991, 3496][k])]);
+      } },
+      medal: { p: 0, gap: 0.05, len: 0.1, pk: 0.054, n: 8, make: function (k) {             // one rung of the citation ladder each, its brightness key-scaled down as it climbs
+        return [tk(pat(PT.ping, function (p) { p[4][2] = 24 + k; p[6][2] = 22 + k; }), 0, [[79 + LADDER[k], 4]])];
+      } },
+      laserR: { p: 1, loop: 1, len: 0.5, pk: 0.036, make: function () {                      // drones: every table's period divides 30 frames; finish() cuts the loop where the waves meet
+        return [tk(PT.beam, 0, [[{ hz: 146, blk: 3 }, 33]], { a: [0, 4], w: [0, 3, 6, 3, 0, -3] }), tk(pat(PT.fizz, function (p) { p[5][0] = 2; p[5][4] = 0; }), 0, [[{ hz: 1000, blk: 5 }, 33]], { v: 20 })];
+      } },
+      laserOn: { p: 1, gap: 0.25, len: 0.14, pk: 0.073, make: function () {
+        return [tk(PT.beam, 0, [[55, 6]], { m: [0, 1, 180, 255], b: 1, f: 1 })];
+      } },
+      laserHit: { p: 0, gap: 0.15, len: 0.1, pk: 0.185, l2: 2.5, n: 3, cents: 40, make: function (k) {        // five frames of sizzle, falling
+        return [tk(PT.sizz, 0, [[72 + k * 2, 5]], { m: [0, 1, -25, 255] })];
+      } },
+      shotB: { p: 0, gap: 0.085, len: 0.08, pk: 0.043, n: 3, cents: 20, make: function (k) {    // a buzzier, lower zap: its pitch trills a frame at a time
+        return [tk(pat(PT.zapB, function (p) { p[1] = [6, 7, 6][k]; p[5][2] = [32, 30, 34][k]; }), 0, [[62, 4]], { m: [0, 1, [70, 60, 80][k], 1], b: 1 })];
+      } },
+      shotG: { p: 0, gap: 0.12, len: 0.06, pk: 0.09, n: 3, cents: 20, make: function (k) {     // thin and high: every other needle
+        return [tk(pat(PT.zapG, function (p) { p[4][0] = [5, 4, 6][k]; p[4][2] = [34, 32, 36][k]; p[6][0] = [11, 9, 13][k]; }), 0, [[91, 3]], { m: [0, 1, 25, 255] })];
+      } },
+      laserB: { p: 1, loop: 1, len: 0.5, pk: 0.023, make: function () {                     // the buzz only: its arcs are arcB, thrown at random while the beam is held
+        return [tk(PT.buzz, 0, [[{ hz: 120, blk: 2 }, 33]], { a: [0, 6] })];
+      } },
+      arcB: { p: 0, gap: 0.05, len: 0.22, pk: 0.036, n: 6, cents: 80, make: function () {     // a few cracks of blue thunder, retriggered, a different handful each time
+        var n = 2 + (rr() * 2 | 0), i, o = [];
+        for (i = 0; i < n; i++) o.push(tk(PT.crack, i * 0.05 + rr() * 0.03, [[74 + rr() * 10, 1], [70 + rr() * 10, 1]], { v: rr() * 6 | 0 }));
+        return o;
+      } },
+      laserG: { p: 1, loop: 1, len: 0.5, pk: 0.019, make: function () {
+        return [tk(PT.whine, 0, [[{ hz: 590, blk: 5 }, 33]], { w: [0, 4, 8, 4, 0], a: [0, 2, 0] })];
+      } },
+      power: { p: 2, gap: 0.1, len: 0.85, pk: 0.22, make: function () {                      // ka-chunk, a clank, then the arpeggio and its echo
+        return [tk(PT.kick, 0, [[45, 6]], { m: [0, 1, -60, 255], b: 1 }), tk(PT.tank, 0.012, [[70, 3]]),
+          tk(PT.bell, 0.07, [[72, 3], [79, 3], [84, 3], [88, 26]], { m: [12, 1, 4, 2] }), tk(PT.bell, 0.12, [[72, 3], [79, 3], [84, 3], [88, 24]], { v: 10 }), brassT(0.25, [[84, 22]], { v: 8, f: 4 })];
+      } },
+      weapon: { p: 2, gap: 0.1, len: 0.6, pk: 0.17, make: function () {
+        return [tk(PT.kick, 0, [[50, 5]], { m: [0, 1, -50, 255], b: 1 }), tk(PT.bell, 0.05, [[76, 4], [83, 22]]), tk(PT.bell, 0.1, [[76, 4], [83, 20]], { v: 10 })];
+      } },
+      speed: { p: 2, gap: 0.1, len: 0.5, pk: 0.195, make: function () {
+        return [tk(PT.saw, 0, [[60, 13]], { m: [0, 1, 45, 255], b: 1, v: 4 }), tk(PT.ping, 0.2, [[84, 3], [88, 3], [91, 3], [96, 6]])];
+      } },
+      bombUp: { p: 2, gap: 0.1, len: 0.55, pk: 0.203, make: function () {
+        return [tk(PT.kick, 0, [[43, 10]], { m: [0, 1, -40, 255], b: 1 }), brassT(0.06, [[55, 5], [62, 18]], { f: 3 }), brassT(0.14, [[67, 13]], { v: 6, f: 3 })];
+      } },
+      bonus: { p: 2, gap: 0.1, len: 0.4, pk: 0.163, make: function () {
+        return [tk(PT.bell, 0, [[83, 4], [88, 16]]), tk(PT.bell, 0.05, [[83, 4], [88, 14]], { v: 10 })];
+      } },
+      bigBoom: { p: 2, gap: 0.14, len: 1.4, pk: 0.286, n: 2, cents: 35, make: function (k) {   // two blasts on two channels, one kick channel re-keyed, the DAC's boom under the first
+        return [tk(PT.boom, 0, [[57, 40]], { m: [0, 1, -14, 255], b: 1 }), tk(PT.boom, 0.14, [[52, 34]], { m: [0, 1, -14, 255], b: 1, v: 6 }), kicks(0, [[45, 8], [40, 10]]),
+          dac(0, { d: 1.1, f0: [150, 130][k], e: 0.2, g: 0.3 }), psg(0, ramp(3, 15, 16))];
+      } },
+      cancel: { p: 1, gap: 0.2, len: 0.55, pk: 0.137, make: function () {                     // the bullets turn to citations: a cascade, its echo, and a falling fizz
+        var s = [[96, 2], [93, 2], [91, 2], [88, 2], [86, 2], [84, 12]];
+        return [tk(PT.ping, 0, s), tk(PT.ping, 0.05, s, { v: 10 }), tk(PT.fizz, 0, [[96, 14]], { v: 8, m: [0, 1, -20, 255] })];
+      } },
+      chainBreak: { p: 1, gap: 0.3, len: 0.42, pk: 0.085, make: function () {
+        return [brassT(0, [[67, 8], [60, 13]], { m: [0, 1, -8, 255], f: 2 })];
+      } },
+      hitHard: { p: 0, gap: 0.075, len: 0.07, pk: 0.139, l2: 1.5, n: 2, cents: 25, make: function (k) {   // the boss's armour at E6: both carriers at 2.6 kHz, sidebands from 4 kHz up, so 80% of its loudness is in 1.5-5 kHz, where the loop-2 scores are bright
+        return [tk(pat(PT.tank, function (p) { p[1] = [4, 5][k]; p[4][0] = [5, 7][k]; p[5][0] = 2; }), 0, [[88, 3]], { m: [0, 1, -20, 255] })];
+      } },
+      deflect: { p: 0, gap: 0.09, len: 0.07, pk: 0.09, n: 2, cents: 30, make: function (k) {
+        return [tk(pat(PT.tonk, function (p) { p[1] = [2, 4][k]; }), 0, [[68, 3]], { m: [0, 1, -30, 255] })];
+      } },
+      revenge: { p: 0, gap: 0.1, len: 0.1, pk: 0.056, n: 2, cents: 30, make: function (k) {      // backwards: it swells, then stops dead
+        return [tk(pat(PT.zapG, function (p) { p[4][3] = p[5][3] = p[6][3] = p[7][3] = 17; p[4][4] = p[5][4] = p[6][4] = p[7][4] = 0; p[5][7] = p[7][7] = 15; p[4][2] = [30, 26][k]; p[6][2] = 30; }), 0, [[81, 5]], { m: [0, 1, 40, 255] })];
+      } },
+      extend: { p: 3, gap: 0.3, len: 1.3, pk: 0.139, make: function () {
+        var s = [72, 76, 79, 84, 88, 91, 88, 91].map(function (m) { return [m, 4]; });
+        return [brassT(0, s.concat([[96, 32]])), tk(PT.bell, 4 / 60, s.map(function (x) { return [x[0] + 12, 4]; }).concat([[103, 30]]), { v: 12 }), brassT(32 / 60, [[91, 32]], { v: 6 })];
+      } },
+      death: { p: 3, gap: 0.2, len: 1.7, pk: 0.253, lfo: 3, make: function () {             // a scream falling away, two blasts and the DAC's boom
+        return [tk(PT.scream, 0, [[93, 57]], { m: [3, 1, -26, 255], b: 2 }), tk(PT.boom, 0, [[55, 50]], { m: [0, 1, -14, 255], b: 1 }), tk(PT.boom, 0.25, [[50, 40]], { m: [0, 1, -14, 255], b: 1, v: 6 }),
+          kicks(0, [[43, 8], [0, 7], [38, 10]]), dac(0, { d: 1.2, f0: 140, e: 0.22, g: 0.4 })];
+      } },
+      bomb: { p: 3, gap: 0.3, len: 2.8, pk: 0.34, lfo: 7, make: function () {            // the skull swells, then everything goes
+        return [tk(pat(PT.boom, function (p) { p[5][3] = p[6][3] = p[7][3] = 14; p[5][7] = p[6][7] = p[7][7] = 13; }), 0, [[36, 27]], { m: [0, 1, 30, 255], b: 2 }),
+          tk(PT.boom, 0.45, [[52, 60]], { m: [0, 1, -14, 255], b: 1 }), tk(PT.boom, 0.62, [[47, 50]], { m: [0, 1, -14, 255], b: 1, v: 4 }), kicks(0.45, [[40, 10]]),
+          tk(PT.rumble, 0.45, [[31, 70]], { m: [0, 2, -3, 255], b: 1, v: 4 }), dac(0.45, { d: 1.9, f0: 120, f1: 30, e: 0.35, k: 0.6, g: 0.38 }), psg(0.45, ramp(2, 15, 40))];
+      } },
+      alert: { p: 3, gap: 1, len: 1.0, pk: 0.146, lfo: 5, make: function () {
+        var s = [[81, 12], [76, 12], [81, 12], [76, 12]];
+        return [tk(PT.siren, 0, s, { f: 1 }), tk(PT.siren, 0, s.map(function (x) { return [x[0] - 12, x[1]]; }), { f: 1, v: 12 })];
+      } },
+      ding: { p: 1, gap: 0.5, len: 1.0, pk: 0.2, make: function () {                      // the typesetter's carriage-return bell: channel 3 in special mode, its partials 1, 2.76, 5.4
+        return [tk(PT.clang, 0, [[91, 4]], { x3: [17.6, 0, 29.2, 12] }), tk(PT.hiss, 0, [[100, 1]], { v: 10 })];
+      } },
+      klaxon: { p: 3, gap: 1, len: 3.45, pk: 0.212, lfo: 5, make: function () {            // WARNING: two tones, each whooping up, six times
+        var s = [], i;
+        for (i = 0; i < 6; i++) s.push([78, 17], [73, 17]);
+        return [tk(PT.siren, 0, s, { f: 1, m: [0, 1, 4, 255] }), tk(PT.siren, 0, s.map(function (x) { return [x[0] - 12, x[1]]; }), { f: 1, v: 10, m: [0, 1, 2, 255] })];
+      } },
+      phaseBreak: { p: 3, gap: 0.3, len: 1.6, pk: 0.33, make: function () {
+        var s = [79, 83, 86, 91, 95].map(function (m) { return [m, 4]; });
+        return blast(0, 55, 50).concat([tk(PT.clang, 0, [[55, 6]], { x3: [17.6, 0, 29.2, 12] }), tk(PT.bell, 0.35, s.concat([[98, 20]]), { v: 4 })]);   // clang: channel 3, special mode
+      } },
+      bossBreak: { p: 3, gap: 0.3, len: 1.9, pk: 0.284, lfo: 3, make: function () {        // a metal scream over the first blast
+        return [tk(PT.scream, 0.05, [[87, 90]], { m: [6, 2, -14, 255], b: 1 }), dac(0, { d: 1.2, f0: 130, e: 0.25, g: 0.4 })].concat(blast(0, 52, 60));
+      } },
+      bossDie: { p: 3, gap: 0.3, len: 3.4, pk: 0.34, make: function () {                   // four blasts, each bigger, the DAC under the last two, then the rumble and the debris
+        var d = [], f = 0, bm = { m: [0, 1, -14, 255], b: 1 };             // two blast channels re-keyed in turn (frames 0, 17, 37, 66), one kick channel, the DAC re-written
+        while (f < 120) { d.push([84 + rr() * 16, 1], [0, 1 + (rr() * (2 + f / 12) | 0)]); f += 1 + d[d.length - 1][1]; }
+        return [tk(PT.boom, 0, [[57, 20], [0, 17], [52, 30]], bm), tk(PT.boom, 17 / 60, [[55, 24, 2], [0, 25], [47, 80, 0]], bm), kicks(0, [[45, 8], [0, 9], [43, 8], [0, 12], [40, 8], [0, 21], [35, 12]]),
+          dac(37 / 60, { d: 29 / 60, f0: 140, e: 0.18, g: 0.3 }), dac(66 / 60, { d: 2.0, f0: 110, f1: 28, e: 0.45, k: 0.6, g: 0.33 }), tk(PT.rumble, 0.9, [[31, 140]], { m: [0, 3, -2, 255], b: 1, v: 6 }),
+          tk(PT.hiss, 1.2, d, { v: 8 }), psg(1.1, ramp(3, 15, 50), 3496)];
+      } },
+      count: { p: 2, gap: 0.3, len: 0.16, pk: 0.183, make: function () {
+        return [tk(PT.saw, 0, [[84, 3]], { v: 4 }), tk(PT.ping, 0, [[72, 6]])];
+      } },
+      gameOver: { p: 3, gap: 1, len: 1.8, pk: 0.241, make: function () {
+        return [brassT(0, [[67, 12], [63, 12], [60, 12], [55, 50]], { f: 1 }), brassT(36 / 60, [[51, 50]], { v: 6 })];
+      } },
+      pause: { p: 2, gap: 0.08, len: 0.17, pk: 0.17, make: function () {
+        return [tk(PT.saw, 0, [[88, 4], [81, 5]], { f: 1, v: 2 })];
+      } },
+      beamWarn: { p: 2, gap: 0.5, len: 1.1, pk: 0.137, lfo: 6, make: function () {            // the True Last Boss's lasers, charging: a whine climbing from G5 (784 Hz) past 1.6 kHz under a
+        return [tk(pat(PT.whine, function (p) { p[5][3] = p[7][3] = 14; }), 0, [[79, 62]], { m: [0, 1, 22, 255] }),   // 46 Hz tremolo, its sidebands in 1.5-5 kHz over the tlb score (F-number 965 + 22 a frame to 2047 at 0.8 s)
+          tk(pat(PT.hiss, function (p) { p[4][3] = 12; }), 0, [[72, 60]], { m: [0, 1, 18, 255], b: 1, v: 14 })];
+      } },
+      beamFire: { p: 2, gap: 0.3, len: 0.62, pk: 0.212, make: function () {                  // ... and biting
+        return [tk(PT.boom, 0, [[52, 30]], { m: [0, 1, 6, 1], b: 1 }), tk(PT.buzz, 0, [[43, 30]], { a: [0, 6], v: 4 }), tk(PT.hiss, 0, [[96, 3]], { v: 2 })];
+      } },
+      beamHum: { p: 2, loop: 1, len: 0.5, pk: 0.048, make: function () {                    // ... and the drone while they stay lethal: a 100 Hz growl and an FM-noise sizzle 15 dB under it
+        return [tk(PT.beam, 0, [[{ hz: 100, blk: 2 }, 33]], { a: [0, 3, 6] }), tk(pat(PT.fizz, function (p) { p[5][4] = 0; }), 0, [[{ hz: 1600, blk: 5 }, 33]], { v: 18 })];
+      } },
+      coreOpen: { p: 2, gap: 0.3, len: 0.65, pk: 0.158, make: function () {
+        var s = [[76, 3], [80, 3], [83, 3], [88, 22]];
+        return [tk(PT.bell, 0, s), tk(PT.bell, 0.05, s, { v: 10 }), tk(pat(PT.hiss, function (p) { p[4][3] = 16; }), 0, [[60, 18]], { m: [0, 1, 40, 255], b: 1, v: 18 })];
+      } },
+      coreShut: { p: 2, gap: 0.3, len: 0.55, pk: 0.27, make: function () {
+        return [tk(PT.clang, 0, [[49, 6]], { x3: [17.6, 0, 29.2, 12] }), tk(PT.kick, 0, [[43, 8]], { m: [0, 1, -40, 255], b: 1 }), tk(PT.hiss, 0.03, [[84, 2]], { v: 12 })];
+      } },
+      rankUp: { p: 1, gap: 1, len: 0.75, pk: 0.143, make: function () {                     // a minor second, low: the reviewers are getting organised
+        return [brassT(0, [[45, 36]], { f: 2 }), brassT(0, [[46, 36]], { f: 2, v: 2 })];
+      } },
+      respawn: { p: 1, gap: 0.5, len: 0.75, pk: 0.15, make: function () {
+        return [tk(pat(PT.hiss, function (p) { p[4][3] = 13; }), 0, [[48, 38]], { m: [0, 1, 30, 255], b: 2, v: 6, f: 6 }), tk(PT.saw, 0, [[55, 36]], { m: [0, 1, 20, 255], b: 2, v: 14, f: 6 })];
+      } },
+      flyOff: { p: 3, gap: 1, len: 1.95, pk: 0.24, make: function () {
+        return [tk(pat(PT.boom, function (p) { p[4][3] = p[5][3] = p[6][3] = p[7][3] = 13; p[4][4] = p[5][4] = p[6][4] = p[7][4] = 0; p[4][2] = 14; }), 0, [[36, 100]], { m: [0, 1, 12, 255], b: 2, f: 20 }),
+          tk(PT.saw, 0.2, [[43, 80]], { m: [0, 1, 14, 255], b: 2, v: 16, f: 20 }), tk(PT.bell, 1.35, [[100, 20]], { v: 2 })];
+      } },
+      stamp: { p: 3, gap: 1, len: 0.5, pk: 0.33, make: function () {                      // PUBLISHED! / TENURED!: the rubber stamp and its rebound
+        return [tk(PT.kick, 0, [[43, 14]], { m: [0, 1, -45, 255], b: 1 }), tk(PT.hiss, 0, [[70, 2]], { v: 4, m: [0, 1, -60, 255] }), tk(PT.kick, 0.075, [[50, 6]], { m: [0, 1, -60, 255], b: 1, v: 10 })];
+      } },
+      firework: { p: 1, gap: 0.15, len: 1.0, pk: 0.2, n: 2, cents: 60, make: function () {  // a pop, then its crackle: FM noise retriggered, thinning out
+        var d = [], f = 0;
+        while (f < 48) { d.push([86 + rr() * 14, 1], [0, 1 + (rr() * (1 + f / 8) | 0)]); f += 1 + d[d.length - 1][1]; }
+        return [tk(PT.pop, 0, [[62, 6]], { m: [0, 1, -60, 255], b: 1 }), tk(PT.hiss, 0.12, d, { v: 6 })];
+      } }
+    };
+    var SHOTS = ['shotR', 'shotB', 'shotG'], LASERS = ['laserR', 'laserB', 'laserG'], LADDER = [0, 2, 4, 7, 9, 12, 14, 16];   // from G5: the top rung is B6, under 2 kHz
+    var FIRST = ['start', 'shotR', 'hit', 'bomb', 'death', 'laserOn', 'laserR', 'laserHit', 'pop', 'boom', 'medal', 'bigBoom', 'cancel', 'shotB', 'shotG',
+      'laserB', 'arcB', 'laserG', 'power', 'weapon', 'speed', 'bombUp', 'bonus', 'respawn', 'chainBreak', 'extend', 'pause'];   // the head of the queue: what a fresh game can ask for first
+    (function () { for (var k in FX) if (FX.hasOwnProperty(k)) { FXI[k] = FXN.length; FXN.push(k); } LASTV = new Int8Array(FXN.length); })();
     var idleReq = 0;
     function warmIdle() {                                                 // the queue works in the browser's idle time; without idle callbacks (Safari), 3 ms after each frame
       if (!self.active || !AC || !WQ.length) return;
@@ -472,10 +574,12 @@
       if (WANT[nm]) { WANT[nm] = 0; nWant--; }
       if (p && p.t >= 0) { d = AC.currentTime - p.t; p.t = -1; if (d <= 0.25) { if (d > lateMax) lateMax = d; play(nm, p.r, p.k); } else drops++; }
     }
-    function mkBus(ctx) {                                                 // limiter → trim: a pile-up (a boss dying under a bomb) squashes rather than clips
-      var lim = ctx.createDynamicsCompressor(), o = ctx.createGain();      // the low threshold keeps the big blasts near 0.38, leaving the music's peaks (up to 0.78) room in the OS mix; the trim keeps the shots where they were
-      lim.threshold.value = -13; lim.knee.value = 2; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.15; o.gain.value = 0.59;
-      lim.connect(o); return [lim, o];
+    var CEIL = null;
+    function mkBus(ctx) {                                                 // trim → limiter → gain (small-signal 1.33: Chrome adds make-up gain) → a soft ceiling, linear to 0.35 and never
+      var pre = ctx.createGain(), lim = ctx.createDynamicsCompressor(), o = ctx.createGain(), sh = ctx.createWaveShaper(), n = 4097, i, x, s;
+      pre.gain.value = 0.5; lim.threshold.value = -13; lim.knee.value = 2; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.15; o.gain.value = 1.18;
+      if (!CEIL) { CEIL = new Float32Array(n); for (i = 0; i < n; i++) { x = i / 2048 - 1; s = Math.abs(x); CEIL[i] = s <= 0.35 ? x : (x < 0 ? -1 : 1) * (0.35 + 0.07 * Math.tanh((s - 0.35) / 0.07)); } }
+      sh.curve = CEIL; pre.connect(lim); lim.connect(o); o.connect(sh); return [pre, sh];   // above 0.42: it shaves the loop-2 hit, a bomb or a pile-up so a score peak has room
     }
     function audioInit() {
       try {
@@ -500,9 +604,9 @@
         if (v.pri <= f.p && sc < bs) { bs = sc; best = i; }
       }
       if (free >= 0) best = free; else if (best < 0) { drops++; return false; }
-      gates[name] = t; v = VOX[best]; nb = bufs.length;
+      gates[name] = t; v = VOX[best]; nb = f.l2 ? bufs.length >> 1 : bufs.length;
       if (!(k >= 0)) k = nb > 1 ? (LASTV[fi] + 1 + (pr0() * (nb - 1) | 0)) % nb : 0;
-      LASTV[fi] = k;
+      LASTV[fi] = k; if (f.l2 && L2) k += nb;                           // the second loop's louder copy
       pr = (rate || 1) * (f.cents ? Math.pow(2, (pr0() * 2 - 1) * f.cents / 1200) : 1);
       if (v.end > t) { steals++; alive--; at = t + 0.006; v.g.gain.setTargetAtTime(0, t, 0.0015); try { v.s.stop(at); } catch (e) {} }
       s = AC.createBufferSource(); s.buffer = bufs[k]; s.playbackRate.value = pr; s.connect(v.g); v.g.gain.setValueAtTime(1, at); s.start(at);
@@ -2051,8 +2155,10 @@
         },
         sfx: {                                                                 // the sound bank, for offline measurement
           names: function () { return FXN.slice(); },
-          spec: function (n) { var f = FX[n]; return f ? { p: f.p, gap: f.gap || 0, len: f.len, pk: f.pk, lp: f.lp, n: f.n || 1, cents: f.cents || 0, loop: !!f.loop } : null; },
-          render: function (n, rate) { return FX[n] ? renderRaw(n, rate || 48000) : null; },
+          spec: function (n) { var f = FX[n]; return f ? { p: f.p, gap: f.gap || 0, len: f.len, pk: f.pk, l2: f.l2 || 0, lp: M1, n: f.n || 1, cents: f.cents || 0, loop: !!f.loop, lfo: f.lfo === undefined ? -1 : f.lfo } : null; },
+          render: function (n, rate, parts, raw) { return FX[n] ? renderRaw(n, rate || 48000, parts || 0, !!raw) : null; },   // parts: 1 FM, 2 DAC, 4 PSG (0: all); raw: one full channel = 1, not levelled; an l2 sound's second-loop copies follow its variants
+          ym: function (sc, secs, lfo) { return ymScore(sc, secs, lfo); },     // a score straight off the chip at 53,267 Hz, before the output stage
+          chip: { rate: FS, patches: PT },
           play: function (n, rate) { return FX[n] && !FX[n].loop ? play(n, rate) : false; },
           bus: function (ctx) { var c = mkBus(ctx); c[1].connect(ctx.destination); return c[0]; },
           log: function () { var o = [], i; for (i = 0; i < logN; i++) o.push([+LOGT[i].toFixed(3), LOGN[i] === 255 ? 'hush' : LOGN[i] === 254 ? 'beamOff' : FXN[LOGN[i]], +LOGR[i].toFixed(4), LOGK[i]]); return o; },
