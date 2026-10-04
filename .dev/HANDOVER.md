@@ -1,4 +1,46 @@
-# Handover — astheeggeggs.github.io (updated 2026-09-27; the 2026-09-21 text follows below)
+# Handover — astheeggeggs.github.io (updated 2026-10-04; the 2026-09-21 text follows below)
+
+## 2026-09-29: shooter SFX on a YM2612 model; SFX levelled under the music: DONE, APPROVED, committed
+Duncan, verbatim: "the sound effects aren't yamaha enough on the shooter section. Also, now the soundtrack is too
+quiet by comparison." riff.js / riff2.js are untouched (hash-checked); the fix is all on the SFX side.
+Workflow `wf_a44e617c-daa` (session 142cdeff) finished: meter, YM2612 rebuild, level passes, 5 reviews, 9 skeptics,
+2 fixers, integration. All results: `.dev/tmp/resume/wf_a44e617c-results.json` (to the verify stage) and
+`.dev/tmp/resume/yamaha-summary.txt` (fixes and integration). Duncan approved the
+sound on 2026-10-04 and the WIPs were squashed into four commits after `8a063df` (shooter SFX, first-person levels,
+removal of unused leftovers, docs); the pre-squash history is on branch `backup/pre-squash-2026-10-04`. Not pushed.
+
+- shmup.js: SMPS-style effect scores on a YM2612 model (53,267 Hz, ladder effect, Model 1 low-pass then linear
+  resampling, FM-feedback noise, DAC booms); modulators now sustain through each sound (no near-sine cues); a soft
+  ceiling after the bus limiter; hitHard's carriers at 2.6 kHz; beamWarn sweeps 784-1663 Hz.
+- fpsfx.js: MIX tiers per sound (gun -19.5 dB, routine -10.5, BFG -13, hurt -10/-12, one-offs -4 to -8), a
+  brighter weak-point tone at low steps, a 2.6 kHz edge on heart.lost, hit.crit as an unducked accent.
+- Shared meter: `node .dev/tmp/mixmeter/mix.mjs editor|reviewer2|shmup1|shmup2|tlb --port <p> --profile <n>`.
+
+| section (SFX minus music, median / p90 dB; rule <= -9 / <= -4) | what Duncan heard | now |
+|---|---|---|
+| EDITOR fight (paper) | +0.4 / +2.1 | -14.7 / -6.0 PASS |
+| EDITOR fight, BFG held | about -3 / -0.3 | -9.8 to -10.1 / -5.0 to -5.3 PASS |
+| REVIEWER 2 fight | +0.7 / +4.4 | -13.0 / -4.3 PASS (thin) |
+| shooter stage 1 | -10.0 / -2.8 | -14.5 / -9.7 PASS |
+| shooter loop 2 | -9.4 / -2.2 | -10.1 / -6.3 loudness PASS; hits masked 4-9 of 223 (was 121) |
+| True Last Boss | -11.8 / -5.3 | -11.9 / -7.1 loudness PASS; hitHard masked 58-62 of 208 (was 107) |
+
+**Decisions for Duncan:** (1) the TLB boss-hit sound is still masked about 30% of the time in the brightest
+passages; +3.5 dB on hitHard cuts that to 8% but costs 2.7 dB of the music's lead (`mix.mjs tlb --gain
+hitHard=3.5`). (2) Timbre changes needing his OK: hitHard up an octave is APPROVED, tentatively (2026-10-04: "I
+like after I think"; already the shipped voicing, no change; `_hitHard-AB` was never rendered). Also APPROVED
+2026-10-04 ("keep the new"), all already shipped: the brighter weak-point tone (`sfx-fps/_hit.weak-before-after.wav`),
+the heart-lost edge (`sfx-fps/_heart.lost-before-after.wav`), and the shooter fix pass (`sfx-shmup-ym/_fix-AB.wav`).
+Decision (1) DECIDED 2026-10-04: no hitHard gain; "keeping the music loud is fine". Accept the ~30% TLB masking.
+**Duncan can only play .wav, not .m4a:** every audition file below has a .wav twin beside it; point him at those,
+and render any new audition as .wav.
+**Minor, open:** first-person music + SFX can exceed 1.0 for under 0.1 ms (EDITOR 3 samples, REVIEWER 2 up to 4);
+a soft ceiling on the FPSFX bus like the shooter's would likely remove it (untested). The meter's editor log lacks
+held BFG fire (the fixer's `.dev/tmp/fpsfx/fix3/lib.mjs` has it) and its shooter replay overstates loop-2 misses
+(use `--engine`).
+**Audition:** `.dev/tmp/render/mix/*-mix.m4a` vs `*-mix-before.m4a` (five sections, 60 s each); the shooter bank
+before/after at matched loudness: `.dev/tmp/integ3/audition/shmup-short-montage-A-before.m4a` vs
+`shmup-short-montage-B-new-matched.m4a`.
 
 ## 2026-09-28: SFX upgrade + first person only after eight facts (built, tested, committed, not pushed)
 Duncan (after playing): "upgrade the sound effects for each section. For the shmup section, take inspiration from
@@ -150,9 +192,9 @@ Both reviewers' full reports are in `wf_f840f0ef-470/journal.jsonl`.
   The orchestrator's own checklist scripts are in `.dev/tmp/orch-verify/` (v1 regression, v2 the real
   8-fact trigger, v3 the boss fight, v4 the shooter, v5 music, v6 static hygiene, v7 reviewer-AI stalls,
   v8 the fountain, v9 the title sequence). `.dev/tmp/` is gitignored, so they are scratch, not deliverables.
-- Private preview artifact: https://claude.ai/code/artifact/cc1d096b-aa50-42df-8d1b-bb84423fa908
-  Rebuild with `bundle exec jekyll build && python3 .dev/bundle-artifact.py`, then Artifact publish with
-  that `url`. **Only when Duncan asks.**
+- Private preview artifact: https://claude.ai/artifact/59tSZLwvnTzgK5Kto7Gr43 (published 2026-09-28; the older
+  previews were deleted at Duncan's request). jekyll serve keeps `_site/` current, so rebuild with
+  `python3 .dev/bundle-artifact.py`, then Artifact publish with that `url`. **Only when Duncan asks.**
 - Numbers hard-coded on pages (citations 15,821, h-index 28, 16 biobanks, 1.2M) came from Scholar on
   2026-09-02 and drift.
 

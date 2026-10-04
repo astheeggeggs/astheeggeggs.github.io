@@ -145,9 +145,15 @@ playing them is cheap.
   arcade gun cracks, flesh hits and weak-point tones. `FPSFX.kit(audioContext)`
   returns the kit; `.dev/sfx-contract.md` lists every sound, its level and its use.
 - **Shooter** (inside `shmup.js`): a Mega Drive kit after M.U.S.H.A. Aleste,
-  with a small 4-operator FM voice and the PSG's square and noise channels. The
-  three weapon colours sound different, and `?shmupdbg=1` exposes the bank as
-  `__qs.sfx`.
+  written as Sega-style sound-effect scores and rendered on a model of the
+  Yamaha YM2612 (4-operator FM at the chip's 53,267 Hz, its 9-bit DAC and ladder
+  distortion, the Model 1 output filter), with low-rate 8-bit DAC booms and a
+  little PSG noise. The three weapon colours sound different, and
+  `?shmupdbg=1` exposes the bank as `__qs.sfx`.
+
+The effects sit under the music: in sustained action they are about 10-15 dB
+quieter (K-weighted), and one-off events such as a boss's death reach the
+music's level at most. `.dev/tmp/mixmeter/mix.mjs` measures each section.
 
 The third-person town keeps its square-wave blips and Banjo-style voices, and the
 fountain level keeps its own sounds.

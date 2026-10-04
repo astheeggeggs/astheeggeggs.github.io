@@ -32,6 +32,7 @@ out = '''<title>Palmer's Progress</title>
 %s
 .preview-note { font-family: var(--mono); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: #0b0c10; background: #fcd34d; text-align: center; padding: .55rem 1rem; }
 html { scroll-behavior: smooth; }
+:root { color-scheme: dark; }
 </style>
 <a id="top"></a>
 <div class="preview-note">Preview for a few people. Not the live site yet. The game runs best on a laptop with sound on.</div>
