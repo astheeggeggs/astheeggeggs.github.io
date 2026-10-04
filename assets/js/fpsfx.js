@@ -16,7 +16,9 @@
    AudioContext (cached per context). Each sound is rendered ONCE, lazily on first play or ahead of time with
    kit.warm(), into an AudioBuffer (deterministic: a seeded PRNG per sound, so a render is reproducible), and each play
    costs one BufferSource and one gain (plus a gain and a stereo panner for a positioned sound). Per-name rate gates, per-name
-   polyphony and a global voice cap (the oldest one-shot is stolen with a 10 ms fade) keep a hail of shots cheap.
+   polyphony and a global voice cap (the oldest one-shot is stolen with a 10 ms fade) keep a hail of shots cheap, and
+   rapid weak-point hits duck each other so a burst is barely louder than one hit. Every sound sits under the music by its
+   mix tier (MIX, above the sounds): the score leads, the BFG held down included, and the cues that matter stay audible.
    One bus per context: gain → DynamicsCompressor (a limiter) → trim → a soft ceiling at 0.8 → destination.
 
      var k = FPSFX.kit(api.audio());
@@ -337,20 +339,37 @@
     amp(c, w, function (t) { return (t < 0.002 ? t / 0.002 : Math.exp(-(t - 0.002) / tau)) * (0.55 + 0.45 * bub(t)); });
     drive(w, 1.6); lp1(c, w, 6000); add(c, w, t0, a);
   }
-  // the weak-point confirmation: a bright FM strike that chirps up into its pitch and rings with time constant tau
-  function ding(c, t0, f, a, tau) {
-    var ix = Math.min(1, 1200 / f), L = tau * 4.5;     // the index eases off as the pitch climbs, so no sideband folds over
+  // the weak-point confirmation: a bright FM strike that chirps up into its pitch and rings with time constant tau.
+  // Over it, the presence ring (pr, default 1): the harmonics of f that fall near 2.6 kHz (1.8-3.6 kHz, weighted by
+  // closeness), ringing 1.6 times as long as the strike, so even the low steps (660 Hz) carry their energy in the 1.5-5 kHz
+  // band where a bright score cannot cover them: about four-fifths of each strike's loudness sits there at every k. It fades
+  // out as f itself climbs into the band (gone by 2 kHz). Fixed Schroeder-like phases keep the partials from piling up
+  // into one tall first peak, and give every pitch step the same peak-to-loudness ratio.
+  function ding(c, t0, f, a, tau, pr) {
+    var ix = Math.min(1, 1200 / f), L = tau * 4.5, m;     // the index eases off as the pitch climbs, so no sideband folds over
     var b = fm(c, L, env([0, f * 0.94, 0.012, f], true), 2, env([0, 3 * ix, tau * 0.7, 0.25 * ix], true)); amp(c, b, perc(0.0008, tau)); add(c, b, t0, a);
     var h = tone(c, Math.min(L, 0.1), 'sin', f * 2); amp(c, h, perc(0.0005, tau * 0.45)); add(c, h, t0, 0.35 * a);
     var q = tone(c, Math.min(L, 0.06), 'tri', f * 3); amp(c, q, perc(0.0005, Math.min(0.02, tau * 0.4))); add(c, q, t0, 0.15 * a);
     var n = white(c, 0.006); hp1(c, n, 5000); amp(c, n, perc(0.0002, 0.001)); add(c, n, t0, 0.3 * a);
+    var pres = (pr == null ? 1 : pr) * clamp((2000 - f) / 700, 0, 1); if (pres <= 0) return;
+    var tp = tau * 1.6, Lp = Math.min(tp * 4.5, 0.25), w = [], e = 0;
+    for (m = 2; m <= 6; m++) { w.push(Math.exp(-Math.pow(Math.log2(f * m / 2600) / 0.55, 2))); e += w[m - 2] * w[m - 2]; }
+    for (m = 2; m <= 6; m++) {
+      var wm = w[m - 2] / Math.sqrt(e); if (wm < 0.1) continue;       // the weights' energy is normalised: the same ring at any f
+      var p = tone(c, Lp, 'sin', env([0, f * m * 0.97, 0.012, f * m], true), { ph: m * (m - 1) / 10 % 1 }); amp(c, p, perc(0.003, tp)); add(c, p, t0, 1.3 * pres * wm * a);
+    }
   }
-  // an arcade damage buzzer note: square, a detuned saw and a sub pulse, driven hard
+  // an arcade damage buzzer note: square, a detuned saw and a sub pulse, driven hard. Over it, the note's own square
+  // through two band-passes at 2.6 kHz (a nasal edge on the buzz): the body puts only a sixth of its loudness in the
+  // 1.5-5 kHz band where a bright score leaves the least room, the edge lifts that to about two-thirds at the same peak,
+  // so the sting is heard over REVIEWER 2's score at a lower level (the contract's "Levels under the music")
   function sting(c, t0, d, f) {
     var a = tone(c, d, 'sqr', f), b = tone(c, d, 'saw', f * 1.0087), s = tone(c, d, 'sqr', f * 0.5, { pw: 0.25 });
     mixIn(a, b, 0.8); mixIn(a, s, 0.5);
-    filt(c, a, 'lp', env([0, 5200, d, 1400], true), 1.2); amp(c, a, env([0, 0, 0.003, 1, d * 0.7, 0.7, d, 0])); drive(a, 3); add(c, a, t0, 0.8);
+    var e = env([0, 0, 0.003, 1, d * 0.7, 0.7, d, 0]);
+    filt(c, a, 'lp', env([0, 5200, d, 1400], true), 1.2); amp(c, a, e); drive(a, 3); add(c, a, t0, 0.8);
     var n = white(c, 0.04); filt(c, n, 'bp', 2500, 1); amp(c, n, perc(0.0005, 0.012)); add(c, n, t0, 0.5);
+    var p = tone(c, d, 'sqr', f); filt(c, p, 'bp', 2600, 4); filt(c, p, 'bp', 2600, 4); amp(c, p, e); add(c, p, t0, 1.2);
   }
   // a brass-ish note for the fanfare: two saws, a filter that blares open and settles
   function brass(c, t0, d, f, a) {
@@ -363,24 +382,50 @@
   var DEBRIS = { f0: 700, f1: 2800, tau0: 0.001, tau1: 0.005, a0: 0.2, a1: 0.8 };
 
   /* ------------------------------------------------------------ the sounds
-     def fields: len (s, or fn(c) for length-baked sounds), level (peak of the rendered buffer, or fn(c)), vary (default random
-     pitch spread, ± semitones), gate (min s between starts), poly (max live voices of this name), variants,
-     crush [hz, bits] (synthesised at hz, quantised, held up to the output rate), rate (the synthesis rate of a clean
-     sound, default CLEAN_RATE, interpolated up), loop + xf (crossfade s) + xlin, bake 'dur' (dflt/min/max/q) or 'pitch'
-     (k 0..1 → 0..PITCH_SPAN semitones, rendered every PITCH_Q),
-     fin/fout (edge fades, ms), use (the host event it is for; the contract repeats it). */
+     def fields: len (s, or fn(c) for length-baked sounds), level (the sound's peak as balanced against the rest of the
+     kit, or fn(c)), mix (dB: where the sound sits under the music, below; the rendered buffer peaks at level x mix),
+     vary (default random pitch spread, ± semitones), gate (min s between starts), poly (max live voices of this name),
+     variants, duck (a family whose strikes soften each other, see DUCK_WIN; accent: this name softens its family's later
+     strikes but is never softened itself), crush [hz, bits] (synthesised at hz, quantised,
+     held up to the output rate), rate (the synthesis rate of a clean sound, default CLEAN_RATE, interpolated up), loop +
+     xf (crossfade s) + xlin, bake 'dur' (dflt/min/max/q) or 'pitch' (k 0..1 → 0..PITCH_SPAN semitones, rendered every
+     PITCH_Q), fin/fout (edge fades, ms), use (the host event it is for; the contract repeats it).
+
+     The mix (2026-09-29). The music leads: over a minute of either fight, the BFG held too, the routine sounds sit at
+     least 9 dB under the score most of the time (K-weighted, 400 ms windows; the contract's "Levels under the music" has
+     the measurements), and every cue is still heard in the 1.5-5 kHz band. A sound's mix is a tier, or its own figure:
+       gun   the paper-ball gun: under held fire it is the commonest sound, so it sits lowest
+       bfg   the BFG (charge, fire, blast; enemy.pain, the flinch on every hit, 3 dB under it). A held trigger fires it
+             every 1.3 s, so it is held fire, not a one-off: at the one-offs' level it was the bed of the whole fight
+       ord   everything routine: hits on cover, armour and flesh, the bosses' attacks, telegraphs and movement, pickups, UI
+       ding  the weak-point tone: with its presence ring it stays within 6 dB of a bright score's 1.5-5 kHz band on every hit.
+             hit.crit sits 3 dB under it: its triple strike is about 3 dB louder at the same peak, so a crit lands at
+             about a plain hit's level and stands out by its three rising strikes and the shriek. It is an accent of the
+             ding family (it softens the strikes after it but is never softened itself), so the chain it ends cannot
+             bury it
+       hurt  the damage sting (heart.lost), which carries the hit in the band; the grunt (player.pain) 2 dB under it
+       warn  the countdown and the rain marks' warning beeps (ui.tick, ui.go)
+       once  the one-off big events; the loudest (voices, roars, explosions, REJECTED!) take their own deeper figure, so
+             that none is louder than the music
+     REVIEWER 2's bright score leaves little room: its loudest tenth of windows is the weak-point tones, the crits and the
+     hurts themselves, so the cue levels here are the balance between being heard in its brightest bars and letting the
+     score lead (both met, with 0.1-0.2 dB to spare; the contract has the figures). */
+  var MIX = { gun: -19.5, bfg: -13, ord: -10.5, ding: -0.4, hurt: -10, warn: -1.9, once: -4 };
   var DEFS = {}, NAMES = [];
   function def(name, d) {
-    d.name = name; d.level = d.level || 0.5; d.vary = d.vary || 0; d.gate = d.gate == null ? 0.03 : d.gate; d.poly = d.poly || 2; d.variants = d.variants || 1;
+    d.name = name; d.level = d.level || 0.5; d.mix = d.mix || 0; d.vary = d.vary || 0; d.gate = d.gate == null ? 0.03 : d.gate; d.poly = d.poly || 2; d.variants = d.variants || 1;
     DEFS[name] = d; NAMES.push(name);
   }
+  // the rendered buffer's peak: the kit balance times the mix
+  function peakOf(d, c) { return (typeof d.level === 'function' ? d.level(c) : d.level) * Math.pow(10, d.mix / 20); }
   var PITCH_SPAN = 19, PITCH_Q = 2;
-  // clean sounds are synthesised at no more than 32 kHz: interpolating up to 44.1/48 kHz puts every image above 16 kHz
+  // clean sounds are synthesised at no more than 32 kHz and interpolated up: the image of a component at f lands at
+  // 16 kHz + f at 48 kHz (12.1 kHz + f at 44.1 kHz), and the interpolation takes it down (about 40 dB at f = 2.6 kHz)
   var CLEAN_RATE = 32000;
   function durLen(pad) { return function (c) { return c.dur + pad; }; }
 
   // ---- weapons
-  def('gun', { use: 'the paper-ball rebuttal leaving the hand (quest.js fire())', len: 0.3, level: 0.48, vary: 0.7, gate: 0.05, poly: 4, variants: 3, make: function (c) {
+  def('gun', { use: 'the paper-ball rebuttal leaving the hand (quest.js fire())', len: 0.3, level: 0.48, mix: MIX.gun, vary: 0.7, gate: 0.05, poly: 4, variants: 3, make: function (c) {
     var v = c.v, body = [185, 200, 172][v], fc = [2900, 3300, 2600][v];
     // the crack is the main layer: noise band-passed at 2-4 kHz, falling slightly, driven hard, gone in about 80 ms
     var n = white(c, 0.012); hp1(c, n, 4000); amp(c, n, perc(0.0002, 0.0016)); add(c, n, 0, 0.4);
@@ -396,17 +441,17 @@
     drive(c.out, 1.8);                                                                                       // one saturation over the lot: a denser report
     room(c, c.out, { size: 0.55, rt: 0.3, damp: 0.45, tone: 5000, mix: 0.3 });                               // a short room tail
   } });
-  def('reload', { use: 'the gun readied: entering first person, after RESUBMIT', len: 0.36, level: 0.6, vary: 0.5, gate: 0.2, poly: 1, make: function (c) {
+  def('reload', { use: 'the gun readied: entering first person, after RESUBMIT', len: 0.36, level: 0.6, mix: MIX.ord, vary: 0.5, gate: 0.2, poly: 1, make: function (c) {
     action(c, 0, 2150, 1);
     var s = white(c, 0.07), z = snh(c, 0.07, 190); for (var i = 0; i < s.length; i++) s[i] *= 0.4 + 0.6 * Math.abs(z[i]);
     filt(c, s, 'bp', env([0, 1300, 0.07, 2400], true), 3); amp(c, s, env([0, 0, 0.01, 1, 0.06, 0.6, 0.07, 0])); add(c, s, 0.02, 0.2);
     action(c, 0.105, 1620, 1.3);
     room(c, c.out, { size: 0.5, rt: 0.3, damp: 0.5, mix: 0.12 });
   } });
-  def('click', { use: 'a dry click: a trigger that does nothing, a menu tick', len: 0.07, level: 0.35, vary: 1, gate: 0.04, poly: 2, make: function (c) {
+  def('click', { use: 'a dry click: a trigger that does nothing, a menu tick', len: 0.07, level: 0.35, mix: MIX.ord, vary: 1, gate: 0.04, poly: 2, make: function (c) {
     action(c, 0, 3100, 0.6);
   } });
-  def('bfg.charge', { use: 'the BFG wind-up; pass dur = the wind-up (BFG_WIND)', bake: 'dur', dflt: 0.7, min: 0.2, max: 3, q: 0.05, len: durLen(0), level: 0.55, vary: 0.3, gate: 0.1, poly: 1, crush: [11025, 8], fout: 6, make: function (c) {
+  def('bfg.charge', { use: 'the BFG wind-up; pass dur = the wind-up (BFG_WIND)', bake: 'dur', dflt: 0.7, min: 0.2, max: 3, q: 0.05, len: durLen(0), level: 0.55, mix: MIX.bfg, vary: 0.3, gate: 0.1, poly: 1, crush: [11025, 8], fout: 6, make: function (c) {
     var D = c.dur, u = function (t) { return Math.min(1, t / D); }, i;
     var f = function (t) { return 90 * Math.pow(12, Math.pow(u(t), 1.3)); };
     var a = tone(c, D, 'raw', f, { vib: { r: 11, d: function (t) { return 0.01 + 0.04 * u(t); } } }), b = tone(c, D, 'sqr', function (t) { return f(t) * 1.498; });
@@ -418,7 +463,7 @@
     var n = white(c, D); filt(c, n, 'bp', function (t) { return 300 * Math.pow(14, u(t)); }, function (t) { return 1.5 + 5 * u(t); });
     amp(c, n, function (t) { return u(t) * u(t); }); add(c, n, 0, 0.9);
   } });
-  def('bfg.fire', { use: 'the BFG discharging (fireBfg())', len: 1.15, level: 0.8, vary: 0.4, gate: 0.15, poly: 2, crush: [11025, 8], make: function (c) {
+  def('bfg.fire', { use: 'the BFG discharging (fireBfg())', len: 1.15, level: 0.8, mix: MIX.bfg, vary: 0.4, gate: 0.15, poly: 2, crush: [11025, 8], make: function (c) {
     var s = tone(c, 0.9, 'sin', env([0, 96, 0.55, 33], true)); amp(c, s, perc(0.002, 0.28)); drive(s, 2.5); add(c, s, 0, 1.0);
     var b = tone(c, 0.7, 'raw', env([0, 180, 0.55, 46], true)), q = tone(c, 0.95, 'sqr', env([0, 74, 0.9, 30], true));
     mixIn(b, q, 0.7); filt(c, b, 'lp', env([0, 2400, 0.8, 260], true), 1.2); amp(c, b, perc(0.004, 0.3)); drive(b, 3); add(c, b, 0, 0.55);
@@ -426,14 +471,14 @@
     var n = white(c, 0.8); filt(c, n, 'lp', env([0, 5000, 0.6, 180], true), 0.9); amp(c, n, perc(0.003, 0.2)); drive(n, 2); add(c, n, 0, 0.7);
     var k = pops(c, 0.9, env([0, 120, 0.8, 5]), { f0: 1800, f1: 5200, tau0: 0.0005, tau1: 0.002 }); add(c, k, 0.02, 0.35);
   } });
-  def('bfg.blast', { use: 'a BFG ball bursting on anything (body, weak point, ground, a reviewer)', len: 1.6, level: 0.8, vary: 0.8, gate: 0.08, poly: 3, crush: [11025, 8], make: function (c) {
+  def('bfg.blast', { use: 'a BFG ball bursting on anything (body, weak point, ground, a reviewer)', len: 1.6, level: 0.8, mix: MIX.bfg, vary: 0.8, gate: 0.08, poly: 3, crush: [11025, 8], make: function (c) {
     var n = white(c, 0.1); hp1(c, n, 1200); amp(c, n, perc(0.0005, 0.03)); add(c, n, 0, 0.8);
     var f = fm(c, 0.6, env([0, 240, 0.5, 70], true), 1.41, env([0, 8, 0.4, 0.3], true)); amp(c, f, perc(0.002, 0.16)); add(c, f, 0, 0.5);
     var b = white(c, 1.5), r = brown(c, 1.5); mixIn(b, r, 3); filt(c, b, 'lp', env([0, 2600, 1.2, 110], true), 0.8); amp(c, b, perc(0.003, 0.36)); drive(b, 2.5); add(c, b, 0, 1.0);
     var s = tone(c, 1.2, 'sin', env([0, 72, 0.9, 28], true)); amp(c, s, perc(0.003, 0.4)); add(c, s, 0, 0.85);
     var k = pops(c, 1.4, env([0, 80, 1.3, 2]), POP); add(c, k, 0.05, 0.35);
   } });
-  def('plasma', { use: 'an electrical zap: BFG sparks, a failing light, a short circuit', len: 0.24, level: 0.45, vary: 1.5, gate: 0.04, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
+  def('plasma', { use: 'an electrical zap: BFG sparks, a failing light, a short circuit', len: 0.24, level: 0.45, mix: MIX.ord, vary: 1.5, gate: 0.04, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
     var f0 = [880, 760][c.v], a = tone(c, 0.22, 'sqr', env([0, f0, 0.14, f0 * 0.42], true), { pw: 0.3 }), r = tone(c, 0.22, 'sqr', 57);
     for (var i = 0; i < a.length; i++) a[i] *= r[i] > 0 ? 1 : 0.35;                                    // the buzz: gated at 57 Hz
     amp(c, a, perc(0.002, 0.07)); add(c, a, 0, 0.8);
@@ -442,13 +487,13 @@
   } });
 
   // ---- hits
-  def('hit.flesh', { use: 'a shot into flesh that is not a weak point: a reviewer, the Magician\'s sinew', len: 0.3, level: 0.55, vary: 2, gate: 0.03, poly: 3, variants: 3, make: function (c) {
+  def('hit.flesh', { use: 'a shot into flesh that is not a weak point: a reviewer, the Magician\'s sinew', len: 0.3, level: 0.55, mix: MIX.ord, vary: 2, gate: 0.03, poly: 3, variants: 3, make: function (c) {
     var v = c.v, s = tone(c, 0.12, 'sin', env([0, 150 + 20 * v, 0.06, 58], true)); amp(c, s, perc(0.0008, 0.026)); add(c, s, 0, 0.8);
     var n = white(c, 0.02); lp1(c, n, 3500); amp(c, n, perc(0.0003, 0.004)); add(c, n, 0, 0.5);
     squelch(c, 0.002, 0.2, 1100 - 80 * v, 330, 0.045, 0.95);
     for (var i = 0; i < 2 + v % 2; i++) { var d = tone(c, 0.018, 'sin', env([0, c.rs(900, 1300), 0.018, c.rs(280, 420)], true)); amp(c, d, perc(0.001, 0.006)); add(c, d, c.rs(0.04, 0.16), c.rs(0.12, 0.22)); }
   } });
-  def('hit.armour', { use: 'a shot off armour: the Magician\'s bone plates, the editor\'s tenure (body)', len: 0.5, level: 0.5, vary: 1.5, gate: 0.04, poly: 3, variants: 3, make: function (c) {
+  def('hit.armour', { use: 'a shot off armour: the Magician\'s bone plates, the editor\'s tenure (body)', len: 0.5, level: 0.5, mix: MIX.ord, vary: 1.5, gate: 0.04, poly: 3, variants: 3, make: function (c) {
     var v = c.v, f0 = [860, 980, 790][v];
     var n = white(c, 0.01); hp1(c, n, 3000); amp(c, n, perc(0.0002, 0.0015)); add(c, n, 0, 0.7);
     var m = modes(c, 0.4, f0, [1, 2.32, 4.25, 6.63, 9.38], [1, 0.7, 0.5, 0.35, 0.2], [0.12, 0.08, 0.05, 0.035, 0.02]); add(c, m, 0, 0.6);
@@ -459,7 +504,7 @@
     }
     room(c, c.out, { size: 0.5, rt: 0.25, damp: 0.3, mix: 0.1 });
   } });
-  def('hit.block', { use: 'a shot stopped by the editor\'s journal-cover guard (cardboard, not metal)', len: 0.2, level: 0.65, vary: 1.5, gate: 0.04, poly: 3, variants: 2, make: function (c) {
+  def('hit.block', { use: 'a shot stopped by the editor\'s journal-cover guard (cardboard, not metal)', len: 0.2, level: 0.65, mix: MIX.ord, vary: 1.5, gate: 0.04, poly: 3, variants: 2, make: function (c) {
     var v = c.v;
     // a dry, papery slap on a hardback: no thump, no room, nothing like the gun's crack-and-boom
     var n = white(c, 0.05); filt(c, n, 'bp', env([0, 1500 + 250 * v, 0.03, 950 + 150 * v], true), 1.8); amp(c, n, perc(0.0003, 0.012)); add(c, n, 0, 1);
@@ -469,15 +514,16 @@
     drive(c.out, 1.4);
   } });
   // hit.weak and hit.crit rise continuously with k: 19 semitones over k 0..1, rendered every PITCH_Q semitones and the
-  // rest played as playback rate (at most one semitone, so the length changes by at most 6%). The level falls 3.5 dB
-  // over the climb, so the brighter top steps sound no louder than the first
-  function tilt(peak) { return function (c) { return peak * Math.pow(10, -3.5 / 20 * c.st / PITCH_SPAN); }; }
-  def('hit.weak', { use: 'a weak-point hit (H-INDEX badge, CONFLICTS OF INTEREST); k = 1 - hp/maxHp raises the pitch', bake: 'pitch', len: 0.17, level: tilt(0.44), vary: 0.15, gate: 0.02, poly: 3, make: function (c) {
+  // rest played as playback rate (at most one semitone, so the length changes by at most 6%). With the presence ring the
+  // steps are equally loud up to the middle of the climb; above it the fundamental enters the band the ear (and the
+  // K-weighting) favours, so the level falls by `top` dB from step 10 to step 20: every step within about 1.5 dB
+  function tilt(peak, top) { return function (c) { return peak * Math.pow(10, -top / 20 * Math.max(0, c.st - 10) / 10); }; }
+  def('hit.weak', { use: 'a weak-point hit (H-INDEX badge, CONFLICTS OF INTEREST); k = 1 - hp/maxHp raises the pitch', bake: 'pitch', len: 0.25, level: tilt(0.44, 1.5), mix: MIX.ding, duck: 'ding', vary: 0.15, gate: 0.02, poly: 3, make: function (c) {
     ding(c, 0, 660 * Math.pow(2, c.st / 12), 1, 0.035);
   } });
-  def('hit.crit', { use: 'a critical weak-point hit (the Magician\'s every-fourth chained hit, the BFG on the badge); same k', bake: 'pitch', len: 0.42, level: tilt(0.46), vary: 0.1, gate: 0.03, poly: 2, make: function (c) {
+  def('hit.crit', { use: 'a critical weak-point hit (the Magician\'s every-fourth chained hit, the BFG on the badge); same k', bake: 'pitch', len: 0.42, level: tilt(0.46, 3), mix: MIX.ding - 3, duck: 'ding', accent: true, vary: 0.1, gate: 0.03, poly: 2, make: function (c) {
     var f = 660 * Math.pow(2, c.st / 12);
-    ding(c, 0, f, 1, 0.055); ding(c, 0.04, f * 1.5, 0.7, 0.055); ding(c, 0.08, f * 2, 0.6, 0.055);
+    ding(c, 0, f, 1, 0.055); ding(c, 0.04, f * 1.5, 0.7, 0.055, 0); ding(c, 0.08, f * 2, 0.6, 0.055, 0);   // the ring on the first strike only
     var sw = env([0, f * 1.5, 0.16, f * 3], true), s = tone(c, 0.26, 'sin', sw), s2 = tone(c, 0.26, 'sin', function (t) { return sw(t) * 2; });   // the shriek: sines, so nothing folds
     mixIn(s, s2, 0.4); amp(c, s, perc(0.004, 0.07)); add(c, s, 0.04, 0.35);
     room(c, c.out, { size: 0.7, rt: 0.35, damp: 0.3, mix: 0.1 });
@@ -489,18 +535,18 @@
     { f: [0, 150, 0.03, 172, 0.34, 96], vw: [0, 'ae', 0.1, 'a', 0.34, 'o'], rat: 0.6, rr: 37, br: 0.4, sub: 0.35, sc: 0.84, d: 0.4 },
     { f: [0, 205, 0.02, 230, 0.24, 140], vw: [0, 'e', 0.08, 'ae', 0.26, 'uh'], rat: 0.2, rr: 43, br: 0.25, sub: 0.1, sc: 0.95, d: 0.3 }
   ];
-  def('enemy.pain', { use: 'a reviewer hit but not retired ("I REMAIN UNCONVINCED"); a boss flinch', len: 0.44, level: 0.6, vary: 2.5, gate: 0.08, poly: 2, variants: 3, crush: [11025, 8], make: function (c) {
+  def('enemy.pain', { use: 'a boss flinch: the editor hit by the BFG (boss.js SFX.plasma, SFX.blast)', len: 0.44, level: 0.6, mix: MIX.bfg - 3, vary: 2.5, gate: 0.08, poly: 2, variants: 3, crush: [11025, 8], make: function (c) {
     var P = PAIN[c.v];
     add(c, voice(c, P.d + 0.02, { f0: env(P.f, true), vowel: vpath(P.vw), scale: P.sc, rattle: { r: P.rr, d: P.rat }, breath: P.br, sub: P.sub, jit: 0.035,
       amp: env([0, 0, 0.012, 1, P.d * 0.55, 0.85, P.d, 0]), drive: 2 }), 0, 1);
   } });
-  def('gib', { use: 'a meaty splat: something coming apart (a boss\'s last hit, a messy retirement)', len: 0.7, level: 0.7, vary: 1.5, gate: 0.1, poly: 2, crush: [11025, 8], make: function (c) {
+  def('gib', { use: 'a meaty splat: something coming apart (a boss\'s last hit, a messy retirement)', len: 0.7, level: 0.7, mix: MIX.once, vary: 1.5, gate: 0.1, poly: 2, crush: [11025, 8], make: function (c) {
     var s = tone(c, 0.25, 'sin', env([0, 110, 0.12, 40], true)); amp(c, s, perc(0.001, 0.06)); drive(s, 2); add(c, s, 0, 0.9);
     squelch(c, 0, 0.35, 900, 200, 0.07, 1.0);
     var cr = pops(c, 0.07, 400, { f0: 1800, f1: 3600, tau0: 0.0004, tau1: 0.0012, a0: 0.4, a1: 1 }); add(c, cr, 0.004, 0.5);   // bone
     for (var i = 0; i < 4; i++) squelch(c, c.rs(0.12, 0.5), 0.08, c.rs(1200, 1800), c.rs(300, 500), 0.02, c.rs(0.15, 0.3));    // bits landing
   } });
-  def('boss.roar', { use: 'a boss roar: the editor landing and changing phase, a big entrance', len: 2.3, level: 0.8, vary: 1.2, gate: 0.5, poly: 2, crush: [11025, 8], make: function (c) {
+  def('boss.roar', { use: 'a boss roar: the editor landing and changing phase, a big entrance', len: 2.3, level: 0.8, mix: -6.5, vary: 1.2, gate: 0.5, poly: 2, crush: [11025, 8], make: function (c) {
     var f0 = env([0, 58, 0.35, 84, 1.2, 70, 2.1, 42], true);
     add(c, voice(c, 2.25, { f0: f0, vowel: vpath([0, 'o', 0.4, 'a', 1.3, 'a', 2.1, 'u']), scale: 0.62, bw: 1.3, rattle: { r: 27, d: 0.45 }, breath: 0.28, sub: 0.55, jit: 0.025, tilt: 1300, body: 0.25,
       amp: env([0, 0, 0.14, 1, 1.35, 0.9, 2.2, 0]), drive: 1.8 }), 0, 1);
@@ -508,14 +554,14 @@
       amp: env([0, 0, 0.2, 1, 1.4, 0.85, 2.2, 0]), drive: 3 }), 0.02, 0.6);                                // a second throat for size
     var r = brown(c, 2.25); amp(c, r, env([0, 0, 0.2, 1, 1.5, 0.8, 2.2, 0])); add(c, r, 0, 0.35);
   } });
-  def('boss.screech', { use: 'a creature screech (the Magician hurt, enraged, or arriving)', len: 1.35, level: 0.65, vary: 1.2, gate: 0.4, poly: 2, crush: [16000, 10], make: function (c) {
+  def('boss.screech', { use: 'a creature screech (the Magician hurt, enraged, or arriving)', len: 1.35, level: 0.65, mix: -6.5, vary: 1.2, gate: 0.4, poly: 2, crush: [16000, 10], make: function (c) {
     var y = voice(c, 1.3, { f0: env([0, 520, 0.15, 790, 0.7, 700, 1.25, 430], true), vowel: vpath([0, 'i', 0.3, 'e', 0.9, 'ae', 1.25, 'a']), scale: 1.25, bw: 1.0, breath: 0.3, jit: 0.03,
       vib: { r: 11, d: 0.03 }, tilt: 6000, amp: env([0, 0, 0.03, 1, 0.9, 0.8, 1.3, 0]), drive: 1.8 });
     var rm = tone(c, 1.3, 'sin', 1370); for (var i = 0; i < y.length; i++) y[i] = y[i] * (0.62 + 0.38 * rm[i]);   // part ring-modulated: inhuman
     add(c, y, 0, 1);
     var h = white(c, 1.3); filt(c, h, 'hp', 5000, 0.7); amp(c, h, env([0, 0, 0.05, 1, 1.0, 0.6, 1.3, 0])); add(c, h, 0, 0.12);
   } });
-  def('boss.laugh', { use: 'the Magician\'s laugh (arrival, phase change, exit)', len: 1.3, level: 0.65, vary: 1, gate: 0.6, poly: 1, crush: [16000, 10], make: function (c) {
+  def('boss.laugh', { use: 'the Magician\'s laugh (arrival, phase change, exit)', len: 1.3, level: 0.65, mix: -4.5, vary: 1, gate: 0.6, poly: 1, crush: [16000, 10], make: function (c) {
     var T = [0, 0.16, 0.31, 0.45, 0.6];
     for (var i = 0; i < 5; i++) {
       var last = i === 4, d = last ? 0.55 : 0.13, fb = 245 - 20 * i;
@@ -524,7 +570,7 @@
     }
     room(c, c.out, { size: 1.1, rt: 0.9, damp: 0.5, mix: 0.18 });
   } });
-  def('windup', { use: 'a boss attack winding up; pass dur = the wind-up (boss.js charge(F.dur))', bake: 'dur', dflt: 1.0, min: 0.3, max: 4, q: 0.05, len: durLen(0.06), level: 0.6, vary: 0.5, gate: 0.2, poly: 1, crush: [11025, 8], make: function (c) {
+  def('windup', { use: 'a boss attack winding up; pass dur = the wind-up (boss.js charge(F.dur))', bake: 'dur', dflt: 1.0, min: 0.3, max: 4, q: 0.05, len: durLen(0.06), level: 0.6, mix: MIX.ord, vary: 0.5, gate: 0.2, poly: 1, crush: [11025, 8], make: function (c) {
     var D = c.dur, L = D + 0.06, u = function (t) { return Math.min(1, t / D); }, i;
     var f = function (t) { return 52 * Math.pow(3, u(t)); };
     var a = tone(c, L, 'raw', f, { jit: 0.02 }), b = tone(c, L, 'raw', function (t) { return f(t) * 1.5; });
@@ -536,7 +582,7 @@
     // the telegraph the ear catches: a whine climbing 700 Hz → 2.8 kHz, audible from the start, loudest as it fires
     var w = tone(c, L, 'tri', function (t) { return 700 * Math.pow(4, u(t)); }, { vib: { r: 13, d: 0.012 } }); amp(c, w, function (t) { return sw(t) * (0.6 + 0.4 * u(t)); }); add(c, w, 0, 0.45);
   } });
-  def('hiss', { use: 'the Magician\'s hiss before an attack or while exposed; pass dur', bake: 'dur', dflt: 0.8, min: 0.2, max: 3, q: 0.05, len: durLen(0.08), level: 0.45, vary: 1, gate: 0.15, poly: 2, make: function (c) {
+  def('hiss', { use: 'the Magician\'s hiss before an attack or while exposed; pass dur', bake: 'dur', dflt: 0.8, min: 0.2, max: 3, q: 0.05, len: durLen(0.08), level: 0.45, mix: MIX.ord, vary: 1, gate: 0.15, poly: 2, make: function (c) {
     var D = c.dur, L = D + 0.08, fl = smooth(c, L, 18);
     var sw = function (t) { return t < D ? 0.15 + 0.85 * Math.pow(t / D, 1.2) : Math.max(0, 1 - (t - D) / 0.08); };
     var n = white(c, L), h = white(c, L); filt(c, n, 'bp', env([0, 3200, D, 5200], true), 1.6); hp1(c, h, 5000); mixIn(n, h, 0.5);
@@ -545,22 +591,22 @@
   } });
 
   // ---- fire and magic
-  def('fireball.launch', { use: 'a fireball thrown (the Magician\'s burning manuscripts, the editor\'s orbs)', len: 0.5, level: 0.55, vary: 2, gate: 0.05, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
+  def('fireball.launch', { use: 'a fireball thrown (the Magician\'s burning manuscripts, the editor\'s orbs)', len: 0.5, level: 0.55, mix: MIX.ord, vary: 2, gate: 0.05, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
     var n = white(c, 0.45); filt(c, n, 'bp', env([0, 500, 0.06, 2600 - 400 * c.v, 0.4, 800], true), 1.4); amp(c, n, perc(0.015, 0.12)); drive(n, 2); add(c, n, 0, 1);
     var s = tone(c, 0.15, 'sin', env([0, 125, 0.1, 68], true)); amp(c, s, perc(0.003, 0.05)); add(c, s, 0, 0.45);
     var k = pops(c, 0.4, env([0, 90, 0.4, 10]), POP); add(c, k, 0.02, 0.25);
   } });
-  def('fireball.burst', { use: 'a fireball bursting: shot down, or landing (orb pop, ink stroke landing)', len: 0.65, level: 0.6, vary: 2, gate: 0.04, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
+  def('fireball.burst', { use: 'a fireball bursting: shot down, or landing (orb pop, ink stroke landing)', len: 0.65, level: 0.6, mix: MIX.ord, vary: 2, gate: 0.04, poly: 4, variants: 2, crush: [11025, 8], make: function (c) {
     var n = white(c, 0.6); filt(c, n, 'lp', env([0, 6000, 0.4, 700], true), 0.8); amp(c, n, perc(0.001, 0.1)); drive(n, 2.2); add(c, n, 0, 0.85);
     var k = pops(c, 0.6, env([0, 260, 0.55, 8]), POP); add(c, k, 0, 0.6);
     var s = tone(c, 0.14, 'sin', env([0, 115 - 10 * c.v, 0.1, 48], true)); amp(c, s, perc(0.001, 0.04)); add(c, s, 0, 0.55);
   } });
-  def('crackle', { use: 'a few pops of flame: a manuscript catching, scorch trails', len: 0.22, level: 0.35, vary: 3, gate: 0.06, poly: 3, variants: 3, make: function (c) {
+  def('crackle', { use: 'a few pops of flame: a manuscript catching, scorch trails', len: 0.22, level: 0.35, mix: MIX.ord, vary: 3, gate: 0.06, poly: 3, variants: 3, make: function (c) {
     var b = new Float32Array(len(c, 0.22)), k = 4 + c.v + Math.floor(c.r() * 2);
     for (var i = 0; i < k; i++) pop(c, b, i ? Math.floor(c.rs(0.01, 0.17) * c.sr) : 0, POP);      // the first pop is on the beat
     add(c, b, 0, 1);
   } });
-  def('teleport', { use: 'a teleport out: a reversed swell that stops dead', len: 0.62, level: 0.6, vary: 0.8, gate: 0.15, poly: 2, fout: 3, make: function (c) {
+  def('teleport', { use: 'a teleport out: a reversed swell that stops dead', len: 0.62, level: 0.6, mix: MIX.ord, vary: 0.8, gate: 0.15, poly: 2, fout: 3, make: function (c) {
     var L = 0.6, b = new Float32Array(len(c, L));
     var n = white(c, L); filt(c, n, 'bp', env([0, 5200, L, 700], true), 1.3); amp(c, n, perc(0.001, 0.14)); norm(n, 1); mixIn(b, n, 0.8);
     var f = fm(c, L, 820, 2.76, env([0, 5, L, 0.5], true)); amp(c, f, perc(0.001, 0.16)); mixIn(b, f, 0.5);
@@ -568,35 +614,35 @@
     room(c, b, { size: 1.0, rt: 0.6, damp: 0.3, mix: 0.3 });
     add(c, reverse(b), 0, 1);
   } });
-  def('appear', { use: 'a teleport in: arrival in a column of flame', len: 0.8, level: 0.65, vary: 1, gate: 0.12, poly: 2, make: function (c) {
+  def('appear', { use: 'a teleport in: arrival in a column of flame', len: 0.8, level: 0.65, mix: MIX.ord, vary: 1, gate: 0.12, poly: 2, make: function (c) {
     var n = white(c, 0.7); filt(c, n, 'lp', env([0, 3200, 0.5, 220], true), 1); amp(c, n, perc(0.004, 0.14)); drive(n, 1.8); add(c, n, 0, 0.9);
     var s = tone(c, 0.55, 'raw', env([0, 900, 0.5, 60], true)); filt(c, s, 'lp', 2500, 0.9); amp(c, s, perc(0.002, 0.12)); drive(s, 2); add(c, s, 0, 0.35);
     var f = fm(c, 0.5, 1200, 1.5, env([0, 4, 0.5, 0])); amp(c, f, perc(0.002, 0.1)); add(c, f, 0, 0.2);
     var t = tone(c, 0.3, 'sin', env([0, 95, 0.25, 40], true)); amp(c, t, perc(0.002, 0.08)); add(c, t, 0, 0.6);
     var k = pops(c, 0.7, env([0, 60, 0.7, 5]), POP); add(c, k, 0.05, 0.3);
   } });
-  def('flame', { use: 'LOOP: burning ground, a flame column, the line of fire; pass dur or stop()', loop: true, len: 2.65, xf: 0.25, rate: 22050, level: 0.6, vary: 1, gate: 0.1, poly: 3, make: function (c) {
+  def('flame', { use: 'LOOP: burning ground, a flame column, the line of fire; pass dur or stop()', loop: true, len: 2.65, xf: 0.25, rate: 22050, level: 0.6, mix: MIX.ord, vary: 1, gate: 0.1, poly: 3, make: function (c) {
     var L = 2.65, r = brown(c, L), wob = smooth(c, L, 3), fw = smooth(c, L, 1.3);
     filt(c, r, 'lp', function (t) { return 520 + 260 * fw(t); }, 0.9); amp(c, r, function (t) { return 0.8 + 0.2 * wob(t); }); add(c, r, 0, 0.9);
     // the roar's hiss and a dense crackle carry it at 1-4 kHz, where it can be heard over the music
     var m = white(c, L); filt(c, m, 'bp', function (t) { return 1500 + 500 * fw(t); }, 0.8); amp(c, m, function (t) { return 0.6 + 0.4 * wob(t); }); add(c, m, 0, 0.6);
     var k = pops(c, L, function (t) { return 40 + 25 * wob(t); }, POP); add(c, k, 0, 0.9);
   } });
-  def('drone', { use: 'LOOP: a menacing hum (the desperation ring); play with ttl, feed() every frame', loop: true, len: 2.05, xf: 0.05, xlin: true, rate: 11025, level: 0.45, vary: 0, gate: 0.2, poly: 2, make: function (c) {
+  def('drone', { use: 'LOOP: a menacing hum (the desperation ring); play with ttl, feed() every frame', loop: true, len: 2.05, xf: 0.05, xlin: true, rate: 11025, level: 0.45, mix: MIX.ord, vary: 0, gate: 0.2, poly: 2, make: function (c) {
     // every partial and LFO completes whole cycles in 2 s, so the loop is phase-continuous
     var L = 2.05, a = tone(c, L, 'saw', 55), b = tone(c, L, 'saw', 55.5), s = tone(c, L, 'sqr', 27.5), f = tone(c, L, 'saw', 82.5);
     mixIn(a, b, 1); mixIn(a, s, 0.6); mixIn(a, f, 0.25);
     filt(c, a, 'lp', function (t) { return 480 + 180 * Math.sin(TAU * 0.5 * t); }, 2.2);
     amp(c, a, function (t) { return 0.85 + 0.15 * Math.sin(TAU * 6 * t); }); drive(a, 1.5); add(c, a, 0, 1);
   } });
-  def('wind', { use: 'LOOP: an ill wind before the Magician arrives; pass dur', loop: true, len: 4.3, xf: 0.3, rate: 16000, level: 0.4, vary: 0, gate: 0.5, poly: 1, make: function (c) {
+  def('wind', { use: 'LOOP: an ill wind before the Magician arrives; pass dur', loop: true, len: 4.3, xf: 0.3, rate: 16000, level: 0.4, mix: MIX.once, vary: 0, gate: 0.5, poly: 1, make: function (c) {
     var L = 4.3, n = white(c, L), n2 = white(c, L);
     filt(c, n, 'bp', function (t) { return 520 + 260 * Math.sin(TAU * 0.25 * t) + 120 * Math.sin(TAU * 0.75 * t + 1); }, 7);
     filt(c, n2, 'bp', function (t) { return 900 + 300 * Math.sin(TAU * 0.5 * t + 2); }, 9); mixIn(n, n2, 0.6);
     amp(c, n, function (t) { return 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(TAU * 0.25 * t + 0.5)); }); add(c, n, 0, 1);
     var r = brown(c, L); lp1(c, r, 200); add(c, r, 0, 0.3);
   } });
-  def('dispel', { use: 'a curse lifted (the Magician\'s ring of fire dispelled)', len: 0.8, level: 0.5, vary: 0.5, gate: 0.2, poly: 1, make: function (c) {
+  def('dispel', { use: 'a curse lifted (the Magician\'s ring of fire dispelled)', len: 0.8, level: 0.5, mix: MIX.ord, vary: 0.5, gate: 0.2, poly: 1, make: function (c) {
     var s = tone(c, 0.35, 'sin', env([0, 1200, 0.3, 2400], true)); amp(c, s, perc(0.005, 0.12)); add(c, s, 0, 0.5);
     [0, 4, 7, 12].forEach(function (x, i) { var b = fm(c, 0.4, 1760 * Math.pow(2, x / 12), 2, env([0, 1.5, 0.3, 0.1], true)); amp(c, b, perc(0.002, 0.14)); add(c, b, 0.03 + i * 0.04, 0.35); });
     var n = white(c, 0.5); filt(c, n, 'lp', env([0, 2200, 0.45, 300], true), 1); amp(c, n, perc(0.003, 0.12)); add(c, n, 0, 0.4);
@@ -604,22 +650,22 @@
   } });
 
   // ---- movement, impacts, explosions
-  def('dash', { use: 'a lunge: the Magician\'s dash', len: 0.55, level: 0.6, vary: 1.5, gate: 0.15, poly: 2, make: function (c) {
+  def('dash', { use: 'a lunge: the Magician\'s dash', len: 0.55, level: 0.6, mix: MIX.ord, vary: 1.5, gate: 0.15, poly: 2, make: function (c) {
     var n = white(c, 0.5); filt(c, n, 'bp', env([0, 600, 0.18, 3000, 0.5, 900], true), 1.2); amp(c, n, env([0, 0, 0.18, 1, 0.5, 0])); add(c, n, 0, 0.9);
     var s = tone(c, 0.5, 'raw', env([0, 320, 0.5, 60], true)); filt(c, s, 'lp', 1400, 1); amp(c, s, perc(0.01, 0.14)); drive(s, 2); add(c, s, 0, 0.45);
     add(c, voice(c, 0.28, { f0: env([0, 190, 0.28, 120], true), vowel: vpath([0, 'a', 0.28, 'o']), scale: 0.8, rattle: { r: 34, d: 0.5 }, breath: 0.5, jit: 0.04,
       amp: env([0, 0, 0.02, 1, 0.28, 0]), drive: 2 }), 0.01, 0.35);
   } });
-  def('whoosh', { use: 'something light flying past: an orb lobbed, an ink stroke falling', len: 0.4, level: 0.4, vary: 2, gate: 0.08, poly: 3, variants: 2, make: function (c) {
+  def('whoosh', { use: 'something light flying past: an orb lobbed, an ink stroke falling', len: 0.4, level: 0.4, mix: MIX.ord, vary: 2, gate: 0.08, poly: 3, variants: 2, make: function (c) {
     var n = white(c, 0.38); filt(c, n, 'bp', env([0, 350 + 100 * c.v, 0.2, 1900 + 300 * c.v, 0.38, 700], true), 1.4);
     amp(c, n, function (t) { var a = 0.05 + 0.03 * c.v; return t < a ? Math.sin(Math.PI / 2 * t / a) : Math.max(0, 1 - (t - a) / (0.38 - a)); }); add(c, n, 0, 1);
   } });
-  def('slam', { use: 'a heavy ground hit: the editor\'s shockwave ring, the Magician\'s line of fire starting', len: 0.85, level: 0.8, vary: 1, gate: 0.1, poly: 2, crush: [22050, 10], make: function (c) {
+  def('slam', { use: 'a heavy ground hit: the editor\'s shockwave ring, the Magician\'s line of fire starting', len: 0.85, level: 0.8, mix: MIX.ord, vary: 1, gate: 0.1, poly: 2, crush: [22050, 10], make: function (c) {
     var s = tone(c, 0.7, 'sin', env([0, 112, 0.35, 30], true)); amp(c, s, perc(0.001, 0.18)); drive(s, 2); add(c, s, 0, 1);
     var n = white(c, 0.6); filt(c, n, 'lp', env([0, 1000, 0.5, 90], true), 0.9); amp(c, n, perc(0.001, 0.12)); drive(n, 1.8); add(c, n, 0, 0.75);
     var d = pops(c, 0.7, env([0, 90, 0.7, 4]), DEBRIS); add(c, d, 0.03, 0.3);
   } });
-  def('stomp', { use: 'a giant footstep (the editor walking); scale gain by distance', len: 0.4, level: 0.6, vary: 1.5, gate: 0.1, poly: 2, make: function (c) {
+  def('stomp', { use: 'a giant footstep (the editor walking); scale gain by distance', len: 0.4, level: 0.6, mix: MIX.ord, vary: 1.5, gate: 0.1, poly: 2, make: function (c) {
     var s = tone(c, 0.35, 'sin', env([0, 82, 0.2, 38], true)); amp(c, s, perc(0.001, 0.08)); drive(s, 1.6); add(c, s, 0, 1);
     var n = white(c, 0.2); lp1(c, n, 420); lp1(c, n, 420); amp(c, n, perc(0.001, 0.04)); add(c, n, 0, 0.5);
     // the heel coming down: a hard knock at 1-2 kHz and a crunch of paving, so the step reads on small speakers
@@ -627,21 +673,21 @@
     var m = modes(c, 0.1, 240, [1, 1.71, 2.53], [1, 0.5, 0.3], [0.03, 0.02, 0.012]); add(c, m, 0, 0.4);
     var d = pops(c, 0.3, env([0, 90, 0.3, 2]), DEBRIS); add(c, d, 0.01, 0.3);
   } });
-  def('quake', { use: 'the enormous landing (the editor falling on the town)', len: 3.0, level: 0.85, vary: 0.5, gate: 0.5, poly: 1, crush: [11025, 8], make: function (c) {
+  def('quake', { use: 'the enormous landing (the editor falling on the town)', len: 3.0, level: 0.85, mix: -5, vary: 0.5, gate: 0.5, poly: 1, crush: [11025, 8], make: function (c) {
     var s = tone(c, 2.0, 'sin', env([0, 120, 1.6, 24], true)); amp(c, s, perc(0.002, 0.5)); drive(s, 2.2); add(c, s, 0, 1);
     var w = tone(c, 1.4, 'raw', env([0, 55, 1.2, 28], true)); filt(c, w, 'lp', 320, 1); amp(c, w, perc(0.003, 0.4)); drive(w, 2.5); add(c, w, 0, 0.45);
     var n = white(c, 2.8), b = brown(c, 2.8); mixIn(n, b, 2); filt(c, n, 'lp', env([0, 1500, 2.4, 50], true), 0.8); amp(c, n, perc(0.002, 0.7)); drive(n, 2.5); add(c, n, 0, 0.9);
     var h = white(c, 0.4); filt(c, h, 'hp', env([0, 5000, 0.3, 800], true), 0.7); amp(c, h, perc(0.001, 0.08)); add(c, h, 0, 0.45);
     var d = pops(c, 2.8, env([0, 150, 2.6, 3]), DEBRIS); add(c, d, 0.05, 0.35);
   } });
-  def('explosion', { use: 'a big explosion (a boss blowing apart)', len: 1.8, level: 0.85, vary: 1.5, gate: 0.08, poly: 3, variants: 2, crush: [11025, 8], make: function (c) {
+  def('explosion', { use: 'a big explosion (a boss blowing apart)', len: 1.8, level: 0.85, mix: -8, vary: 1.5, gate: 0.08, poly: 3, variants: 2, crush: [11025, 8], make: function (c) {
     var v = c.v, n = white(c, 0.03); amp(c, n, perc(0.0003, 0.008)); add(c, n, 0, 1);
     var s = tone(c, 1.0, 'sin', env([0, 92 - 8 * v, 0.6, 30], true)); amp(c, s, perc(0.001, 0.3)); drive(s, 2); add(c, s, 0, 0.9);
     var b = white(c, 1.6), r = brown(c, 1.6); mixIn(b, r, 3); filt(c, b, 'lp', env([0, 3200, 1.3, 140], true), 0.8); amp(c, b, perc(0.002, 0.32 + 0.06 * v)); drive(b, 3); add(c, b, 0, 1);
     var k = pops(c, 1.6, env([0, 110, 1.5, 3]), POP); add(c, k, 0.03, 0.4);
     var rr = brown(c, 1.7); lp1(c, rr, 120); amp(c, rr, perc(0.02, 0.6)); add(c, rr, 0, 0.5);
   } });
-  def('shatter', { use: 'armour or glass shattering (the editor\'s death, the Magician\'s plates falling)', len: 0.95, level: 0.6, vary: 1, gate: 0.2, poly: 2, make: function (c) {
+  def('shatter', { use: 'armour or glass shattering (the editor\'s death, the Magician\'s plates falling)', len: 0.95, level: 0.6, mix: MIX.once, vary: 1, gate: 0.2, poly: 2, make: function (c) {
     var n = white(c, 0.25); hp1(c, n, 2500); amp(c, n, perc(0.0008, 0.05)); add(c, n, 0, 0.7);
     var k = white(c, 0.06); filt(c, k, 'bp', 600, 1.5); amp(c, k, perc(0.001, 0.03)); add(c, k, 0, 0.45);
     for (var i = 0; i < 14; i++) {
@@ -650,26 +696,26 @@
     }
     room(c, c.out, { size: 0.8, rt: 0.5, damp: 0.2, mix: 0.12 });
   } });
-  def('snap', { use: 'a finger snap (the Magician: "I WAS NEVER HERE.")', len: 0.2, level: 0.7, vary: 1, gate: 0.08, poly: 2, make: function (c) {
+  def('snap', { use: 'a finger snap (the Magician: "I WAS NEVER HERE.")', len: 0.2, level: 0.7, mix: MIX.once, vary: 1, gate: 0.08, poly: 2, make: function (c) {
     var n = white(c, 0.02); hp1(c, n, 2000); amp(c, n, perc(0.0002, 0.003)); add(c, n, 0, 1);
     var r = white(c, 0.08); filt(c, r, 'bp', 1850, 8); amp(c, r, perc(0.0003, 0.02)); add(c, r, 0, 0.8);
     var s = tone(c, 0.04, 'sin', 290); amp(c, s, perc(0.0005, 0.008)); add(c, s, 0, 0.4);
     room(c, c.out, { size: 0.9, rt: 0.45, damp: 0.4, mix: 0.2 });
   } });
-  def('omen', { use: 'a rumbling swell before a boss arrives (silence, then this); pass dur', bake: 'dur', dflt: 3, min: 0.5, max: 8, q: 0.1, len: durLen(0.1), level: 0.6, vary: 0, gate: 1, poly: 1, crush: [11025, 8], make: function (c) {
+  def('omen', { use: 'a rumbling swell before a boss arrives (silence, then this); pass dur', bake: 'dur', dflt: 3, min: 0.5, max: 8, q: 0.1, len: durLen(0.1), level: 0.6, mix: -4.5, vary: 0, gate: 1, poly: 1, crush: [11025, 8], make: function (c) {
     var D = c.dur, L = D + 0.1, u = function (t) { return Math.min(1, t / D); };
     var sw = function (t) { return t < D ? 0.05 + 0.95 * Math.pow(u(t), 2.2) : Math.max(0, 1 - (t - D) / 0.1); };
     var r = brown(c, L); filt(c, r, 'lp', function (t) { return 90 * Math.pow(260 / 90, u(t)); }, 1.4); amp(c, r, sw); add(c, r, 0, 0.9);
     var s = tone(c, L, 'sin', function (t) { return 38 * Math.pow(52 / 38, u(t)); }); amp(c, s, sw); add(c, s, 0, 0.7);
     add(c, voice(c, L, { f0: function (t) { return 41 + 6 * u(t); }, vowel: vpath([0, 'u', D, 'o']), scale: 0.5, bw: 2, rattle: { r: 17, d: 0.5 }, breath: 0.3, jit: 0.05, amp: sw, drive: 2 }), 0, 0.35);
   } });
-  def('whistle', { use: 'something falling from the sky (the editor\'s drop); pass dur', bake: 'dur', dflt: 2, min: 0.5, max: 6, q: 0.1, len: durLen(0.03), rate: 16000, level: 0.5, vary: 0, gate: 1, poly: 1, make: function (c) {
+  def('whistle', { use: 'something falling from the sky (the editor\'s drop); pass dur', bake: 'dur', dflt: 2, min: 0.5, max: 6, q: 0.1, len: durLen(0.03), rate: 16000, level: 0.5, mix: -5, vary: 0, gate: 1, poly: 1, make: function (c) {
     var D = c.dur, L = D + 0.03, u = function (t) { return Math.min(1, t / D); };
     var sw = function (t) { return t < D ? 0.1 + 0.9 * Math.sqrt(u(t)) : Math.max(0, 1 - (t - D) / 0.03); };
     var s = tone(c, L, 'sin', function (t) { return 2600 * Math.pow(0.1, u(t)); }, { vib: { r: 7, d: 0.006 } }); amp(c, s, sw); add(c, s, 0, 0.8);
     var n = white(c, L); filt(c, n, 'bp', function (t) { return 3000 * Math.pow(400 / 3000, u(t)); }, 3); amp(c, n, sw); add(c, n, 0, 0.35);
   } });
-  def('rocket', { use: 'ignition and a rocket roar (the blast-off); pass dur', bake: 'dur', dflt: 4, min: 1, max: 8, q: 0.1, len: durLen(0), level: 0.75, vary: 0, gate: 1, poly: 1, crush: [22050, 10], make: function (c) {
+  def('rocket', { use: 'ignition and a rocket roar (the blast-off); pass dur', bake: 'dur', dflt: 4, min: 1, max: 8, q: 0.1, len: durLen(0), level: 0.75, mix: -4.5, vary: 0, gate: 1, poly: 1, crush: [22050, 10], make: function (c) {
     var D = c.dur, fadeT = D * 0.8, rum = smooth(c, D, 12);
     var sw = function (t) { var a = t < 1.1 ? 0.25 + 0.75 * (t / 1.1) : 1; if (t > fadeT) a *= Math.max(0, 1 - (t - fadeT) / (D - fadeT)); return a; };
     var h = white(c, 0.15); hp1(c, h, 1500); amp(c, h, perc(0.0005, 0.04)); add(c, h, 0, 0.6);
@@ -681,7 +727,7 @@
   } });
 
   // ---- the player
-  def('player.pain', { use: 'the player hit (api.hurt): the grunt; pair with heart.lost', len: 0.36, level: 0.7, vary: 1, gate: 0.25, poly: 1, variants: 2, crush: [11025, 8], make: function (c) {
+  def('player.pain', { use: 'the player hit (api.hurt): the grunt; pair with heart.lost', len: 0.36, level: 0.7, mix: MIX.hurt - 2, vary: 1, gate: 0.25, poly: 1, variants: 2, crush: [11025, 8], make: function (c) {
     if (c.v === 0) {                                                                                       // "oof"
       add(c, voice(c, 0.28, { f0: env([0, 150, 0.03, 168, 0.26, 104], true), vowel: vpath([0, 'u', 0.08, 'uh', 0.24, 'uh']), breath: 0.25, rattle: { r: 40, d: 0.15 }, jit: 0.025,
         amp: env([0, 0, 0.006, 1, 0.14, 0.8, 0.26, 0]), drive: 1.8 }), 0, 1);
@@ -692,21 +738,21 @@
         amp: env([0, 0, 0.004, 1, 0.1, 0.75, 0.22, 0]), drive: 2.2 }), 0.002, 1);
     }
   } });
-  def('heart.lost', { use: 'a heart gone: the harsh arcade damage sting', len: 0.58, level: 0.45, vary: 0, gate: 0.3, poly: 1, make: function (c) {
+  def('heart.lost', { use: 'a heart gone: the harsh arcade damage sting', len: 0.58, level: 0.45, mix: MIX.hurt, vary: 0, gate: 0.3, poly: 1, make: function (c) {
     sting(c, 0, 0.13, 740); sting(c, 0.12, 0.42, 370);
   } });
-  def('player.death', { use: 'REJECTED!: the death scream and the body hitting the floor', len: 2.0, level: 0.8, vary: 0.5, gate: 1, poly: 1, crush: [11025, 8], make: function (c) {
+  def('player.death', { use: 'REJECTED!: the death scream and the body hitting the floor', len: 2.0, level: 0.8, mix: -7, vary: 0.5, gate: 1, poly: 1, crush: [11025, 8], make: function (c) {
     add(c, voice(c, 1.55, { f0: env([0, 235, 0.1, 292, 0.6, 205, 1.45, 82], true), vowel: vpath([0, 'a', 0.6, 'a', 1.1, 'o', 1.45, 'u']), breath: env([0, 0.2, 1.4, 0.5]),
       rattle: { r: 31, d: env([0, 0.05, 0.7, 0.2, 1.45, 0.8]) }, sub: env([0, 0, 0.8, 0.1, 1.45, 0.5]), jit: 0.03, vib: { r: 6, d: env([0, 0.005, 1.0, 0.04]) },
       amp: env([0, 0, 0.02, 1, 0.7, 0.95, 1.5, 0]), drive: 2 }), 0, 1);
     var s = tone(c, 0.5, 'sin', env([0, 92, 0.3, 34], true)); amp(c, s, perc(0.001, 0.14)); drive(s, 2); add(c, s, 1.42, 0.95);
     var n = white(c, 0.3); lp1(c, n, 500); lp1(c, n, 500); amp(c, n, perc(0.001, 0.06)); add(c, n, 1.42, 0.6);
   } });
-  def('pickup', { use: 'an item picked up (FACT FOUND, a heart)', len: 0.18, level: 0.2, vary: 0, gate: 0.05, poly: 2, crush: [11025, 8], make: function (c) {
+  def('pickup', { use: 'an item picked up (FACT FOUND, a heart)', len: 0.18, level: 0.2, mix: MIX.ord, vary: 0, gate: 0.05, poly: 2, crush: [11025, 8], make: function (c) {
     var a = tone(c, 0.06, 'sqr', env([0, 1000, 0.01, 1046], true)); amp(c, a, env([0, 0, 0.002, 1, 0.05, 0.7, 0.06, 0])); add(c, a, 0, 0.8);
     var b = tone(c, 0.1, 'sqr', env([0, 1500, 0.01, 1568], true)); amp(c, b, env([0, 0, 0.002, 1, 0.07, 0.6, 0.1, 0])); add(c, b, 0.06, 0.8);
   } });
-  def('powerup', { use: 'a power-up: the BFG handed over', len: 1.05, level: 0.55, vary: 0, gate: 0.5, poly: 1, crush: [22050, 8], make: function (c) {
+  def('powerup', { use: 'a power-up: the BFG handed over', len: 1.05, level: 0.55, mix: MIX.once, vary: 0, gate: 0.5, poly: 1, crush: [22050, 8], make: function (c) {
     [0, 4, 7, 12, 16, 19].forEach(function (x, i) { var b = fm(c, 0.3, 523.25 * Math.pow(2, x / 12), 2, env([0, 2.5, 0.2, 0.2], true)); amp(c, b, perc(0.002, 0.08)); add(c, b, i * 0.055, 0.55); });
     [1046.5, 1568, 2093].forEach(function (f) {
       var s = tone(c, 0.7, 'tri', f, { vib: { r: 12, d: 0.004 } });
@@ -715,24 +761,24 @@
   } });
 
   // ---- cards and stings
-  def('victory', { use: 'a boss beaten: the short fanfare under REBUTTAL/MANUSCRIPT ACCEPTED', len: 1.7, level: 0.6, vary: 0, gate: 1, poly: 1, crush: [22050, 10], make: function (c) {
+  def('victory', { use: 'a boss beaten: the short fanfare under REBUTTAL/MANUSCRIPT ACCEPTED', len: 1.7, level: 0.6, mix: MIX.once, vary: 0, gate: 1, poly: 1, crush: [22050, 10], make: function (c) {
     [392, 523.25, 659.25].forEach(function (f, i) { brass(c, i * 0.09, 0.12, f, 0.7); });
     [523.25, 659.25, 783.99, 1046.5].forEach(function (f) { brass(c, 0.28, 1.2, f, 0.45); });
     var n = white(c, 1.0); hp1(c, n, 6000); amp(c, n, perc(0.001, 0.35)); add(c, n, 0.28, 0.2);
     room(c, c.out, { size: 1.0, rt: 0.8, damp: 0.4, mix: 0.15 });
   } });
-  def('ui.confirm', { use: 'a menu confirm: PRESS START, RESUBMIT, a talk prompt accepted', len: 0.3, level: 0.2, vary: 0, gate: 0.05, poly: 2, make: function (c) {
+  def('ui.confirm', { use: 'a menu confirm: PRESS START, RESUBMIT, a talk prompt accepted', len: 0.3, level: 0.2, mix: MIX.ord, vary: 0, gate: 0.05, poly: 2, make: function (c) {
     var a = tone(c, 0.07, 'sqr', 1318.5); lp1(c, a, 6000); amp(c, a, env([0, 0, 0.002, 1, 0.06, 0.7, 0.07, 0])); add(c, a, 0, 0.7);
     var b = tone(c, 0.22, 'sqr', 1760), f = fm(c, 0.22, 1760, 2, env([0, 1.5, 0.2, 0])); lp1(c, b, 6000); mixIn(b, f, 0.5);
     amp(c, b, perc(0.002, 0.07)); add(c, b, 0.065, 0.75);
   } });
-  def('ui.tick', { use: 'a countdown beep (3, 2, 1)', len: 0.18, level: 0.24, vary: 0, gate: 0.2, poly: 1, make: function (c) {
+  def('ui.tick', { use: 'a countdown beep (3, 2, 1)', len: 0.18, level: 0.24, mix: MIX.warn, vary: 0, gate: 0.2, poly: 1, make: function (c) {
     var a = tone(c, 0.16, 'sqr', 440), f = fm(c, 0.16, 880, 1, 0.8); mixIn(a, f, 0.3); lp1(c, a, 5000); amp(c, a, env([0, 0, 0.003, 1, 0.12, 0.6, 0.16, 0])); add(c, a, 0, 1);
   } });
-  def('ui.go', { use: 'the countdown\'s GO', len: 0.55, level: 0.22, vary: 0, gate: 0.2, poly: 1, make: function (c) {
+  def('ui.go', { use: 'the countdown\'s GO', len: 0.55, level: 0.22, mix: MIX.warn, vary: 0, gate: 0.2, poly: 1, make: function (c) {
     var a = tone(c, 0.5, 'sqr', 880), b = tone(c, 0.5, 'sqr', 1320); mixIn(a, b, 0.6); lp1(c, a, 6000); amp(c, a, env([0, 0, 0.003, 1, 0.3, 0.7, 0.5, 0])); add(c, a, 0, 1);
   } });
-  def('ui.type', { use: 'a keystroke of the dossier card typing out', len: 0.04, level: 0.25, vary: 2, gate: 0.04, poly: 2, fout: 4, make: function (c) {
+  def('ui.type', { use: 'a keystroke of the dossier card typing out', len: 0.04, level: 0.25, mix: MIX.ord, vary: 2, gate: 0.04, poly: 2, fout: 4, make: function (c) {
     var n = white(c, 0.02); filt(c, n, 'bp', 3500, 2); amp(c, n, perc(0.0002, 0.003)); add(c, n, 0, 1);
     var a = tone(c, 0.012, 'sqr', 1320); amp(c, a, perc(0.0005, 0.004)); add(c, a, 0, 0.5);
   } });
@@ -765,11 +811,19 @@
     if (d.loop) b = loopify(c, b, d.xf || 0.1, d.xlin);
     if (R < sr) b = d.crush ? zoh(b, R, sr) : lerpUp(b, R, sr);
     if (!d.loop) fades(sr, b, d.fin == null ? 0.5 : d.fin, d.fout == null ? 12 : d.fout);
-    return norm(b, typeof d.level === 'function' ? d.level(c) : d.level);
+    return norm(b, peakOf(d, c));
   }
 
   /* ------------------------------------------------------------ the runtime kit: one per AudioContext */
   var CACHE = {}, STATS = { renders: 0, ms: 0, samples: 0 }, KITS = [], MAX_VOICES = 24;
+  // Ducking (def field duck): the strikes of one family soften each other, so a burst of weak-point hits is about as loud
+  // as one hit rather than stacking up with every shot (the loudest stretches of a fight were the densest hits). A strike
+  // plays at n ^ -DUCK_EXP, where n = 1 + the sum over the family's strikes in the last DUCK_WIN seconds of (1 - age /
+  // DUCK_WIN). A lone hit is untouched; at the gun's 0.13 s each hit is 3.6 dB down, and three of them in 0.4 s add up to
+  // 1.2 dB over one hit (4.8 dB undamped). An accent (hit.crit) is counted but never softened. A strike's gain is fixed
+  // when it is scheduled, so one played with delay counts only the strikes known then; strikes are kept by time, not by
+  // the order they were played in, until no later play can reach them.
+  var DUCK_WIN = 0.4, DUCK_EXP = 0.6;
   // The bus is a limiter: unity below about 0.5, sustained peaks held near 0.6, so a stack of explosions cannot clip.
   // Chrome's DynamicsCompressor adds automatic makeup gain (measured: x1.373 small-signal at these settings); TRIM hands
   // it back. The shaper after it is a soft ceiling: linear to 0.6, never above 0.8.
@@ -830,7 +884,7 @@
   };
 
   function makeKit(ac) {
-    var voices = [], last = {}, lastVar = {}, cap = MAX_VOICES, lis = null, hasPan = typeof ac.createStereoPanner === 'function';
+    var voices = [], last = {}, lastVar = {}, recent = {}, cap = MAX_VOICES, lis = null, hasPan = typeof ac.createStereoPanner === 'function';
     var live = typeof ac.startRendering !== 'function';
     var input = ac.createGain(), comp = ac.createDynamicsCompressor(), trim = ac.createGain(), ceil = ac.createWaveShaper(), t = ac.currentTime;
     var direct = ac.createGain(), dly = ac.createDelay(0.05);
@@ -878,6 +932,17 @@
         for (j = 0; j < voices.length; j++) { v = voices[j]; if ((!name || v.name === name) && alive(v, T)) n++; }
         while (n > limit) { v = oldest(T, name); if (!v) break; kill(v, 0.01, T); n--; }
       }
+    }
+    // the ducking factor of a strike of family `fam` at t0 (see DUCK_WIN), recording the strike. The list is not in time
+    // order when a play is scheduled ahead (delay), so each strike is judged by its own time: one older than DUCK_WIN
+    // before now can never duck a play again (none starts before now) and is dropped; one after t0 has not sounded yet
+    function duckAt(fam, t0, now, accent) {
+      var R = recent[fam] || (recent[fam] = []), n = 1;
+      for (var i = R.length - 1; i >= 0; i--) {
+        if (R[i] < now - DUCK_WIN) { R.splice(i, 1); continue; }
+        var age = t0 - R[i]; if (age >= -1e-6 && age < DUCK_WIN) n += 1 - Math.max(0, age) / DUCK_WIN;
+      }
+      R.push(t0); return accent ? 1 : Math.pow(n, -DUCK_EXP);
     }
     function prune(now) { for (var i = voices.length - 1; i >= 0; i--) { var v = voices[i]; if (v.done || v.end < now - 0.1) voices.splice(i, 1); } }
     function liveCount(T) { var n = 0; for (var i = 0; i < voices.length; i++) if (alive(voices[i], T)) n++; return n; }
@@ -933,12 +998,13 @@
           o = copy(o); o.variant = pickV;
         }
         var p = params(d, o); lastVar[name] = p.v;
+        var duck = d.duck ? duckAt(d.duck, t0, now, d.accent) : 1;
         var buf = bufferFor(ac, d, p);
         var vary = o.vary != null ? +o.vary || 0 : d.vary;
         var rate = Math.pow(2, (p.frac + (vary ? (Math.random() * 2 - 1) * vary : 0)) / 12) * (o.rate > 0 ? +o.rate : 1);
         var span = !d.loop ? t0 + buf.duration / rate : o.dur > 0 && !(o.ttl > 0) ? t0 + +o.dur : Infinity;
         prune(now); admit(t0, span, name, d.poly); admit(t0, span, null, cap);
-        var src = ac.createBufferSource(), g = ac.createGain(), gain = o.gain != null ? Math.max(0, +o.gain || 0) : 1;
+        var src = ac.createBufferSource(), g = ac.createGain(), gain = (o.gain != null ? Math.max(0, +o.gain || 0) : 1) * duck;
         src.buffer = buf; src.loop = !!d.loop; src.playbackRate.value = rate;
         src.connect(g);
         var v = { name: name, group: o.group || '', src: src, g: g, pg: null, pn: null, t0: t0, end: Infinity, cut: Infinity, gain: gain, lvl: 1, loop: !!d.loop, done: false, ttl: 0, fed: 0, tailAt: Infinity, tailTau: 0.05, o: o };
@@ -1008,7 +1074,7 @@
     var d = DEFS[n]; if (!d) return null;
     var p = params(d, {}), c = { dur: p.dur, v: 0, st: 0, sr: 1 };
     return { name: n, use: d.use, len: typeof d.len === 'function' ? d.len(c) : d.loop ? +(d.len - (d.xf || 0.1)).toFixed(3) : d.len,
-      level: typeof d.level === 'function' ? +d.level(c).toFixed(3) : d.level, vary: d.vary, gate: d.gate, poly: d.poly,
+      level: +peakOf(d, c).toFixed(3), mix: +d.mix.toFixed(2), vary: d.vary, gate: d.gate, poly: d.poly, duck: d.duck || null, accent: !!d.accent,
       variants: d.variants, loop: !!d.loop, bake: d.bake || null, crush: d.crush || null, dur: d.bake === 'dur' ? { dflt: d.dflt, min: d.min, max: d.max } : null,
       pitch: d.bake === 'pitch' ? { span: PITCH_SPAN, step: PITCH_Q } : null };
   }
