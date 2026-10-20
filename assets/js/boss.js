@@ -86,6 +86,8 @@
       clank: function (x, y, z) { if (gate('clank', 0.07)) play('hit.armour', at(x, y, z, REF_HIT, { gain: 0.7 })); },   // tenure: a ricochet off plate
       block: function (x, y, z) { if (gate('block', 0.07)) play('hit.block', at(x, y, z, REF_HIT)); },                   // a journal cover: cardboard
       ping: function (k, x, y, z) { play('hit.weak', at(x, y, z, REF_HIT, { k: clamp(k, 0, 1), gain: 1.25 })); },
+      // a chain-gun round landing (twelve a second): the ricochet, small, never the ping - the badge count is the confirmation
+      tick: function (x, y, z) { if (gate('tick', 0.07)) play('hit.armour', at(x, y, z, REF_HIT, { gain: 0.45, pitch: 3 })); },
       // the BFG on the H-INDEX: the critical confirmation on the same scale, the plasma going off, and he feels it
       plasma: function (k, x, y, z) {
         play('hit.crit', at(x, y, z, REF_HIT, { k: clamp(k, 0, 1) }));
@@ -564,6 +566,8 @@
       dropCollider(p.collider); if (p.marker) p.marker.visible = false;
       (p.bushes || []).forEach(function (b) { b.scale.set(1.25, 0.14, 1.25); b.position.y = 0.08; });
       var d0 = Math.hypot(p.x, p.z) || 1, rx = p.x / d0, rz = p.z / d0, wallMat = null, roofMat = null, use = {};
+      var yaw = grp.rotation.y || 0, ys = Math.sin(yaw), yc = Math.cos(yaw);   // the building faces the fountain: local -> world
+      function toWorld(m, lx, lz) { m.position.x = p.x + lx * yc + lz * ys; m.position.z = p.z - lx * ys + lz * yc; m.rotation.y += yaw; }
       grp.children.forEach(function (c) { var P = c.geometry && c.geometry.parameters; if (c.geometry && c.geometry.type === 'ConeGeometry') roofMat = c.material; else if (P && P.width === p.w && P.height === p.h && P.depth === p.d) wallMat = c.material; });
       // How many children share each material. The host gives every pane of a building ONE winMat (and keeps
       // writing to it in applyDread), so anything used more than once here is not ours to retire.
@@ -588,11 +592,11 @@
           var nx = clamp(Math.round(p.w / 3.5), 2, 4), ny = clamp(Math.round(p.h / 3), 2, 3), nz = clamp(Math.round(p.d / 3.5), 2, 3), cw = p.w / nx, ch = p.h / ny, cd = p.d / nz;
           var cg = new THREE.BoxGeometry(cw * 0.95, ch * 0.95, cd * 0.95); town.geos.push(cg);
           for (var ix = 0; ix < nx; ix++) for (var iy = 0; iy < ny; iy++) for (var iz = 0; iz < nz; iz++) {
-            var m = new THREE.Mesh(cg, wallMat); m.position.set(p.x - p.w / 2 + cw * (ix + 0.5), ch * (iy + 0.5), p.z - p.d / 2 + cd * (iz + 0.5)); scene.add(m);
+            var m = new THREE.Mesh(cg, wallMat); m.position.y = ch * (iy + 0.5); toWorld(m, -p.w / 2 + cw * (ix + 0.5), -p.d / 2 + cd * (iz + 0.5)); scene.add(m);
             fling(m, Math.min(cw, ch, cd) * 0.4, false, false);
           }
         } else if (!isBody && !tiny && !instant) {
-          c.position.x += p.x; c.position.z += p.z; scene.add(c);
+          toWorld(c, c.position.x, c.position.z); scene.add(c);
           fling(c, isBox ? Math.min(P.width, P.height, P.depth) * 0.5 : 0.6, true, mine);
         }
       });
@@ -1534,10 +1538,32 @@
       F.bodyHits++;
       if (F.taught < BODY_LINES.length && (F.bodyHits === 2 || F.bodyHits === 9 || F.bodyHits === 26)) say('showToast', BODY_LINES[F.taught++]);
     }
+    /* The Warthog's chain gun ({kind:'chain'}): one off the H-INDEX for every round that lands anywhere on him, with a
+       spark and a tick where it struck and none of the weak hit's ceremony - at twelve rounds a second the stinger
+       would never stop. The covers still stop a round when they are physically over the badge (the same threshold as
+       a paper ball), and nowhere else is there a closed state to honour. The hundredth round kills him as the
+       hundredth ball would. */
+    function chainHit(x, y, z, weak) {
+      var b = boss;
+      b.hp = Math.max(0, b.hp - 1); b.flinch = Math.max(b.flinch, 0.3);
+      if (weak) { drawBadge(b, b.hp, true); F.badgeFlash = Math.max(F.badgeFlash || 0, 0.05); } else drawBadge(b, b.hp, (F.badgeFlash || 0) > 0);
+      SFX.tick(x, y, z);
+      burst(weak ? 'gold' : 'spark', x, y, z, 2, { spd: 7, up: 5, life: 0.3, s0: 0.2, s1: 0.03, grav: 18 });
+      fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.07, s0: 0.3, s1: 1.1 });
+      if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = Math.max(F.hitFlash, 0.05); }
+      setHpBar(b.hp, maxHp, F.ghost);
+      if (b.hp <= 0) setPhase('death');
+    }
+    function chainBlock(x, y, z) {
+      SFX.block(x, y, z);
+      burst('white', x, y, z, 2, { spd: 6, up: 4, life: 0.25, s0: 0.18, s1: 0.03, grav: 14 });
+    }
     function hitTest(pos, prev, kind) {
       if (!self.active || phase !== 'fight' || !boss || boss.hp <= 0 || !pos) return null;
       // `kind` comes from the host for every shot. No fallback: an omitted kind is a paper ball, never ten
       // times the damage on the strength of a flag that only says the gun exists somewhere in the level.
+      // An options object ({kind:'chain'}) is the Warthog's chain gun; anything else that is not 'bfg' is paper.
+      var chain = !!(kind && typeof kind === 'object' && kind.kind === 'chain');
       var big = kind === 'bfg';
       var ax = prev ? prev.x : pos.x, ay = prev ? prev.y : pos.y, az = prev ? prev.z : pos.z;
       var bx = pos.x, by = pos.y, bz = pos.z, t, hx, hy, hz;
@@ -1557,6 +1583,7 @@
         // badge itself, never a fixed offset from the boss's axis - the rig rocks back when it roars and when it
         // flinches, which used to swing the badge behind such a line and bounce perfectly aimed shots.
         if ((hx - V1.x) * V4.x + (hy - V1.y) * V4.y + (hz - V1.z) * V4.z > -0.55) {
+          if (chain) { if (boss.guard < 0.45) chainHit(hx, hy, hz, true); else chainBlock(hx, hy, hz); return 'chain'; }
           if (boss.guard < 0.45) weakHit(hx, hy, hz); else blockHit(hx, hy, hz);
           return boss.guard < 0.45 ? 'weak' : 'body';
         }
@@ -1566,7 +1593,7 @@
       var n = clamp(Math.ceil(len / 0.45), 1, 90), i, k;
       for (i = 0; i <= n; i++) {
         k = i / n; hx = ax + dx * k; hy = ay + dy * k; hz = az + dz * k;
-        if (inBody(hx, hy, hz)) { bodyHit(hx, hy, hz, big); return 'body'; }
+        if (inBody(hx, hy, hz)) { if (chain) { chainHit(hx, hy, hz, false); return 'chain'; } bodyHit(hx, hy, hz, big); return 'body'; }
       }
       return null;
     }

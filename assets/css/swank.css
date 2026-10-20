@@ -415,15 +415,14 @@ section { padding: clamp(2.5rem, 6vw, 4.5rem) 0; }
 .q-hud .q-keys { display: none; }
 @media (hover: hover) and (min-width: 700px) { .q-hud .q-keys { display: block; } }
 
+/* the start overlay: the title sequence (intro.js) fills it with its own canvas; with intro.js missing it is a
+   dark box with one blinking PRESS START, written by quest.js */
 .q-start {
   position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; text-align: center; cursor: pointer;
   background: radial-gradient(ellipse at center, rgba(5,6,10,.35), rgba(5,6,10,.85));
-  color: #fff; font-family: "Press Start 2P", var(--mono);
+  color: #fff; font-family: "Press Start 2P", var(--mono); font-size: .75rem; text-shadow: 2px 2px 0 #000;
+  animation: blink 1s steps(2) infinite;
 }
-.q-start .q-logo { font-size: clamp(1.1rem, 3.4vw, 2.2rem); line-height: 1.5; text-shadow: 4px 4px 0 #000, 0 0 30px rgba(110,231,255,.6); margin-bottom: 1rem;
-  background: linear-gradient(120deg, #fcd34d, #fb7185, #a78bfa, #6ee7ff); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(3px 3px 0 #000); }
-.q-start .q-sub { font-size: .6rem; opacity: .85; line-height: 2; text-shadow: 2px 2px 0 #000; max-width: 34ch; }
-.q-start .q-press { margin-top: 1.4rem; font-size: .75rem; animation: blink 1s steps(2) infinite; text-shadow: 2px 2px 0 #000; }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* On a phone the nav wraps to a column and the sticky header becomes 126px tall, covering the top
@@ -434,7 +433,7 @@ section { padding: clamp(2.5rem, 6vw, 4.5rem) 0; }
 .quest { scroll-margin-top: 4.75rem; }
 
 /* the title sequence draws its own logo, city and prompt into a pixel canvas that fills the overlay */
-.q-start.is-intro { background: none; display: block; padding: 0; }
+.q-start.is-intro { background: none; display: block; padding: 0; animation: none; }
 .q-start.is-intro > canvas { display: block; width: 100%; height: 100%; }
 
 .q-prompt {

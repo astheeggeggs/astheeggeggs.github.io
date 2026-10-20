@@ -35,12 +35,29 @@
      placed below (buildings, people, desks, props), so colliders, doors, signs and the reviewers' map all follow. */
   function qp(name, dflt) { var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : dflt; }
   var LOOP = 1; try { LOOP = parseInt(qp('loop') || localStorage.getItem('quest.loop') || '1', 10); } catch (e) { LOOP = 1; } if (LOOP !== 2) LOOP = 1;
+  // The level select (the Konami code on the title sequence, intro.js). sessionStorage only, so it dies with the tab:
+  //   quest.cheat = '1'   fifty hearts and fifty ships, for the warped run only: a page load with no warp pending drops it
+  //   quest.warp  = {loop, level}   a warp into the OTHER loop has to rebuild the town, so it is left here across a reload.
+  //                 It overrides LOOP for this page load only (quest.loop, the saved progress, is never written by a
+  //                 warp) and is used up when the game begins.
+  // A cheat session neither reads nor writes quest.found / quest.cave: its town starts fresh and the real run is untouched.
+  var CHEAT = false, WARP = null;
+  function ssGet(k) { try { return window.sessionStorage.getItem(k); } catch (e) { return null; } }
+  function ssSet(k, v) { try { if (v === null) window.sessionStorage.removeItem(k); else window.sessionStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function warpOf(w) {                                              // a clean {loop, level}, or null for anything else
+    if (!w || typeof w !== 'object') return null;
+    var lp = +w.loop === 2 ? 2 : +w.loop === 1 ? 1 : 0, lv = String(w.level);
+    return lp && (lv === 'town' || lv === 'boss' || lv === 'shmup') ? { loop: lp, level: lv } : null;
+  }
+  try { WARP = warpOf(JSON.parse(ssGet('quest.warp') || 'null')); } catch (e) { WARP = null; }
+  if (WARP) { LOOP = WARP.loop; CHEAT = true; ssSet('quest.cheat', '1'); }
+  else if (ssGet('quest.cheat') !== null) ssSet('quest.cheat', null);   // the cheat lasts for the warped run, not for the tab
   var MQ = LOOP === 2;
   function mx(x) { return MQ ? -x : x; }
 
   /* ------------------------------------------------------------ content */
   var PLACES = [
-    { id: 'warwick', short: 'WARWICK', x: -34, z: -18, w: 9, d: 7, h: 5, wall: 0xb8503f, roof: 0x7a2e24,
+    { id: 'warwick', short: 'WARWICK', x: -34, z: -19.5, w: 9, d: 7, h: 5, wall: 0xb8503f, roof: 0x7a2e24,
       title: 'Warwick, ca. the beginning',
       text: 'An integrated master’s in Mathematics and Statistics at the University of Warwick. Learned that the interesting part of a model is the bit that’s wrong.' },
     { id: 'stats', short: 'STATS DEPT', x: -12, z: -22, w: 11, d: 8, h: 6, wall: 0xd9c39a, roof: 0x6b5a3c,
@@ -51,11 +68,11 @@
       title: 'Postdoc, Boston',
       text: 'With Ben Neale and Nick Patterson at the Analytic and Translational Genetics Unit and the Broad Institute. Led the bipolar disorder exome study that named AKAP11, and scanned the whole UK Biobank for genetic dominance.',
       link: { href: 'https://doi.org/10.1038/s41588-022-01034-x', label: 'AKAP11 paper, Nature Genetics' } },
-    { id: 'bdi', short: 'BIG DATA INST.', x: 36, z: -20, w: 12, d: 8, h: 7, wall: 0x7fb7c9, roof: 0x2b5c6b,
+    { id: 'bdi', short: 'BIG DATA INST.', x: 36, z: -22, w: 12, d: 8, h: 7, wall: 0x7fb7c9, roof: 0x2b5c6b,
       title: 'Big Data Institute, now',
       text: 'SMARTbiomed Senior Research Fellow, jointly at the BDI and the Department of Statistics. Co-lead of the (gen)omics theme. Previously a postdoc here with Cecilia Lindgren on infertility, adiposity and compound heterozygosity.',
       link: { href: 'https://www.stats.ox.ac.uk/people/dr-duncan-palmer', label: 'Oxford profile' } },
-    { id: 'brava', short: 'BRaVa HQ', x: -30, z: 16, w: 12, d: 8, h: 8, wall: 0xa78bfa, roof: 0x4c3a8f,
+    { id: 'brava', short: 'BRaVa HQ', x: -30, z: 21, w: 12, d: 8, h: 8, wall: 0xa78bfa, roof: 0x4c3a8f,
       title: 'Biobank Rare-Variant Consortium',
       text: 'Co-lead of BRaVa: sixteen biobanks and cohorts, over 1.2 million sequenced people, one shared protocol. A third of the gene-level hits are invisible in any single biobank. That is the whole point.',
       link: { href: 'https://brava-genetics.github.io/BRaVa/', label: 'brava-genetics.github.io' } },
@@ -110,6 +127,12 @@
   ];
   if (MQ) { DEMANDS = DEMANDS2; BADDIES.push({ x: 0, z: -34 }, { x: 46, z: 10 }, { x: -36, z: 36 }); }
   PLACES.forEach(function (p) { p.x = mx(p.x); }); NPCS.forEach(function (n) { n.x = mx(n.x); }); BADDIES.forEach(function (b) { b.x = mx(b.x); });
+  // Every building is turned to face the fountain at the origin: its door (the +z face of the model) looks down the
+  // line to the centre of town. p.yaw is the group's rotation.y; local (lx, lz) sits at the world point below.
+  // The turned footprint swings its corners out: the rows nearest the roads (warwick, bdi, brava) sit 1.5-5 units
+  // further out than they did unturned, so every corner, plinth and eave clears the kerbs at z = +-12.2 and the lamps.
+  PLACES.forEach(function (p) { p.yaw = Math.atan2(-p.x, -p.z); });
+  function placeAt(p, lx, lz) { var s = Math.sin(p.yaw), c = Math.cos(p.yaw); return { x: p.x + lx * c + lz * s, z: p.z - lx * s + lz * c }; }
 
   /* ------------------------------------------------------------ rng */
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -147,10 +170,10 @@
   scene.add(sun);
 
   var flat = function (c) { return new THREE.MeshLambertMaterial({ color: c }); };
-  // dread: 0 at PRESS START, 1 when the world is fully wrong. It reaches 0.7 at 90 s of play (57 s in MASTER QUEST), so
-  // DREAD_TIME is the ~129 s (~81 s) to 1, and at SURGE_AT the score pushes its tempo up a notch (Riff.takeover). The sky,
+  // dread: 0 at PRESS START, 1 when the world is fully wrong. DREAD_TIME is the 240 s of play it takes to reach 1, the
+  // same in both loops (so 0.7 at 168 s), and at SURGE_AT the score pushes its tempo up a notch (Riff.takeover). The sky,
   // lights, reviewers and music all follow it; the camera does not. First person waits for the eighth fact (startEndgame).
-  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = (MQ ? 57 : 90) / 0.7, SURGE_AT = 0.7, surged = false;
+  var dread = parseFloat((location.search.match(/[?&]dread=([\d.]+)/) || [0, 0])[1]) || 0, DREAD_TIME = 240, SURGE_AT = 0.7, surged = false;
   var DAY = { sky: new THREE.Color(0x8ec9ff), hemiSky: new THREE.Color(0xbfe4ff), hemiGround: new THREE.Color(0x3a7a3a), sun: new THREE.Color(0xfff2d0) };
   var DUSK = { sky: new THREE.Color(0x2a0a1e), hemiSky: new THREE.Color(0x5a1a2a), hemiGround: new THREE.Color(0x140a0a), sun: new THREE.Color(0xff3b2a) };
   var fading = [];   // { mat, from, to }
@@ -197,14 +220,17 @@
   var sand = new THREE.Mesh(new THREE.RingGeometry(9, 11, 12), flat(0xe5d59a));
   sand.rotation.x = -Math.PI / 2; sand.position.set(0, 0.015, 40); sand.receiveShadow = true; scene.add(sand);
 
-  var colliders = [];  // {x,z,hw,hd} axis-aligned boxes, or {x,z,r}
-  colliders.push({ x: 0, z: 40, r: 11 });
+  var colliders = [];  // {x,z,hw,hd[,yaw]} boxes (yaw = rotation.y, so the test is done in the box's own frame), or {x,z,r}
+  colliders.push({ x: 0, z: 40, r: 11, water: 9 });   // water: the radius of the water itself (the sand ring runs to 11). The Warthog is amphibious: it ignores this collider (collide(x, z, r, true)) and wallows inside r 9; everyone on foot is kept off as before
+  var PROPS = [];      // soft dressing with no collider ({x, z, r, kind, mesh|group}: bushes, flowers): only the Warthog looks at it (smashes bushes, flattens flowers)
 
-  // hills at the border
+  // hills at the border (not colliders; HILLS lets the Warthog's chase camera keep out of them: x, z and the radius at its height)
+  var HILLS = [];
   for (i = 0; i < 40; i++) {
-    var a = (i / 40) * Math.PI * 2, R = WORLD + 12 + rnd() * 8;
-    var hill = new THREE.Mesh(new THREE.IcosahedronGeometry(9 + rnd() * 9, 2), flat(rnd() < .5 ? 0x2f7d4a : 0x35895a));
+    var a = (i / 40) * Math.PI * 2, R = WORLD + 12 + rnd() * 8, hr = 9 + rnd() * 9;
+    var hill = new THREE.Mesh(new THREE.IcosahedronGeometry(hr, 2), flat(rnd() < .5 ? 0x2f7d4a : 0x35895a));
     hill.scale.y = 0.6 + rnd() * 0.6; hill.position.set(mx(Math.cos(a) * R), -2, Math.sin(a) * R); hill.castShadow = true; scene.add(hill);
+    HILLS.push({ x: hill.position.x, z: hill.position.z, r: Math.sqrt(Math.max(0, hr * hr - Math.pow(8.5 / hill.scale.y, 2))) + 1.5 });
   }
 
   // trees
@@ -235,7 +261,10 @@
     if (Math.abs(z + 10) < 3 || Math.abs(z - 10) < 3) return true;
     if (Math.abs(Math.abs(x) - 40) < 3 && Math.abs(z) < 14) return true;
     if (Math.hypot(x, z - 40) < 13) return true;
-    for (var k = 0; k < PLACES.length; k++) { var p = PLACES[k]; if (Math.abs(x - p.x) < p.w / 2 + pad && Math.abs(z - p.z) < p.d / 2 + pad + 3) return true; }
+    for (var k = 0; k < PLACES.length; k++) {   // in the building's own frame: 3 units extra along its door axis
+      var p = PLACES[k], dx = x - p.x, dz = z - p.z, s = Math.sin(p.yaw), c = Math.cos(p.yaw), lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < p.w / 2 + pad && Math.abs(lz) < p.d / 2 + pad + 3) return true;
+    }
     for (k = 0; k < NPCS.length; k++) if (Math.hypot(x - NPCS[k].x, z - NPCS[k].z) < 3) return true;
     if (Math.hypot(x, z) < 5) return true;
     return false;
@@ -254,7 +283,7 @@
     var fl = new THREE.Group();
     var st = new THREE.Mesh(stemGeo, stemMat); st.position.y = 0.2; fl.add(st);
     var f = new THREE.Mesh(flowerGeo, flowerMats[i % 5]); f.position.y = 0.42; fl.add(f);
-    fl.position.set(tx, 0, tz); fl.rotation.y = rnd(); scene.add(fl);
+    fl.position.set(tx, 0, tz); fl.rotation.y = rnd(); scene.add(fl); PROPS.push({ x: tx, z: tz, r: 0.2, kind: 'flower', group: fl });
   }
   // rocks
   var rockGeo = new THREE.DodecahedronGeometry(0.6, 1), rockMat = flat(0x8b8f9a);
@@ -273,9 +302,16 @@
     var po = new THREE.Mesh(postGeo, postMat); po.position.y = 1.6; po.castShadow = true; g.add(po);
     var arm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 0.08), postMat); arm.position.set(mx(0.3), 3.1, 0); g.add(arm);
     var la = new THREE.Mesh(lampGeo, lampMat); la.position.set(mx(0.62), 3.0, 0); g.add(la);
-    g.position.set(x, 0, z); scene.add(g); colliders.push({ x: x, z: z, r: 0.25 });
+    g.position.set(x, 0, z); scene.add(g); colliders.push({ x: x, z: z, r: 0.25, prop: { group: g, kind: 'lamp' } });   // prop: the Warthog can smash it
   }
-  for (i = -36; i <= 36; i += 12) { lamp(mx(i), -13); lamp(mx(i), 13); }
+  function inPlace(x, z, pad) {                      // inside some building's turned collider, with a margin
+    for (var k = 0; k < PLACES.length; k++) {
+      var p = PLACES[k], dx = x - p.x, dz = z - p.z, s = Math.sin(p.yaw), c = Math.cos(p.yaw);
+      if (Math.abs(dx * c - dz * s) < p.w / 2 + 0.4 + pad && Math.abs(dx * s + dz * c) < p.d / 2 + 0.4 + pad) return true;
+    }
+    return false;
+  }
+  for (i = -36; i <= 36; i += 12) { if (!inPlace(mx(i), -13, 0.8)) lamp(mx(i), -13); if (!inPlace(mx(i), 13, 0.8)) lamp(mx(i), 13); }
   // benches
   var benchSeat = new THREE.BoxGeometry(1.8, 0.1, 0.5), benchLeg = new THREE.BoxGeometry(0.1, 0.45, 0.45), woodMat = flat(0x8a5a2b);
   function bench(x, z, rot) {
@@ -283,7 +319,7 @@
     var seat = new THREE.Mesh(benchSeat, woodMat); seat.position.y = 0.5; seat.castShadow = true; g.add(seat);
     var back = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.45, 0.08), woodMat); back.position.set(0, 0.78, -0.22); g.add(back);
     [-0.8, 0.8].forEach(function (lx) { var l = new THREE.Mesh(benchLeg, postMat); l.position.set(lx, 0.25, 0); g.add(l); });
-    g.position.set(x, 0, z); g.rotation.y = rot; scene.add(g); colliders.push({ x: x, z: z, r: 0.9 });
+    g.position.set(x, 0, z); g.rotation.y = rot; scene.add(g); colliders.push({ x: x, z: z, r: 0.9, prop: { group: g, kind: 'bench' } });
   }
   bench(mx(-6), -7, 0); bench(mx(6), -7, 0); bench(mx(-6), 7, Math.PI); bench(mx(6), 7, Math.PI);
   // fountain at the crossroads
@@ -338,7 +374,7 @@
     // plinth and steps
     var plinth = new THREE.Mesh(new THREE.BoxGeometry(p.w + 0.6, 0.3, p.d + 0.6), flat(0x9aa0ad)); plinth.position.y = 0.15; plinth.receiveShadow = true; grp.add(plinth);
     var steps = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.2, 1.2), flat(0xb8bcc8)); steps.position.set(0, 0.1, p.d / 2 + 0.8); steps.receiveShadow = true; grp.add(steps);
-    // door with frame, on the +z face
+    // door with frame, on the +z face (the face turned to the fountain, see p.yaw)
     var frame = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.7, 0.35), flat(0xf4f6fb)); frame.position.set(0, 1.35, p.d / 2 + 0.05); grp.add(frame);
     var door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.4, 0.3), flat(0x1a1d26)); door.position.set(0, 1.2, p.d / 2 + 0.12); grp.add(door);
     var knob = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), flat(0xfcd34d)); knob.position.set(mx(0.55), 1.2, p.d / 2 + 0.3); grp.add(knob);
@@ -354,14 +390,14 @@
       }
     }
     var sign = labelSprite(p.short, '#f1d7b0', '#1a1d26'); sign.position.set(0, p.h + p.h * 0.45 + 1.4, 0); grp.add(sign);
-    grp.position.set(p.x, 0, p.z); scene.add(grp);
-    p.group = grp; p.sign = sign; p.doorMesh = door; p.collider = { x: p.x, z: p.z, hw: p.w / 2 + 0.4, hd: p.d / 2 + 0.4 }; p.bushes = [];
+    grp.position.set(p.x, 0, p.z); grp.rotation.y = p.yaw; scene.add(grp);
+    p.group = grp; p.sign = sign; p.doorMesh = door; p.collider = { x: p.x, z: p.z, hw: p.w / 2 + 0.4, hd: p.d / 2 + 0.4, yaw: p.yaw }; p.bushes = [];
     colliders.push(p.collider);
-    p.door = { x: p.x, z: p.z + p.d / 2 + 1.6 };
-    [-1, 1].forEach(function (sd) { var bsh = new THREE.Mesh(bushGeo, bushMat); bsh.position.set(p.x + sd * 1.9, 0.45, p.z + p.d / 2 + 0.6); bsh.scale.set(1, 0.8, 1); bsh.castShadow = true; scene.add(bsh); p.bushes.push(bsh); });
+    p.door = placeAt(p, 0, p.d / 2 + 1.6);
+    [-1, 1].forEach(function (sd) { var bsh = new THREE.Mesh(bushGeo, bushMat), at = placeAt(p, sd * 1.9, p.d / 2 + 0.6); bsh.position.set(at.x, 0.45, at.z); bsh.scale.set(1, 0.8, 1); bsh.castShadow = true; scene.add(bsh); p.bushes.push(bsh); PROPS.push({ x: at.x, z: at.z, r: 0.7, kind: 'bush', mesh: bsh }); });
     // marker (MASTER QUEST hides them: the signs stay, so the player has to read the town)
     var mk = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), new THREE.MeshLambertMaterial({ color: 0xfcd34d, emissive: 0xfcd34d, emissiveIntensity: 0.5 }));
-    mk.position.set(p.door.x, 3.6, p.door.z - 1.0); mk.castShadow = true; mk.visible = !MQ; scene.add(mk);
+    var mkAt = placeAt(p, 0, p.d / 2 + 0.6); mk.position.set(mkAt.x, 3.6, mkAt.z); mk.castShadow = true; mk.visible = !MQ; scene.add(mk);
     p.marker = mk; markers.push(mk);
   });
 
@@ -409,6 +445,7 @@
   var wPaper = new THREE.Group(), wBfg = new THREE.Group();
   weapon.add(wPaper); weapon.add(wBfg); wBfg.visible = false;
   var bfgGlowMat = null, bfgHalo = null, bfgLamp = null;
+  var armMats = [];                                   // [material, 'hand' | 'sleeve' | 'cuff']: the first-person arm, recoloured under a skin (hats.palette)
   var WPOSE = {
     paper: { x: 0.3, y: -0.16, z: -0.62, s: 0.42, rx: 0, ry: 0, ky: 0.07, kz: 0.15, krot: 0.6, bob: 1, tight: 0 },
     // The BFG is only ever seen from one angle - stood in the rubble, pitched up at the badge - and at the old
@@ -420,7 +457,9 @@
   (function () {
     var lit = function (c) { return new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.45 }); };
     var hand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.2, 0.3), lit(0xf6d3b0)); hand.position.set(0, -0.08, 0.05); wPaper.add(hand);
+    armMats.push([hand.material, 'hand']);
     var sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.24, 0.35), lit(0x6f7787)); sleeve.position.set(0, -0.12, 0.32); wPaper.add(sleeve);
+    armMats.push([sleeve.material, 'sleeve']);
     var paper = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.44, 0.02), lit(0xf4f6fb)); paper.position.set(0.02, 0.2, -0.1); paper.rotation.x = -0.25; wPaper.add(paper);
     for (var k = 0; k < 6; k++) { var ln = new THREE.Mesh(new THREE.BoxGeometry(0.22 - (k % 2) * 0.06, 0.02, 0.005), lit(k ? 0x9aa3b8 : 0xb91c1c)); ln.position.set(0.0, 0.15 - k * 0.055, 0.013); paper.add(ln); }
     weapon.scale.set(0.42, 0.42, 0.42);
@@ -434,6 +473,7 @@
     function box(w, h, d, mat, x, y, z, p) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); (p || wBfg).add(m); return m; }
     var shell = lit(0x7c8c6e), shell2 = lit(0x566349), trim = lit(0xa9b69f), dark = lit(0x2b3327);
     var skin = lit(0xf6d3b0), cuff = lit(0x6f7787), copper = lit(0xc08a46);
+    armMats.push([skin, 'hand']); armMats.push([cuff, 'cuff']);
     box(0.78, 0.6, 1.9, shell, 0, -0.04, -0.1);                                   // receiver
     box(0.9, 0.16, 1.2, shell2, 0, 0.28, -0.22);                                  // hump along the top
     // Ribs, not stripes. At y 0.3 the vents were buried inside the hump, which is why the whole top of the gun
@@ -505,6 +545,48 @@
     }
     cap = { base: base, joints: joints, rest: REST, share: [0.35, 0.8, 0.9, 0.7], at: new THREE.Vector3() };
   })();
+  // HATS (hats.js, optional): one more hat for every honest loop-1 clear (quest.clears, kept by shmup.js), a tower of
+  // up to nine; ten clears and twenty change the man himself. In Master Quest the tower stands on the green cap.
+  // ?clears=N overrides the count for one page load (test hook). No module, or a throw: the plain man, as before.
+  var CLEARS = 0, hats = null, hatLift = 0;
+  try { CLEARS = parseInt(localStorage.getItem('quest.clears'), 10) || 0; } catch (e) { CLEARS = 0; }
+  if (/^\d+$/.test(qp('clears', ''))) CLEARS = parseInt(qp('clears', '0'), 10);
+  if (CLEARS > 0) try {
+    hats = window.QuestHats ? window.QuestHats({ THREE: THREE, flat: flat }) : null;
+    if (hats) {
+      hats.apply(player, CLEARS, MQ ? { baseY: 3.18, mq: true } : {});
+      if (MQ && cap && hats.skin() === 'chief') { cap.base.position.y = 2.93; hats.apply(player, CLEARS, { baseY: 3.27, mq: true }); }   // the cap sits on the helmet
+      var hatPal = hats.palette();
+      if (hatPal) armMats.forEach(function (a) { var c = hatPal[a[1]]; if (typeof c === 'number') { a[0].color.setHex(c); if (a[0].emissive) a[0].emissive.setHex(c); } });
+      hatLift = hats.height() > 3 ? hats.height() * 0.18 : 0;      // a tall tower: look a little higher so a jump keeps it in frame
+      if (!isFinite(hatLift)) hatLift = 0;
+    }
+  } catch (e) { hats = null; hatLift = 0; }
+  var hatAt = new THREE.Vector3();
+  // SNAKE MODE (hats.js, ten clears: the Solid Snake skin). Decided once here, after apply(): the reviewers patrol set
+  // routes with cones of vision instead of hunting (see "SNAKE MODE" under reviewer navigation). Any other skin, no
+  // hats.js, or a throw: SNAKE stays false and the reviewers behave exactly as before.
+  var SNAKE = false; try { SNAKE = !!(hats && hats.skin() === 'snake'); } catch (e) { SNAKE = false; }
+  // The routes, in the unmirrored town (mx() flips them for MASTER QUEST): along the streets, over the open ground
+  // between the rows and round the fountain square; a third element marks a corner he pauses at to look round. One per
+  // reviewer in desk order (loop 1 the first six). Every point was checked against the colliders of both towns.
+  // cone half-angle (rad), how often the eyes are asked, seconds out of sight before "?", how far a colleague hears the
+  // alert, seconds facing the box before he gets curious, the patrol pace (initialised here: snakeRig runs with the reviewers)
+  var SN_HALF = 0.70, SN_LOOK = 0.15, SN_LOST = 4, SN_HEAR = 10, SN_SUS = 3, SN_SUSD = 2, SN_PACE = 2.6;
+  var snBoxed = false, snBoxedWas = false, snWarm = false, snTex = {};
+  // the "!" and "?" are drawn on demand; once the pixel font has loaded they are drawn again (the first could be the fallback face)
+  if (SNAKE) try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { try { snakeRefont(); } catch (e) {} }); } catch (e) {}
+  var SN_ROUTES = [
+    [[-20, -10], [-38, -10, 1], [-40, 2, 1], [-38, -10]],              // 1: the west end of the north road, up to the west road
+    [[22, -10], [38, -10, 1], [40, 2, 1], [38, -10]],                  // 2: the east end, up to the east road
+    [[-14, 30], [-26, 34, 1], [-18, 15, 1]],                           // 3: between BRaVa and the Library
+    [[44, 30], [44, 10, 1], [28, 10, 1], [44, 10]],                    // 4: behind the Post Office and along the south road
+    [[8, 12], [-8, 12, 1], [-8, -5.5], [8, -5.5, 1]],                  // 5: round the fountain square, anticlockwise: his first circuit looks away from the spawn
+    [[-44, 4], [-40, -9, 1], [-40, 10, 1]],                            // 6: the west road
+    [[5, -35], [28, -35, 1], [16, -31, 1]],                            // 7 (MQ): behind the north row
+    [[42, 12], [42, -4, 1], [50, -12, 1], [42, -4]],                   // 8 (MQ): the east road and the corner past Research Finance
+    [[-36, 36], [-22, 40, 1], [-44, 34, 1]]                            // 9 (MQ): the south-west corner
+  ];
   function capFlop(dt) {
     var run = Math.min(1, pstate.speed / 9), k = Math.min(1, dt * 9), sw = Math.sin(pstate.walkT) * run, i, j;
     var lift = run * 0.42 - (pstate.air ? pstate.vy * 0.035 : 0);        // running: out behind him; going up: it lags and flops; coming down: it rises
@@ -530,13 +612,14 @@
     b.head = b.yaw; b.mode = 0; b.plan = i * 0.03; b.wx = b.x; b.wz = b.z; b.chase = false; b.slot = 0; b.slotOn = false; b.fleeA = 0;
     b.side = i % 2 ? 1 : -1; b.stuckT = 0; b.stuckN = 0; b.sx = b.x; b.sz = b.z; b.careful = 0; b.probe = 0;
     b.esc = 0; b.ex = b.x; b.ez = b.z; b.goHome = false; b.homeSerial = -1; b.moved = 0;   // b.homeField is allocated with the other nav arrays, below
+    if (SNAKE) snakeRig(b, i);
   });
 
   /* ------------------------------------------------------------ state */
   var found = {};
   var revisions = 0, rebuttals = 0;
   var hudRev = root.querySelector('[data-hud="revisions"]');
-  try { found = JSON.parse(localStorage.getItem('quest.found') || '{}') || {}; } catch (e) { found = {}; }
+  if (!CHEAT) { try { found = JSON.parse(localStorage.getItem('quest.found') || '{}') || {}; } catch (e) { found = {}; } }
   hudTotal.textContent = PLACES.length;
   if (MQ) {
     // The gold pill: this is the second loop, and the town knows it. Anyone here has finished the game once and knows
@@ -596,15 +679,21 @@
   var keys = {};
   var camYaw = 0, camPitch = 0.52, camDist = 14, dragging = false, lastPX = 0, lastPY = 0, dragMoved = 0;
   var HEARTS = MQ ? 3 : 5;                             // three in MASTER QUEST; ?maxhits= overrides, the fountain's prize adds on top
+  var CHEAT_HEARTS = 50;                               // the level select's fifty lives
   var fp = false, fpBlend = 0, fpPitch = 0, fpCue = 0, fireCool = 0, shots = [], hits = 0, MAX_HITS = parseInt((location.search.match(/[?&]maxhits=(\d+)/) || [0, HEARTS])[1], 10) || HEARTS, over = false, overT = 0;
   var hurtEl = root.querySelector('.q-hurt'), overEl = root.querySelector('.q-over'), hudHits = root.querySelector('[data-hud="hits"]'), hudHitsWrap = root.querySelector('.q-hits');
   var cross = root.querySelector('.q-cross');
   // ---- endgame state + test hooks (?endgame=1 ?bosshp=5 ?skipintro=1 ?god=1 ?shmup=1 ?timescale=4 ?loop=2)
-  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)), loop: LOOP };
+  var PARAMS = { endgame: qp('endgame') === '1', bossHp: parseInt(qp('bosshp', '100'), 10) || 100, skipIntro: qp('skipintro') === '1', god: qp('god') === '1', shmup: qp('shmup') === '1', cave: qp('cave') === '1', timescale: Math.max(0.1, Math.min(20, parseFloat(qp('timescale', '1')) || 1)), loop: LOOP, cheat: CHEAT, warp: WARP };
+  if (CHEAT) MAX_HITS = CHEAT_HEARTS;
   var endgame = false, pendingEndgame = false, boss = null, shmup = null;
   // the fountain hides a secret level; its prize is extra hearts for the boss
-  var cave = null, caveOn = false, caveTaken = false, caveArmed = false;
-  try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
+  var cave = null, caveOn = false, caveTaken = false;
+  // the way in is a dive (F at the rim): diveT runs the 0.7 s hop, then the splash, then cave.start; -1 on foot
+  var diveT = -1, dive0x = 0, dive0z = 0, splashT = 0, camDip = 0;
+  // THE WARTHOG (warthog.js): the Chief's ride, built only under the Chief skin (W stays null for everybody else)
+  var W = null, driving = false, hbPulse = 0, keysText = '';
+  if (!CHEAT) try { var cvSave = JSON.parse(localStorage.getItem('quest.cave') || 'null'); if (cvSave && cvSave.hearts > 0) { caveTaken = true; MAX_HITS += cvSave.hearts | 0; } } catch (e) {}
   var fireRate = 0.32, shotSpeed = 30, shotGrav = 9, fireHeld = false, hurtCool = 0, envLocked = false, hudOn = true, shakeAmp = 0, shakeT = 0, shakeDur = 1;
   // MASTER QUEST fairness. The reviewers are quicker, but never quicker than he is (9 u/s): on open ground he can always
   // outrun any one of them. And after PRESS START they stay at their desks for a few seconds, so nobody is caught
@@ -625,12 +714,19 @@
     if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     if (KEYMAP[e.code]) { keys[KEYMAP[e.code]] = true; e.preventDefault(); }
     if (ACT[e.code]) { e.preventDefault(); if (!e.repeat) action(); if (fp) fireHeld = true; }
-    if (e.code === 'Space') { e.preventDefault(); if (dialogOpen) action(); else jump(); }
+    if (e.code === 'Space') { e.preventDefault(); if (dialogOpen) action(); else if (driving) keys.hb = true; else jump(); }
+    if (e.code === 'KeyE' && W && !e.repeat) { e.preventDefault(); carKey(); }   // the Warthog's door (in the endgame F fires)
     if (e.code === 'Escape' && dialogOpen) closeDialog();
   });
-  window.addEventListener('keyup', function (e) { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; if (ACT[e.code]) fireHeld = false; });
+  window.addEventListener('keyup', function (e) { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; if (ACT[e.code]) fireHeld = false; if (e.code === 'Space') keys.hb = false; });
   window.addEventListener('blur', function () { fireHeld = false; for (var k in keys) keys[k] = false; });
-  function jump() { if (!running || dialogOpen || pstate.air || over || (endgame && boss && boss.active && boss.cinematic)) return; pstate.vy = 9.5; pstate.air = true; jumpSfx(true); }
+  function jump() {
+    if (!running || dialogOpen || over || (endgame && boss && boss.active && boss.cinematic)) return;
+    if (driving) { if (fp) carExit(); else hbPulse = 0.5; return; }   // in the car: B is the handbrake in town and the way out during the fight
+    if (fp && carNear()) { carEnter(); return; }                        // ...and the way in on touch (A fires)
+    if (pstate.air || diveT >= 0) return;
+    pstate.vy = 9.5; pstate.air = true; jumpSfx(true);
+  }
 
   root.querySelectorAll('[data-pad]').forEach(function (b) {
     var d = b.dataset.pad;
@@ -672,9 +768,12 @@
     running = true; start.hidden = true; el.focus(); blip(440, .06);
     music('quest');
     if (MQ) { graceT = MQ_GRACE; camYaw = MQ_YAW; showToast('MASTER QUEST. THE TOWN IS MIRRORED.', 3.5, ['THE REVIEWERS HAVE READ VERSION 1.', 3.5]); }
-    if (PARAMS.cave) { caveArmed = true; setTimeout(enterCave, 300); return; }
-    if (PARAMS.shmup) { setTimeout(launchShmup, 300); return; }
-    if (PARAMS.endgame) { setTimeout(startEndgame, 300); return; }
+    var lvl = PARAMS.warp ? PARAMS.warp.level : '';          // a level-select warp is used up here; it wins over the query-string hooks
+    ssSet('quest.warp', null);
+    if (lvl === 'town') return;
+    if (PARAMS.cave && !lvl) { setTimeout(enterCave, 300); return; }
+    if (PARAMS.shmup || lvl === 'shmup') { setTimeout(launchShmup, 300); return; }
+    if (PARAMS.endgame || lvl === 'boss') { setTimeout(startEndgame, 300); return; }
     // a returning player who already holds every fact goes straight to the reckoning
     if (countFound() === PLACES.length) { showToast('ALL FACTS FOUND. SOMETHING IS COMING.'); setTimeout(function () { if (!endgame && !over) startEndgame(); }, 3500); }
   }
@@ -741,11 +840,12 @@
 
   /* ------------------------------------------------------------ dialog */
   function nearbyTarget() {
-    if (endgame) return null;
+    if (endgame || driving || diveT >= 0) return null;
     var px = player.position.x, pz = player.position.z;
     for (var i = 0; i < PLACES.length; i++) { var p = PLACES[i]; if (Math.hypot(px - p.door.x, pz - p.door.z) < 2.6) return { kind: 'place', obj: p }; }
     for (i = 0; i < NPCS.length; i++) { var n = NPCS[i]; if (Math.hypot(px - n.x, pz - n.z) < 2.4) return { kind: 'npc', obj: n }; }
-    for (i = 0; i < BADDIES.length; i++) { var b = BADDIES[i]; if (b.flee <= 0 && Math.hypot(px - b.mesh.position.x, pz - b.mesh.position.z) < 3.2) return { kind: 'baddie', obj: b }; }
+    if (SNAKE && snBoxed) return null;                  // furniture does not rebut: under the box there is no F: REBUT
+    for (i = 0; i < BADDIES.length; i++) { var b = BADDIES[i]; if (b.flee <= 0 && !(b.ko > 0) && Math.hypot(px - b.mesh.position.x, pz - b.mesh.position.z) < 3.2) return { kind: 'baddie', obj: b }; }
     return null;
   }
   function openDialog(target) {
@@ -766,7 +866,7 @@
     if (target.kind === 'npc' && o.mesh) { o.mesh.lookAt(player.position.x, 0, player.position.z); }
     if (target.kind === 'place' && !found[o.id]) {
       found[o.id] = true;
-      try { localStorage.setItem('quest.found', JSON.stringify(found)); } catch (e) {}
+      if (!CHEAT) { try { localStorage.setItem('quest.found', JSON.stringify(found)); } catch (e) {} }
       updateHud(); showToast('FACT FOUND  ' + countFound() + '/' + PLACES.length);
       if (countFound() === PLACES.length) pendingEndgame = true;
     }
@@ -794,10 +894,23 @@
   function action() {
     if (!running) { startPress(); return; }
     if (dialogOpen) { if (typing && current) finishTyping(current); else closeDialog(); return; }
-    if (fp) { fire(); return; }                        // first person is the endgame: nobody left to talk to, so F fires
-    var t = nearbyTarget();
+    if (driving) { if (fp) fire(); else carExit(); return; }   // in the Warthog: F is the chain gun in the fight, the door in town
+    if (diveT >= 0) return;
+    if (fp) { fire(); return; }                        // first person is the endgame: nobody left to talk to, so F fires (E is the car's door)
+    var t = nearbyTarget();                            // the same order as the prompt: a target first, then the car, then the fountain
     if (t && t.kind === 'baddie') { rebut(t.obj); return; }
-    if (t) { current = t.obj; openDialog(t); }
+    if (t) { current = t.obj; openDialog(t); return; }
+    if (carNear()) { carEnter(); return; }                      // the Chief's ride (in town; E in the fight)
+    if (fountainNear()) startDive();
+  }
+  var padMQ = null;
+  function padShown() {                                // the d-pad is on screen (swank.css shows it under the same query): B is the door then
+    if (!padMQ) { try { padMQ = window.matchMedia ? window.matchMedia('(hover: none), (max-width: 700px)') : { matches: false }; } catch (e) { padMQ = { matches: false }; } }
+    return !!padMQ.matches;
+  }
+  function carKey() {                                  // E: the Warthog's door, both ways, whenever F has another job (the fight) or as well
+    if (!running || dialogOpen || over || diveT >= 0) return;
+    if (driving) carExit(); else if (carNear()) carEnter();   // E is the car's own key: a sign or a colleague in reach does not take it
   }
   /* ------------------------------------------------------------ first person + rebuttal fire
      First person, the hearts, the crosshair and REJECTED! belong to the endgame: startEndgame() is the only way in and
@@ -879,7 +992,9 @@
   function fire() {
     // nothing behind the dossier card (F and the A pad reach here during its first second, before it takes them) and
     // nothing while the swoop is still flying in with no gun on screen: the chk-chk says when it is ready
-    if (!fp || fpBlend < 1 || dialogOpen || fireCool > 0 || over || !hudOn || (endgame && boss && boss.active && boss.cinematic)) return;
+    if (!fp || fpBlend < 1 || dialogOpen || over || !hudOn || (endgame && boss && boss.active && boss.cinematic)) return;
+    if (driving) { if (W) W.trigger(); if (fpTeach) fpTaught(); return; }   // the chain gun: twelve a second while held, no cooldown of ours
+    if (fireCool > 0) return;
     if (fpTeach) fpTaught();
     if (weaponKind === 'bfg') {                       // heavy, deliberate: it winds up first and goes off by itself
       if (bfgCharge < 0) { bfgCharge = 0; bfgHum = sfx('bfg.charge', { dur: BFG_WIND }); }   // baked to the wind-up: it peaks as the ball leaves
@@ -951,6 +1066,7 @@
     blip(880, .08); setTimeout(function () { blip(1174, .1); }, 90);
   }
   function caught(b) {
+    if (driving || diveT >= 0) return;                   // nobody opens a dialogue on a moving car, or mid-hop
     b.cool = 5; b.flee = 2.5; revisions++; restT = CAUGHT_REST;
     if (hudRev) hudRev.textContent = revisions;
     current = { text: DEMANDS[Math.floor(Math.random() * DEMANDS.length)], title: 'REVISIONS REQUESTED (' + revisions + ')', voice: BADDIE_VOICE };
@@ -975,7 +1091,11 @@
     else { sfx('player.pain'); sfx('heart.lost', { delay: 0.15 }); }
     return true;
   }
-  function drawHearts() { if (hudHits) hudHits.textContent = Array(MAX_HITS - hits + 1).join('♥') + Array(hits + 1).join('♡'); }
+  function drawHearts() {
+    if (!hudHits) return;
+    if (MAX_HITS > 12) { hudHits.textContent = (hits >= MAX_HITS ? '♡' : '♥') + 'x' + (MAX_HITS - hits); return; }   // fifty glyphs fit no HUD: a count
+    hudHits.textContent = Array(MAX_HITS - hits + 1).join('♥') + Array(hits + 1).join('♡');
+  }
   function rejected() {
     over = true; overT = 0; dialogOpen = true; dlg.hidden = true; prompt.hidden = true; if (cross) cross.hidden = true; toast.hidden = true;
     if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
@@ -1045,13 +1165,15 @@
   //   0 = nothing can touch him anywhere in the cell (NAV_NEAR = body radius + half a cell diagonal), so navHit()
   //       may answer from the grid alone without walking the collider list.
   function navBuild() {
-    var k, i, j, i0, i1, j0, j1, c, hw, hd, dx, dz, dd, r0, r1, row, v;
+    var k, i, j, i0, i1, j0, j1, c, hw, hd, ex, ez, s, cs, dx, dz, wx, wz, dd, r0, r1, row, v;
     navCell.fill(0);
     for (k = 0; k < colliders.length; k++) {
       c = colliders[k];
       hw = c.r !== undefined ? c.r : c.hw; hd = c.r !== undefined ? c.r : c.hd;
-      i0 = Math.max(1, Math.floor(c.x - hw - NAV_NEAR - NAV_MIN - 0.5)); i1 = Math.min(NAV_N - 2, Math.ceil(c.x + hw + NAV_NEAR - NAV_MIN - 0.5));
-      j0 = Math.max(1, Math.floor(c.z - hd - NAV_NEAR - NAV_MIN - 0.5)); j1 = Math.min(NAV_N - 2, Math.ceil(c.z + hd + NAV_NEAR - NAV_MIN - 0.5));
+      s = c.yaw ? Math.sin(c.yaw) : 0; cs = c.yaw ? Math.cos(c.yaw) : 1;
+      ex = hw * Math.abs(cs) + hd * Math.abs(s); ez = hw * Math.abs(s) + hd * Math.abs(cs);   // the turned box's world-axis extents
+      i0 = Math.max(1, Math.floor(c.x - ex - NAV_NEAR - NAV_MIN - 0.5)); i1 = Math.min(NAV_N - 2, Math.ceil(c.x + ex + NAV_NEAR - NAV_MIN - 0.5));
+      j0 = Math.max(1, Math.floor(c.z - ez - NAV_NEAR - NAV_MIN - 0.5)); j1 = Math.min(NAV_N - 2, Math.ceil(c.z + ez + NAV_NEAR - NAV_MIN - 0.5));
       if (c.r !== undefined) {
         r0 = (c.r + 0.55) * (c.r + 0.55); r1 = (c.r + NAV_NEAR) * (c.r + NAV_NEAR);
         for (j = j0; j <= j1; j++) {
@@ -1063,11 +1185,12 @@
         }
       } else {
         for (j = j0; j <= j1; j++) {
-          row = j * NAV_N; dz = Math.abs(NAV_MIN + j + 0.5 - c.z);
-          if (dz >= hd + NAV_NEAR) continue;
+          row = j * NAV_N; wz = NAV_MIN + j + 0.5 - c.z;
+          if (!c.yaw && Math.abs(wz) >= hd + NAV_NEAR) continue;
           for (i = i0; i <= i1; i++) {
-            dx = Math.abs(NAV_MIN + i + 0.5 - c.x);
-            v = dx < hw + 0.55 && dz < hd + 0.55 ? 2 : dx < hw + NAV_NEAR ? 1 : 0;
+            wx = NAV_MIN + i + 0.5 - c.x;
+            dx = Math.abs(wx * cs - wz * s); dz = Math.abs(wx * s + wz * cs);   // into the box's own frame (identity when unturned)
+            v = dx < hw + 0.55 && dz < hd + 0.55 ? 2 : dx < hw + NAV_NEAR && dz < hd + NAV_NEAR ? 1 : 0;
             if (v > navCell[row + i]) navCell[row + i] = v;
           }
         }
@@ -1246,6 +1369,7 @@
     return a;
   }
   function navReviewer(b, i, h) {
+    if (SNAKE) return navSnake(b, i, h);               // SNAKE MODE: patrols and cones of vision (below); everything from here on is untouched
     var m = b.mesh, p = m.position, px = player.position.x, pz = player.position.z;
     var dx = px - p.x, dz = pz - p.z, d = Math.hypot(dx, dz), range = (14 + 10 * dread) * (MQ ? 1.3 : 1);
     var speed = 0, want = b.head, face = b.head, raw = false, turn = MQ ? 11 : 9, cap, k, o, rx, rz, rl, q, f, sx = 0, sz = 0, vx, vz, ox = p.x, oz = p.z;
@@ -1340,23 +1464,227 @@
     if (navT - navSlotAt >= NAV_EVERY) { navSlotAt = navT; navSlots(px, pz); }
     if (navJob) navJobRun(Math.max(3500, dt * 210000));   // ~0.2 ms of flood a frame, whoever it belongs to: done within four
     n = Math.max(1, Math.min(30, Math.ceil(dt * 18))); navBudget = 2 * n;                     // at most two reviewers re-plan per step: no thundering herd   // big frames (timescale, tab switches) are sub-stepped: under half a unit a step, nothing tunnels
+    // THE WARTHOG: a reviewer under the chassis at speed is launched (warthog.js tumbles him), counted as a rebuttal, and
+    // lies flat for b.ko seconds before he gets up and flees as after any rebuttal. Nothing else about them changes.
+    if (W && driving && Math.abs(W.speed) > 4) for (k = 0; k < BADDIES.length; k++) { b = BADDIES[k]; if (!(b.ko > 0) && b.mesh.visible && W.inside(b.mesh.position.x, b.mesh.position.z, 0.3)) runOver(b); }
     for (k = 0; k < BADDIES.length; k++) {
       b = BADDIES[k]; m = b.mesh;
+      if (b.ko > 0) {
+        b.ko -= dt;
+        if (b.ko <= 0) { b.ko = 0; if (W) W.stand(m); b.flee = 7; b.cool = 2; b.mode = 0; b.plan = 0; b.stuckT = 0; b.stuckN = 0; }
+        continue;
+      }
       b.moved = 0;
       for (s = 0; s < n; s++) navReviewer(b, k, dt / n);
       v = b.moved / dt;                                  // animate what the legs actually did, so a blocked reviewer does not moonwalk
       pose(m, { walk: b.walkT, speed: v / 7 });
       m.position.y = v > 0.35 ? Math.abs(Math.sin(b.walkT)) * 0.06 : 0;
     }
+    if (SNAKE) snakeFrame(dt);
+  }
+  /* ------------------------------------------------------------ SNAKE MODE (SNAKE: the Solid Snake skin, ten clears)
+     Metal Gear Solid in the town. The reviewers walk fixed routes (SN_ROUTES) with the nav machinery above and look
+     down a cone of vision, 80 degrees wide and 12-14 units long (a little more with dread), that buildings, trees and
+     lamps block (navLos); the cone is drawn on the ground in the suit red so the mechanic can be read. In the cone with
+     a clear line and not under his box: "!", the alert sting, the chase exactly as before, and colleagues within ten
+     units join without a sting (they heard). Out of sight for four seconds: "?", the lost cue, a walk to where he was
+     last seen, a look round, back to the nearest point of the route. Under the box he is furniture: nobody can see him,
+     though a reviewer who stands facing the box for three seconds gets curious ("?") and comes over for a look, and
+     never catches him there. A reviewer within 3.2 units of the box as it drops still finishes his catch (the box is no
+     escape from a catch in progress). Dread, the speeds, the grace period, CAUGHT_REST and fleeing are the old rules.
+     b.sn: 0 patrol, 1 alerted (chasing), 2 lost him (walking to the last seen point), 3 looking round, 4 curious (box). */
+  function snakeTex(ch) {
+    if (snTex[ch]) return snTex[ch];
+    var c = document.createElement('canvas'); c.width = 96; c.height = 96;
+    var x = c.getContext('2d'); x.font = 'bold 76px "Press Start 2P", monospace'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillStyle = '#1a1d26'; [[-5, 0], [5, 0], [0, -5], [0, 5], [-4, -4], [4, 4], [-4, 4], [4, -4]].forEach(function (o) { x.fillText(ch, 48 + o[0], 54 + o[1]); });
+    x.fillStyle = ch === '!' ? '#ff2a2a' : '#ffe27a'; x.fillText(ch, 48, 54);
+    var tex = new THREE.CanvasTexture(c); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearFilter;
+    snTex[ch] = tex; return tex;
+  }
+  function snakeRig(b, i) {
+    var R = SN_ROUTES[i % SN_ROUTES.length], k;
+    b.route = []; for (k = 0; k < R.length; k++) b.route.push({ x: mx(R[k][0]), z: R[k][1], pause: !!R[k][2] });
+    b.sn = 0; b.wi = 0; b.pause = 0; b.look = b.yaw; b.see = i * 0.02; b.lostT = 0; b.lsx = b.x; b.lsz = b.z; b.sus = 0; b.susCool = 0;
+    b.gx = 1e9; b.gz = 1e9; b.gt = 0; b.boxCatch = false; b.markT = 9; b.range = 13; b.routeSerial = -1;
+    var cone = new THREE.Group();
+    var fan = new THREE.Mesh(new THREE.CircleGeometry(1, 14, -Math.PI / 2 - SN_HALF, SN_HALF * 2), new THREE.MeshBasicMaterial({ color: 0xb91c1c, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }));
+    fan.rotation.x = -Math.PI / 2; fan.position.y = 0.07; cone.add(fan);            // the arc is centred on +z, where yaw 0 walks
+    cone.position.set(b.x, 0, b.z); cone.scale.set(b.range, 1, b.range); scene.add(cone); b.cone = cone; b.fan = fan;
+    var mark = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: true, fog: false }));   // unfogged: a red that reads at any dread; the map comes with the first mark
+    mark.scale.set(0.9, 0.9, 1); mark.position.y = 4.1; mark.visible = false; b.mesh.add(mark); b.mark = mark; b.markCh = '';
+  }
+  function snakeMark(b, ch) { b.markCh = ch; b.mark.material.map = snakeTex(ch); b.mark.material.needsUpdate = true; b.markT = 0; }
+  function snakeRefont() {                           // the font arrived: throw the cached glyphs away and redraw any mark that is up
+    var k, b; for (k in snTex) if (snTex.hasOwnProperty(k)) snTex[k].dispose(); snTex = {};
+    for (k = 0; k < BADDIES.length; k++) { b = BADDIES[k]; if (b.mark && b.markCh) { b.mark.material.map = snakeTex(b.markCh); b.mark.material.needsUpdate = true; } }
+  }
+  function snakeSees(b, px, pz, d) {                   // inside the cone, with a clear line to him
+    var p = b.mesh.position;
+    if (d > b.range) return false;
+    if (d > 0.3 && Math.abs(navTurn(Math.atan2(px - p.x, pz - p.z), b.look)) > SN_HALF) return false;
+    return navLos(p.x, p.z, px, pz);
+  }
+  function snakeAlert(b, px, pz, heard) {
+    b.sn = 1; b.lostT = 0; b.lsx = px; b.lsz = pz; b.sus = 0; b.plan = 0; b.pause = 0; snakeMark(b, '!');
+    if (!heard) sfx('alert', sfxAt(b.mesh.position));
+  }
+  function snakeLost(b, ch, gx, gz, sn) { b.sn = sn; b.gt = 0; b.plan = 0; b.lsx = gx; b.lsz = gz; b.wx = gx; b.wz = gz; snakeMark(b, ch); sfx('lost', sfxAt(b.mesh.position)); }
+  function snakeNearest(b) {
+    var p = b.mesh.position, k, d, best = 0, bd = 1e9;
+    for (k = 0; k < b.route.length; k++) { d = Math.hypot(b.route[k].x - p.x, b.route[k].z - p.z); if (d < bd) { bd = d; best = k; } }
+    return best;
+  }
+  // a reviewer's own field flooded from any point (his home field's buffer; one flood at a time, queued like the walk home)
+  function navGoalField(b, gx, gz) {
+    if (b.homeSerial === navSerial && b.gx === gx && b.gz === gz) return true;
+    if (!navJob) { navFloodSeed(b.homeField, gx, gz); b.gx = gx; b.gz = gz; b.homeSerial = -1; navJob = 2; navJobB = b; }
+    return false;
+  }
+  // -> the heading to a goal: straight if he can see it, else downhill on his field (string-pulled), else straight and slide
+  function snakeGoal(b, gx, gz, think) {
+    var p = b.mesh.position;
+    if (think) {
+      navBudget--; b.plan = 0.25;
+      if (navLos(p.x, p.z, gx, gz)) { b.wx = gx; b.wz = gz; }
+      else if (navGoalField(b, gx, gz)) { if (navDescend(p.x, p.z, b.homeField, b.careful > 0 ? 1 : 10)) { b.wx = navWx; b.wz = navWz; } else { b.wx = gx; b.wz = gz; } }
+      else { b.wx = gx; b.wz = gz; b.plan = 0.15; }
+    }
+    if (Math.hypot(b.wx - p.x, b.wz - p.z) < 0.45) b.plan = 0;
+    return Math.atan2(b.wx - p.x, b.wz - p.z);
+  }
+  function navSnake(b, i, h) {
+    var m = b.mesh, p = m.position, px = player.position.x, pz = player.position.z;
+    var dx = px - p.x, dz = pz - p.z, d = Math.hypot(dx, dz), wp;
+    var speed = 0, want = b.head, face = b.head, raw = false, turn = MQ ? 11 : 9, cap, k, o, rx, rz, rl, q, f, sx = 0, sz = 0, vx, vz, ox = p.x, oz = p.z, sweep = 0, seen, tx, tz, td;
+    if (b.flee > 0) { b.flee -= h; if (b.flee <= 0 && b.sn === 1) { b.sn = 0; b.wi = snakeNearest(b); } }   // rebutted and run: back to the route
+    if (b.cool > 0) b.cool -= h; if (b.careful > 0) b.careful -= h; if (b.probe > 0) b.probe -= h; if (b.susCool > 0) b.susCool -= h;
+    b.plan -= h; b.markT += h;
+    var think = b.plan <= 0 && navBudget > 0, fleeing = b.flee > 0, busy = dialogOpen || graceT > 0;
+    if (b.routeSerial !== navSerial) {                 // a route point inside a tree is no corner at all: the nearest open cell (the map is built by now)
+      b.routeSerial = navSerial;
+      for (k = 0; k < b.route.length; k++) { wp = b.route[k]; if (collide(wp.x, wp.z, 0.6) && navNearest(wp.x, wp.z, true)) { wp.x = navWx; wp.z = navWz; } }
+    }
+    // the eyes, every SN_LOOK seconds (the clock only runs while he is free, so the reviewers' ticks keep their stagger after a
+    // dialogue). Under the box he is furniture.
+    if (!fleeing && !busy) b.see -= h;
+    if (b.see <= 0 && !fleeing && !busy) {
+      b.see += SN_LOOK;
+      seen = !snBoxed && snakeSees(b, px, pz, d);
+      if (seen) {
+        b.lsx = px; b.lsz = pz; b.lostT = 0;
+        if (b.sn !== 1) {
+          snakeAlert(b, px, pz, false);
+          for (k = 0; k < BADDIES.length; k++) { o = BADDIES[k]; if (o !== b && o.sn !== 1 && o.flee <= 0 && Math.hypot(o.mesh.position.x - p.x, o.mesh.position.z - p.z) < SN_HEAR) snakeAlert(o, px, pz, true); }
+        }
+      } else if (b.sn === 1) {
+        b.lostT += SN_LOOK;
+        if (b.lostT >= SN_LOST) snakeLost(b, '?', b.lsx, b.lsz, 2);
+      } else if (b.sn === 0 && snBoxed && b.susCool <= 0 && d < SN_SUSD && Math.abs(navTurn(Math.atan2(dx, dz), b.look)) < 0.35 && navLos(p.x, p.z, px, pz)) {
+        b.sus += SN_LOOK;                              // a box in the middle of his view that was not there before
+        if (b.sus >= SN_SUS) { b.sus = 0; b.susCool = 12; snakeLost(b, '?', px, pz, 4); }
+      } else if (b.sus > 0) b.sus = Math.max(0, b.sus - SN_LOOK);
+    }
+    var chasing = !fleeing && !busy && b.sn === 1;
+    b.chase = chasing;
+    // standing inside something solid (a bad desk, or the world changed underfoot): walk out to the nearest open cell
+    if (think && b.esc <= 0 && navCell[navIdx(p.x, p.z)] !== 0 && collide(p.x, p.z, 0.45) && navNearest(p.x, p.z, false)) { b.esc = 1.5; b.ex = navWx; b.ez = navWz; }
+
+    if (b.esc > 0) {
+      b.esc -= h; rl = Math.hypot(b.ex - p.x, b.ez - p.z); speed = 5; b.mode = 0;
+      if (rl < 0.15) { b.esc = 0; speed = 0; }
+      else { want = Math.atan2(b.ex - p.x, b.ez - p.z); b.head = want; raw = collide(p.x, p.z, 0.45); if (think) b.plan = 0.2; }
+    } else if (fleeing) {
+      speed = 7; turn = 14;
+      if (think) { navBudget--; b.mode = 4; b.plan = 0.2; b.fleeA = navFleeYaw(b, px, pz); }
+      else if (b.mode !== 4) { b.mode = 4; b.plan = 0; b.fleeA = Math.atan2(p.x - px, p.z - pz); }
+      want = b.fleeA;
+    } else if (chasing) {                              // the chase as before (navReviewer), bar the box rule on the catch and the
+      // target: out of sight (lostT running) he runs to where he last saw him, not to the man himself, so a corner shakes him
+      if (b.lostT > 0) { tx = b.lsx; tz = b.lsz; td = Math.hypot(tx - p.x, tz - p.z); } else { tx = px; tz = pz; td = d; }
+      speed = td < 1.2 ? 0 : MQ ? Math.min(MQ_TOP, (4.6 + (i % 3) * 0.4) * 1.25 * (1 + 0.3 * dread)) : (4.6 + (i % 3) * 0.4) * (1 + 0.5 * dread);
+      if (d < 1.7 && b.cool <= 0 && restT <= 0 && pstate.y < 1.2 && (!snBoxed || b.boxCatch)) caught(b);
+      if (think) { navBudget--; navPlan(b, i, tx, tz, td); } else if (b.mode < 1 || b.mode > 3) { b.mode = 2; b.plan = 0; }
+      if (b.mode === 1) { navSlotPoint(b, tx, tz, td); want = Math.atan2(navWx - p.x, navWz - p.z); }
+      else if (b.mode === 2) want = Math.atan2(tx - p.x, tz - p.z);
+      else { want = Math.atan2(b.wx - p.x, b.wz - p.z); if (Math.hypot(b.wx - p.x, b.wz - p.z) < 0.45) b.plan = 0; }
+      if (speed === 0) face = Math.atan2(tx - p.x, tz - p.z);
+    } else if (busy && b.sn === 1) {                   // the REVISIONS dialogue, or the grace: an alerted reviewer stands and watches
+      speed = 0; face = Math.atan2(dx, dz); b.mode = 0;
+    } else if (b.sn === 2 || b.sn === 4) {             // to where he was last seen (2), or over to the box (4)
+      b.gt += h; b.mode = 7; rl = Math.hypot(b.lsx - p.x, b.lsz - p.z);
+      if (rl < (b.sn === 4 ? 1.6 : 1.0) || b.gt > 8) { b.sn = 3; b.pause = 2.6; b.plan = 0; }
+      else { speed = b.sn === 4 ? 2.2 : 3.6; want = snakeGoal(b, b.lsx, b.lsz, think); }
+    } else if (b.sn === 3) {                           // a look round, then back to the route at its nearest point
+      b.pause -= h; sweep = Math.sin(b.pause * 2.4) * 0.9; b.mode = 0;
+      if (b.pause <= 0) { b.sn = 0; b.wi = snakeNearest(b); b.plan = 0; }
+    } else {                                           // the patrol
+      wp = b.route[b.wi]; b.mode = 7;
+      if (b.pause > 0) { b.pause -= h; sweep = Math.sin(b.pause * 2.4) * 0.9; if (b.pause <= 0) { b.wi = (b.wi + 1) % b.route.length; b.plan = 0; } }
+      else if (Math.hypot(wp.x - p.x, wp.z - p.z) < 0.7) { if (wp.pause) b.pause = 2.2 + (i % 3) * 0.4; else b.wi = (b.wi + 1) % b.route.length; b.plan = 0; }
+      else { speed = SN_PACE; want = snakeGoal(b, wp.x, wp.z, think); }
+    }
+
+    cap = speed > 0 ? speed : chasing ? 2 : 0;         // standing next to him they may still shuffle apart
+    if (cap > 0) {
+      if (raw) { q = Math.min(rl, speed * h) / rl; p.x += (b.ex - p.x) * q; p.z += (b.ez - p.z) * q; }
+      else {
+        for (k = 0; k < BADDIES.length; k++) {         // separation: lean away from colleagues, never stack
+          o = BADDIES[k]; if (o === b) continue;
+          rx = p.x - o.mesh.position.x; rz = p.z - o.mesh.position.z; rl = Math.hypot(rx, rz);
+          if (rl < 1.6) { if (rl < 0.01) { rx = i > k ? 1 : -1; rz = 0.3; rl = 1.044; } q = (1.6 - rl) / (1.6 * rl); sx += rx * q; sz += rz * q; }
+        }
+        f = navTurn(want, b.head); q = turn * h; b.head += f > q ? q : f < -q ? -q : f;
+        f = Math.abs(navTurn(want, b.head)); f = f > 1 ? 0.45 : f > 0.5 ? 1 - (f - 0.5) * 1.1 : 1;
+        vx = Math.sin(b.head) * speed * f + sx * 7; vz = Math.cos(b.head) * speed * f + sz * 7; q = Math.hypot(vx, vz);
+        if (q > cap) { vx *= cap / q; vz *= cap / q; q = cap; }
+        if (q > 0.01 && !navStep(b, Math.atan2(vx, vz), q * h) && b.plan > 0.05) b.plan = 0.05;
+      }
+      q = Math.hypot(p.x - ox, p.z - oz); b.moved += q; b.walkT += q * 1.6;
+    }
+    if (speed > 0) face = b.head; else if (sweep) face = b.head + sweep;   // standing at a corner he turns to look left and right
+    m.rotation.y += navTurn(face, m.rotation.y) * Math.min(1, h * 10);
+    b.look = m.rotation.y;                             // the cone follows his face, not his feet
+
+    // stuck detector, as before: wants to move, has not covered 0.3 units in a second -> go by the map; twice running -> shuffle to open ground
+    if (speed > 0 && !(chasing && d < 2.5)) {
+      b.stuckT += h;
+      if (b.stuckT >= 1) {
+        if (Math.hypot(p.x - b.sx, p.z - b.sz) < 0.3) {
+          b.stuckN++; b.side = -b.side; b.plan = 0; b.careful = 2.5;
+          if (b.stuckN > 1 && b.esc <= 0 && navNearest(p.x, p.z, true)) { b.esc = 1.2; b.ex = navWx; b.ez = navWz; }
+        } else b.stuckN = 0;
+        b.stuckT = 0; b.sx = p.x; b.sz = p.z;
+      }
+    } else { b.stuckT = 0; b.stuckN = 0; b.sx = p.x; b.sz = p.z; }
+  }
+  // once a frame, after the reviewers have moved: the box (and who was close enough as it dropped), the cones, the marks
+  function snakeFrame(dt) {
+    var k, b, p, d, u, s;
+    snBoxedWas = snBoxed; snBoxed = false; if (hats) try { snBoxed = !!hats.boxed(); } catch (e) { snBoxed = false; }
+    if (!snWarm) { snWarm = true; var kit = fpKit(); if (kit && kit.warm) try { kit.warm(['alert', 'lost']); } catch (e) {} }
+    for (k = 0; k < BADDIES.length; k++) {
+      b = BADDIES[k]; p = b.mesh.position; d = Math.hypot(player.position.x - p.x, player.position.z - p.z);
+      if (snBoxed && !snBoxedWas) b.boxCatch = b.sn === 1 && d < 3.2; else if (!snBoxed) b.boxCatch = false;
+      b.range = (12.5 + 2.5 * dread) * (MQ ? 1.1 : 1);
+      b.cone.visible = b.mesh.visible; b.cone.position.set(p.x, 0, p.z); b.cone.rotation.y = b.look; b.cone.scale.set(b.range, 1, b.range);
+      b.fan.material.opacity = b.sn === 1 ? 0.38 : b.sn === 0 ? 0.22 + 0.12 * dread : 0.3;   // the patrol fan lifts with dread: on the red-lit ground 0.22 was lost
+      if (b.markT < 1.5) {                             // the "!" / "?": pops in large, settles, one small hop
+        u = Math.min(1, b.markT * 5); s = 0.9 * (1.35 - 0.35 * u);
+        b.mark.visible = b.mesh.visible; b.mark.scale.set(s, s, 1); b.mark.position.y = 4.1 + Math.max(0, Math.sin(Math.min(b.markT * 7, Math.PI))) * 0.45;
+      } else b.mark.visible = false;
+    }
   }
   // showToast(msg, secs, then): then = [msg, secs] follows when this one runs out, unless another toast replaces it first
   var toastNext = null;
   function showToast(msg, secs, then) { if (MQ) mqFit(); toast.textContent = msg; toast.hidden = false; toastT = secs || 2.6; toastNext = then || null; }
   /* ------------------------------------------------------------ physics */
-  function collide(x, z, r) {
+  function collide(x, z, r, car) {   // car: the Warthog asking (it drives over the water colliders)
     for (var i = 0; i < colliders.length; i++) {
       var c = colliders[i];
+      if (car && c.water) continue;
       if (c.r !== undefined) { if (Math.hypot(x - c.x, z - c.z) < c.r + r) return true; }
+      else if (c.yaw) { var dx = x - c.x, dz = z - c.z, s = Math.sin(c.yaw), cs = Math.cos(c.yaw); if (Math.abs(dx * cs - dz * s) < c.hw + r && Math.abs(dx * s + dz * cs) < c.hd + r) return true; }
       else if (Math.abs(x - c.x) < c.hw + r && Math.abs(z - c.z) < c.hd + r) return true;
     }
     return Math.abs(x) > WORLD + 4 || Math.abs(z) > WORLD + 4;
@@ -1402,7 +1730,7 @@
         if (fpCue === 1) { fpCue = 2; sfx('reload', { delay: FP_READY }); }
         fpBlend = Math.min(1, fpBlend + dt / 1.2); if (fpBlend >= 1) fpLanded();
       }
-      updateShots(dt); player.visible = false; weapon.visible = fpBlend >= 1 && !cine && hudOn; if (fireHeld && !cine) fire();
+      updateShots(dt); player.visible = driving && !cine; weapon.visible = fpBlend >= 1 && !cine && hudOn && !driving; if (fireHeld && !cine) fire();
     }
     markers.forEach(function (m, i) { m.rotation.y += dt * 2; m.position.y = 3.6 + Math.sin(t * 3 + i) * 0.25; });
     NPCS.forEach(function (n, i) { n.mesh.position.y = Math.abs(Math.sin(t * 4 + i)) * 0.12; });
@@ -1413,9 +1741,13 @@
       return;
     }
 
-    if (keys.rotl) camYaw += dt * 2; if (keys.rotr) camYaw -= dt * 2;
+    if (keys.rotl && !driving) camYaw += dt * 2; if (keys.rotr && !driving) camYaw -= dt * 2;
 
+    if (W && !driving) W.update(dt, { hit: fp ? chainHit : null });   // tracers, spent links and a tumbling reviewer carry on without him
     var ix = 0, iz = 0;
+    if (driving) driveFrame(dt, t);                    // the Warthog has him: it moves, he sits (below)
+    else if (diveT >= 0) diveFrame(dt, t);             // the hop into the fountain
+    else {
     if (!dialogOpen) {
       if (keys.up) iz -= 1; if (keys.down) iz += 1; if (keys.left) ix -= 1; if (keys.right) ix += 1;
     }
@@ -1429,9 +1761,21 @@
       var d = target - pstate.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
       pstate.yaw += d * Math.min(1, dt * 14);
       pstate.speed = Math.min(9, pstate.speed + dt * 40);
-      var nx = player.position.x + wx * pstate.speed * dt, nz = player.position.z + wz * pstate.speed * dt;
-      if (!collide(nx, player.position.z, 0.5)) player.position.x = nx;
-      if (!collide(player.position.x, nz, 0.5)) player.position.z = nz;
+      var step = pstate.speed * dt, nx = player.position.x + wx * step, nz = player.position.z + wz * step, slid = false, sa, sk, sx, sz;
+      if (!collide(nx, nz, 0.5)) { player.position.x = nx; player.position.z = nz; slid = true; }
+      else {
+        // Blocked: slide. The buildings face the fountain, so most walls are diagonal and the old x-then-z split
+        // stuck on them. Swing the heading away from the wall, nearest side first, and keep the tangent speed.
+        for (sk = 1; sk <= 5 && !slid; sk++) for (sa = -1; sa <= 1 && !slid; sa += 2) {
+          var ang = Math.atan2(wx, wz) + sa * sk * 0.2618, sp = step * Math.cos(sk * 0.2618);
+          sx = player.position.x + Math.sin(ang) * sp; sz = player.position.z + Math.cos(ang) * sp;
+          if (!collide(sx, sz, 0.5)) { player.position.x = sx; player.position.z = sz; slid = true; }
+        }
+      }
+      if (!slid) {                                         // into a corner: the old axis split, which can still inch along one face
+        if (!collide(nx, player.position.z, 0.5)) player.position.x = nx;
+        if (!collide(player.position.x, nz, 0.5)) player.position.z = nz;
+      }
     } else pstate.speed = Math.max(0, pstate.speed - dt * 50);
     player.rotation.y = pstate.yaw;
 
@@ -1441,11 +1785,18 @@
     if (pstate.speed > 0.5) pstate.walkT += dt * pstate.speed * 1.5;
     pose(player, { walk: pstate.walkT, speed: pstate.speed / 9, air: pstate.air, vy: pstate.vy, t: t });
     if (cap) capFlop(dt);
+    if (hats) try { hats.update(dt, { speed: pstate.speed, air: pstate.air, vy: pstate.vy, yaw: pstate.yaw, moving: moving, t: t, box: running && !dialogOpen && !fp && !over && !endgame }); } catch (e) { hats = null; }
     player.position.y = pstate.air ? pstate.y : (pstate.speed > 0.5 ? Math.abs(Math.sin(pstate.walkT)) * 0.08 : 0);
     // landing squash
     var sq = pstate.land > 0 ? Math.sin(pstate.land / 0.18 * Math.PI) * 0.18 : 0; player.scale.set(1 + sq, 1 - sq, 1 + sq);
-    // fountain drops + clouds
-    if (window.__fountain) window.__fountain.children.forEach(function (d) { var ph = (t * 1.6 + d.userData.k / 14) % 1; var ang = d.userData.k / 14 * 6.283; d.position.set(Math.cos(ang) * ph * 2.0, 2.3 + Math.sin(ph * 3.14) * 1.4 - ph * 1.2, Math.sin(ang) * ph * 2.0); });
+    }
+    // fountain drops (the dive throws them outward for a moment) + clouds
+    if (splashT > 0) splashT -= dt;
+    if (window.__fountain) window.__fountain.children.forEach(function (d) {
+      var ang = d.userData.k / 14 * 6.283, ph;
+      if (splashT > 0) { ph = 1 - splashT / 0.6; d.position.set(Math.cos(ang) * ph * 3.6, 0.7 + Math.sin(ph * 3.14) * 2.6 - ph * 0.5, Math.sin(ang) * ph * 3.6); return; }
+      ph = (t * 1.6 + d.userData.k / 14) % 1; d.position.set(Math.cos(ang) * ph * 2.0, 2.3 + Math.sin(ph * 3.14) * 1.4 - ph * 1.2, Math.sin(ang) * ph * 2.0);
+    });
     clouds.forEach(function (c) { c.position.x += c.userData.v * dt; if (c.position.x > 110) c.position.x = -110; });
 
     // camera. The swoop into first person (k 0 -> 1) leaves from the orbit view he last saw (swoopYaw, kept by enterFP)
@@ -1456,10 +1807,12 @@
     var oy = fp ? swoopYaw : camYaw;
     var cx = player.position.x + Math.sin(oy) * Math.cos(camPitch) * camDist;
     var cz = player.position.z + Math.cos(oy) * Math.cos(camPitch) * camDist;
-    var cy = 1.5 + Math.sin(camPitch) * camDist;
-    if (!fp) {
+    var cy = 1.5 + Math.sin(camPitch) * camDist - camDip * 2.5;
+    if (driving && W) {                                // the chase camera, or the view down the chain gun's barrels
+      var wc = W.placeCamera(camera, dt, fp ? 'turret' : 'drive', camYaw, fpPitch); camYaw = wc.yaw; fpPitch = wc.pitch;
+    } else if (!fp) {
       camera.position.lerp(tmp.set(cx, cy, cz), Math.min(1, dt * 6));
-      camera.lookAt(player.position.x, 1.6 + player.position.y * 0.5, player.position.z);
+      camera.lookAt(player.position.x, 1.6 + hatLift + player.position.y * 0.5, player.position.z);
     } else {
       var k = fpBlend * fpBlend * (3 - 2 * fpBlend), dir = viewDir();
       var hx = player.position.x, hy = 2.25 + player.position.y, hz = player.position.z;
@@ -1479,23 +1832,29 @@
       camera.rotation.z += (Math.random() - 0.5) * sa * 0.04;
     }
 
-    if (cave && running && !caveOn && !endgame && !over && !dialogOpen) {
-      var fd2 = player.position.x * player.position.x + player.position.z * player.position.z;
-      if (fd2 > 49) caveArmed = true;                      // he spawns 4 units out; walk away first
-      else if (caveArmed && fd2 < 16.8) enterCave();       // then walking back into it drops you in
-    }
-
-    // prompt
-    var near = nearbyTarget();                          // always null in the endgame, so first person never has a prompt
-    prompt.hidden = !near || dialogOpen;
-    if (near && !dialogOpen) {
-      prompt.textContent = near.kind === 'baddie' ? 'F: REBUT' : 'F: TALK';
-      tmp.set(player.position.x, 3.4, player.position.z).project(camera);
-      prompt.style.left = ((tmp.x + 1) / 2 * 100) + '%'; prompt.style.top = ((1 - tmp.y) / 2 * 100) + '%';
+    // prompt: a target (sign, colleague, reviewer), else the Warthog, else the fountain's rim; none from the car or mid-hop
+    var near = nearbyTarget(), ptxt = null, px2 = player.position.x, pz2 = player.position.z;   // nearbyTarget is null in the endgame and the car
+    if (near) ptxt = near.kind === 'baddie' ? 'F: REBUT' : 'F: TALK';
+    else if (carNear()) { ptxt = fp ? (padShown() ? 'B: WARTHOG' : 'E: WARTHOG') : 'F: WARTHOG'; if (fp) { px2 = W.pos.x; pz2 = W.pos.z; } }
+    else if (fountainNear()) ptxt = 'F: DIVE IN?';
+    prompt.hidden = !ptxt || dialogOpen || !hudOn;
+    if (ptxt && !dialogOpen) {
+      prompt.textContent = ptxt;
+      tmp.set(px2, 3.4, pz2).project(camera);
+      if (tmp.z > 1) prompt.hidden = true;             // behind the lens (the car behind him in the fight): the projection is a mirror, not a place
+      else { prompt.style.left = (Math.max(6, Math.min(94, (tmp.x + 1) / 2 * 100))) + '%'; prompt.style.top = (Math.max(8, Math.min(90, (1 - tmp.y) / 2 * 100))) + '%'; }
     }
     sun.position.set(player.position.x + 40, 60, player.position.z + 20); sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
     // the first-person camera swoops into his head from behind: the cap goes before the lens reaches it (asked of this frame's camera)
     if (cap) { cap.base.getWorldPosition(cap.at); cap.base.visible = camera.position.distanceTo(cap.at) > 1.9; }
+    // behind the chain gun the driver sits under the lens: he (and his hats) go when it is within a few units of his head
+    var hatD = camera.position.distanceTo(hatAt.set(player.position.x, player.position.y + 2.4, player.position.z)), showMan = hatD > 2.2;
+    if (driving && fp && showMan && hatD < 6.5) {   // in the sights: his head within ~40 degrees of the gun's line (aiming over the cab)
+      var vd = viewDir(); hatAt.sub(camera.position).normalize();
+      showMan = hatAt.x * vd.x + hatAt.y * vd.y + hatAt.z * vd.z < 0.75;
+    }
+    if (driving && fp && player.visible) player.visible = showMan;
+    if (hats) try { hats.setVisible(showMan); } catch (e) { hats = null; }
   }
 
   /* ------------------------------------------------------------ endgame: boss, then space */
@@ -1549,35 +1908,168 @@
     links: { publications: '/publications/', research: '/research/', code: '/code/', scholar: 'https://scholar.google.com/citations?user=-OiUY4kAAAAJ&hl=en', email: 'mailto:duncan.palmer@stats.ox.ac.uk' },
     onBossDefeated: function () { launchShmup(); },
     // the shooter's first ending offers the second loop: everything is re-earned, and the world remembers which loop it is on
-    startLoop2: function () { try { localStorage.setItem('quest.loop', '2'); localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); } catch (e) {} location.hash = '#play'; location.reload(); },
-    restart: function () { try { localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); localStorage.removeItem('quest.loop'); } catch (e) {} location.hash = '#play'; location.reload(); }
+    // (quest.clears, the count of honest loop-1 clears kept by shmup.js, survives both of these)
+    // A level-select session never touches the saved run, so from one of those these two only reload: SECOND LOOP warps
+    // to the Master Quest overworld (still a cheat run), PLAY AGAIN goes back to the saved game. 'Reset progress' is the wipe.
+    startLoop2: function () {
+      if (CHEAT) { if (ssSet('quest.warp', JSON.stringify({ loop: 2, level: 'town' }))) ssSet('quest.cheat', '1'); location.hash = '#play'; location.reload(); return; }
+      ssSet('quest.warp', null); ssSet('quest.cheat', null); try { localStorage.setItem('quest.loop', '2'); localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); } catch (e) {} location.hash = '#play'; location.reload();
+    },
+    restart: function () { if (CHEAT) { ssSet('quest.warp', null); ssSet('quest.cheat', null); location.hash = '#play'; location.reload(); return; } wipeSave(); }
   };
+  /* The level select chose a destination. This loop: begin there now, no reload. The other loop: the town has to be
+     rebuilt mirrored (or unmirrored), so leave the warp in sessionStorage and reload; the page then opens on the title
+     card and one PRESS START begins there. Either way the session becomes a cheat session: fifty hearts and ships, and
+     nothing it does is read from or written to the saved run. */
+  function wipeSave() { ssSet('quest.warp', null); ssSet('quest.cheat', null); try { localStorage.removeItem('quest.found'); localStorage.removeItem('quest.cave'); localStorage.removeItem('quest.loop'); } catch (e) {} location.hash = '#play'; location.reload(); }
+  var warped = false;
+  function onWarp(w) {
+    w = warpOf(w);
+    if (!w || warped || running) return;
+    warped = true;
+    ssSet('quest.cheat', '1');
+    // In MASTER QUEST a building that has been read wears it on its door and sign, so a town with saved finds on show
+    // cannot be handed over as fresh in place: rebuild it.
+    var stale = w.level === 'town' && MQ && countFound() > 0;
+    if (w.loop !== LOOP || stale) {
+      if (ssSet('quest.warp', JSON.stringify(w)) && ssGet('quest.warp')) { location.hash = '#play'; location.reload(); return; }
+      if (w.loop !== LOOP) { warped = false; return; }             // no sessionStorage: the other loop cannot be reached, stay on the menu
+    }
+    CHEAT = true; PARAMS.cheat = true; PARAMS.warp = w;
+    found = {}; updateHud();                                       // the cheat session's own fresh town
+    caveTaken = false; MAX_HITS = CHEAT_HEARTS; hits = 0; drawHearts();
+    try { if (intro) intro.stop(); } catch (e) {}
+    start.classList.remove('is-intro');
+    begin();
+  }
   // loop 2 fights a different boss module with the same interface (magician.js); it falls back to the editor if that file is missing
   try { boss = (LOOP === 2 && window.QuestMagician) ? window.QuestMagician(api) : window.QuestBoss ? window.QuestBoss(api) : null; } catch (e) { console.error(e); boss = null; }
   try { shmup = window.QuestShmup ? window.QuestShmup(api) : null; } catch (e) { console.error(e); shmup = null; }
   try { cave = window.QuestCave ? window.QuestCave(api) : null; } catch (e) { console.error(e); cave = null; }
+  /* ---- THE WARTHOG (warthog.js). Only the Chief (twenty clears) has one: for everybody else W is null and nothing
+     below runs. Parked on the grass east of the fountain square (mirrored in MASTER QUEST), off the roads, the patrol
+     routes and the editor's crater. F within reach climbs in; WASD drives, Space is the handbrake, F (town) or E
+     gets out. Reviewers under the chassis at speed are run over (updateBaddies). In the fight F fires whatever he holds,
+     so E is the door both ways: E near it climbs in, the camera goes behind the chain gun, the mouse aims it, F / click
+     fires, E gets out. A sign, a colleague or a reviewer in reach comes before the car (the prompt says which). The car
+     is not armour. */
+  (function () {
+    var chief = false; try { chief = !!(hats && hats.skin() === 'chief'); } catch (e) { chief = false; }
+    if (!chief || !window.QuestWarthog) return;
+    try {
+      W = window.QuestWarthog({ THREE: THREE, scene: scene, flat: flat, collide: collide, colliders: colliders, safeSpot: safeSpot, sfx: sfx, shake: api.shake, WORLD: WORLD, hills: HILLS, props: PROPS });
+      if (!W.build({ x: mx(14), z: 2, yaw: mx(1.96) })) W = null;   // nosed east, down 30 clear units of grass: the first drive is a clean one
+    } catch (e) { console.error(e); W = null; }
+  })();
+  function carNear() {
+    if (!W || driving || !running || over || dialogOpen || diveT >= 0 || (SNAKE && snBoxed)) return false;
+    if (endgame && !(boss && boss.active && !boss.cinematic && !boss.ended && fpBlend >= 1)) return false;   // during the fight only
+    return Math.hypot(player.position.x - W.pos.x, player.position.z - W.pos.z) < 4.3;                        // ~3 units from the chassis edge
+  }
+  function setKeysText(txt) { if (!keysPill) return; if (!keysText) keysText = keysPill.textContent; keysPill.textContent = txt || keysText; }
+  function carEnter() {
+    if (!W || driving || !W.enter()) return;
+    driving = true; pstate.air = false; pstate.y = 0; pstate.vy = 0; pstate.speed = 0; keys.hb = false; hbPulse = 0; fireHeld = false;   // the key that opened the door fires nothing
+    W.seat(player); pstate.yaw = W.yaw;
+    if (hats) try { hats.update(0, { box: false, speed: 0, yaw: pstate.yaw }); } catch (e) {}
+    var k = fpKit(); if (k) k.warm(['engine', 'skid', 'bump', 'door', 'thud', 'splash'].concat(fp ? ['chaingun'] : []));
+    setKeysText(fp ? 'WASD DRIVE · MOUSE AIM · F / CLICK FIRE · E GET OUT' : 'WASD DRIVE · SPACE HANDBRAKE · F / E GET OUT');
+    showToast(fp ? 'THE CHAIN GUN. HOLD F.' : 'THE WARTHOG. MIND THE REVIEWERS.');
+  }
+  function carExit(quiet) {
+    if (!W || !driving) return;
+    var out = W.exit(); driving = false; keys.hb = false; hbPulse = 0; fireHeld = false;
+    if (out) player.position.set(out.x, 0, out.z);
+    player.rotation.y = pstate.yaw = W.yaw; pstate.speed = 0; pstate.air = false; pstate.y = 0; pstate.vy = 0; player.scale.set(1, 1, 1);
+    if (fp) { camYaw = pstate.yaw + Math.PI; swoopYaw = camYaw; } else camYaw = W.yaw + Math.PI;
+    setKeysText(fp ? 'WASD MOVE · SPACE JUMP · F / CLICK FIRE · MOUSE AIM' : '');
+    if (!quiet) showToast(fp ? 'ON FOOT. THE PAPER BALLS, THEN.' : 'ON FOOT.');
+  }
+  function runOver(b) {
+    b.ko = 5.5; b.chase = false; rebuttals++;
+    W.launch(b.mesh, W.speed);
+    showToast(['REBUTTED!', 'RESPONSE TO REVIEWERS SENT', 'SEE SUPPLEMENTARY NOTE 4', 'WE THANK THE REVIEWER'][rebuttals & 3]);
+  }
+  // a tracer of the chain gun: the boss first (its own damage and feedback: 'chain' once the boss modules know the kind,
+  // 'weak' | 'body' from the old test meanwhile), then the ground, a wall or the world's edge ('world': a spark, nothing more)
+  var CHAIN = { kind: 'chain' };
+  function chainHit(pos, prev) {
+    if (boss && boss.active && !boss.ended && !boss.cinematic) { try { var r = boss.hitTest(pos, prev, CHAIN); if (r) return r; } catch (err) { console.error(err); } }
+    return pos.y < 0.05 || collide(pos.x, pos.z, 0.05) ? 'world' : null;
+  }
+  function driveFrame(dt, t) {
+    // the boss (pushPlayerOut) or a teleport moved the man in the seat: the car goes with him
+    var at = W.seatAt(), dx = player.position.x - at.x, dz = player.position.z - at.z;
+    if (Math.abs(dx) + Math.abs(dz) > 0.25) W.shift(dx, dz);
+    var ix = 0, iz = 0;
+    if (!dialogOpen) { if (keys.up) iz -= 1; if (keys.down) iz += 1; if (keys.left) ix -= 1; if (keys.right) ix += 1; }
+    if (hbPulse > 0) hbPulse -= dt;
+    W.update(dt, { x: ix, y: -iz, hb: !!keys.hb || hbPulse > 0, turret: fp, aimYaw: camYaw, aimPitch: fpPitch, hit: fp ? chainHit : null });
+    W.seat(player);
+    pstate.speed = 0; pstate.yaw = W.yaw;
+    if (hats) try { hats.update(dt, { speed: 0, air: false, vy: 0, yaw: W.yaw, moving: true, t: t, box: false }); } catch (e) { hats = null; }
+  }
+  /* ---- THE DIVE. The fountain no longer swallows anyone who touches it: within 2.5 units of its rim the prompt says
+     F: DIVE IN?, and F is a scripted 0.7 s hop from where he stands up and into the basin, a splash of the fountain's own
+     drops, the camera dipping after him, then the secret level with his skin (cave.js plays the flush-in). Not from
+     inside Snake's box (furniture does not dive), not in the air, not in the endgame, and no reviewer can catch him
+     mid-hop. ?cave=1 still goes straight in after PRESS START. leaveCave puts him back on the rim. */
+  function fountainNear() {
+    if (!cave || !running || caveOn || endgame || over || dialogOpen || driving || fp || diveT >= 0 || pstate.air || !fountain.group.parent || (SNAKE && snBoxed)) return false;
+    return Math.hypot(player.position.x, player.position.z) < 3.0 + 2.5;
+  }
+  function startDive() {
+    if (!fountainNear()) return;
+    diveT = 0; dive0x = player.position.x; dive0z = player.position.z; pstate.speed = 0; pstate.air = false; pstate.vy = 0;
+    prompt.hidden = true;
+    var k = fpKit(); if (k) k.warm(['splash']);
+    blip(520, .07); setTimeout(function () { blip(780, .06); }, 50);
+  }
+  function diveFrame(dt, t) {
+    diveT += dt;
+    var u = Math.min(1, diveT / 0.7);
+    if (u < 1 || diveT - dt < 0.7) {
+      player.position.x = dive0x * (1 - u); player.position.z = dive0z * (1 - u);
+      player.position.y = pstate.y = 1.2 * u + Math.sin(u * Math.PI) * 2.4;
+      pstate.yaw = Math.atan2(-dive0x, -dive0z); player.rotation.y = pstate.yaw;
+      pose(player, { air: true });
+      if (hats) try { hats.update(dt, { speed: 0, air: true, vy: 4 - 8 * u, yaw: pstate.yaw, moving: true, t: t, box: false }); } catch (e) { hats = null; }
+    }
+    camDip = Math.max(0, (u - 0.5) * 2);
+    if (diveT >= 0.7 && diveT - dt < 0.7) {               // in: the splash, and he is under
+      splashT = 0.6; player.visible = false;
+      if (!sfx('splash')) blip(300, .12);
+    }
+    if (diveT >= 1.05) {
+      if (cave && !caveOn) enterCave();
+      if (!caveOn) { diveEnd(); api.teleport(0, 7); showToast('THE BASIN IS SHALLOWER THAN IT LOOKS.'); }
+    }
+  }
+  function diveEnd() { diveT = -1; camDip = 0; player.visible = true; pstate.y = 0; pstate.vy = 0; pstate.air = false; player.position.y = 0; }
 
-  /* ---- the title sequence lives inside the start overlay: attract, then a scored cinematic, then PRESS START ---- */
+  /* ---- the title sequence lives inside the start overlay: attract, then a scored cinematic, then PRESS START.
+     The overlay is empty markup: intro.js draws everything. Without it (file missing or start() failing) the overlay
+     shows one PRESS START line, written here, so the game can still be entered. ---- */
   var intro = null;
   try { intro = window.QuestIntro ? window.QuestIntro(api) : null; } catch (e) { console.error(e); intro = null; }
+  if (start && !intro) start.textContent = '\u25B6 PRESS START';
   if (intro && start) {
     (function () {
-      var kids = [], i;
-      for (i = 0; i < start.children.length; i++) kids.push(start.children[i]);
-      kids.forEach(function (k) { k.hidden = true; });          // the module draws its own logo and prompt
       start.classList.add('is-intro');
       try {
         intro.start({
           host: start,
           onScore: function (name) { try { music(name === 'title' ? 'title' : name); } catch (e) {} },
-          onDone: function () { try { intro.stop(); } catch (e) {} start.classList.remove('is-intro'); begin(); }
+          onDone: function () { try { intro.stop(); } catch (e) {} start.classList.remove('is-intro'); begin(); },
+          onWarp: function (w) { try { onWarp(w); } catch (e) { console.error(e); } },
+          warp: WARP
         });
       } catch (e) { console.error(e); }
       if (!intro || !intro.active) {                             // fall back to the plain overlay
         if (intro && intro.startError) console.error('QuestIntro failed to start: ' + intro.startError);
         try { if (intro) intro.stop(); } catch (e2) {}
         intro = null;
-        kids.forEach(function (k) { k.hidden = false; });
+        start.textContent = '\u25B6 PRESS START';
         start.classList.remove('is-intro');
       }
     })();
@@ -1587,9 +2079,10 @@
     if (endgame) return;
     endgame = true; pendingEndgame = false;
     if (dialogOpen) { dialogOpen = false; dlg.hidden = true; if (typing) { clearInterval(typing); typing = null; } }
+    if (driving) carExit(true);
     enterFP();                                         // the only way into first person
     var k = fpKit(); if (k) k.warm(SFX_WARM);
-    BADDIES.forEach(function (b) { b.mesh.visible = false; });                 // the ordinary reviewers know when to leave (and updateBaddies stops)
+    BADDIES.forEach(function (b) { b.mesh.visible = false; if (b.cone) b.cone.visible = false; });   // the ordinary reviewers know when to leave (and updateBaddies stops)
     markers.forEach(function (m) { m.visible = false; });
     api.setWeapon({ rate: 0.13, speed: 70, gravity: 2.5 });                        // a hundred hits needs a faster arm
     if (!boss) { fpCue = 0; showToast('YOU FOUND EVERYTHING. (THE BOSS IS MISSING.)'); return; }
@@ -1599,6 +2092,7 @@
     over = false; root.classList.remove('is-over'); if (overEl) overEl.hidden = true;
     dialogOpen = false; dlg.hidden = true; hits = 0; drawHearts(); hurtCool = 1.5; fireHeld = false;
     shots.forEach(function (sh) { scene.remove(sh.m); }); shots.length = 0;
+    if (driving) carExit(true); if (W) W.clearShots();   // REJECTED! in the Warthog: he resubmits on foot, beside it
     camera.rotation.z = 0; setHud(true);
     if (boss) { try { boss.stop(); boss.start({ hp: PARAMS.bossHp, skipIntro: true, retry: true }); } catch (e) { console.error(e); } }
     // the scream's fall may not have landed yet: cut it, then ready the gun again (HotD's continue). The boss module's
@@ -1611,6 +2105,7 @@
     if (!shmup) { showToast('SPACE IS CLOSED TODAY.'); return; }
     if (boss && boss.active) { try { boss.stop(); } catch (e) {} }
     if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
+    if (driving) carExit(true); if (W) W.clearShots();   // the engine loop and the tracers do not follow him into space
     fireHeld = false; for (var k in keys) keys[k] = false;
     setHud(false); root.classList.add('is-space');
     try { shmup.start({ loop: LOOP }); } catch (e) { console.error(e); }
@@ -1621,18 +2116,20 @@
     if (document.exitPointerLock) try { document.exitPointerLock(); } catch (e) {}
     fireHeld = false; for (var ck in keys) keys[ck] = false;
     setHud(false); root.classList.add('is-space');
-    try { cave.start({ onDone: leaveCave }); } catch (e) { console.error(e); caveOn = false; setHud(true); root.classList.remove('is-space'); }
+    var skin = 'palmer'; if (hats) try { skin = hats.skin() || 'palmer'; } catch (e) { skin = 'palmer'; }
+    try { cave.start({ onDone: leaveCave, skin: skin, transition: true }); } catch (e) { console.error(e); caveOn = false; setHud(true); root.classList.remove('is-space'); diveEnd(); }
   }
   function leaveCave(res) {
     if (!caveOn) return;
     caveOn = false;
     try { cave.stop(); } catch (e) {}
     root.classList.remove('is-space'); setHud(true);
-    api.teleport(0, 7);                                   // climbs out at the fountain's edge, clear of the trigger
+    diveEnd();
+    api.teleport(0, 7);                                   // climbs out onto the rim (the hop in needs F, so he is not flushed straight back)
     var got = res && res.hearts ? res.hearts | 0 : 0;
     if (got > 0 && !caveTaken) {
       caveTaken = true; MAX_HITS += got; drawHearts();   // banked: the hearts themselves show up with first person, at the boss
-      try { localStorage.setItem('quest.cave', JSON.stringify({ hearts: got, credits: res.credits | 0 })); } catch (e) {}
+      if (!CHEAT) { try { localStorage.setItem('quest.cave', JSON.stringify({ hearts: got, credits: res.credits | 0 })); } catch (e) {} }
       showToast('CLOUD COMPUTE SECURED  ·  +' + got + (got > 1 ? ' HEARTS' : ' HEART'));
     } else if (!caveTaken) {
       showToast('THE UNDERSPEND WAS CLAWED BACK.');
@@ -1641,7 +2138,7 @@
   }
 
   var resetLink = document.querySelector('[data-quest-reset]');
-  if (resetLink) resetLink.addEventListener('click', function (e) { e.preventDefault(); api.restart(); });
+  if (resetLink) resetLink.addEventListener('click', function (e) { e.preventDefault(); wipeSave(); });
 
   var visible = true, vframe = 0, rendered = 0;
   function checkVisible() {

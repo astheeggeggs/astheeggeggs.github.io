@@ -43,13 +43,7 @@ quest: true
         <button type="button" class="q-pill q-music" data-music aria-pressed="false">♫ OFF</button>
       </div>
 
-      <div class="q-start" role="button" tabindex="0" aria-label="Start the game">
-        <div>
-          <div class="q-logo">PALMER’S<br>PROGRESS</div>
-          <div class="q-sub">A 64-BIT* ADVENTURE IN STATISTICAL GENETICS<br>*BITS APPROXIMATE · 🔊 SOUND ON</div>
-          <div class="q-press">▶ PRESS START</div>
-        </div>
-      </div>
+      <div class="q-start" role="button" tabindex="0" aria-label="Start the game"></div>
 
       <div class="q-prompt" hidden>F</div>
       <div class="q-cross" hidden aria-hidden="true"></div>

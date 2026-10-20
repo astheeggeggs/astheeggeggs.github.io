@@ -1,13 +1,32 @@
 /* =============================================================================
    INTRO.JS — "PALMER'S PROGRESS" title screen.
-   An arcade cabinet's rhythm, set in Oxford at night: a silent looping attract
-   with the logo over a parallax skyline; the first click is the coin (the host
-   starts the title theme), the frame flashes white and the logo slams back in
-   over the title card — THE ROAD TO PUBLICATION, PRESS START, one credit; the
-   second click starts the game, but only once the prompt is fully in: a
-   double-click or a held key lands on the card, never through it. In loop 2
-   the card reads SECOND LOOP · MASTER QUEST and the cabinet is on its second
-   credit. stop() frees every canvas; a later start() rebuilds from scratch.
+   An arcade cabinet's rhythm, set in Oxford at night. Four phases:
+
+   attract  a silent looping attract with the logo over a parallax skyline.
+   logo     the first click is the coin: a white screen, the box-art man dashes
+            across it both ways as a blur and PALMER is left in his wake in the
+            SEGA logotype (after the screen that opens Sonic 2); the blues
+            shimmer and, once the logo stands finished, the choir sings the
+            name (window.PalmerChant, optional); when the chant is over it
+            dissolves to white, about 4.6 s after the coin (3.4 s if there is
+            no chant). It runs on the wall clock. A click skips it and cuts
+            the chant. It is never a gate.
+   title    the frame flashes white, the host starts the title theme (onScore)
+            and the logo slams back in over the title card: THE ROAD TO
+            PUBLICATION, PRESS START, one credit. The next click starts the
+            game, but only once the prompt is fully in: a double-click or a
+            held key lands on the card, never through it. In loop 2 the card
+            reads SECOND LOOP · MASTER QUEST on its second credit.
+   select   the Konami code (up up down down left right left right B A; on
+            touch, swipes then two taps), entered during any of the phases
+            above, opens a Sonic 2 style level select: three levels in each
+            loop, LIVES x50. Choosing one calls opts.onWarp({loop, level})
+            exactly once; ESC or BACK returns to the title card.
+
+   start({host, onScore, onDone, onWarp, warp}). With opts.warp (the page was
+   reloaded into the other loop by a warp) it opens straight on the title card,
+   silent, with one line naming the destination; one click calls onDone.
+   stop() frees every canvas and listener; a later start() rebuilds from scratch.
 
    Mega Drive discipline: ONE 320x224 offscreen buffer blitted up with
    imageSmoothingEnabled = false; every channel snapped to 0/36/73/109/146/182/
@@ -531,10 +550,10 @@
     var built = false;
     function buildAll() {
       if (built) return; built = true;
-      buildSky(); buildStars(); buildFar(); buildMid(); buildNear(); buildTitle(); warmCard();
+      buildSky(); buildStars(); buildFar(); buildMid(); buildNear(); buildTitle(); buildLogo(); warmCard();
     }
     function freeAll() {                           // drop every canvas and cache; buildAll() makes them again
-      SKY = STARS = MOON = FAR = MID = NEAR = TITLE = null;
+      SKY = STARS = MOON = FAR = MID = NEAR = TITLE = LOGO = null;
       SIGNS = []; TWINK = []; patCache = {}; clearText(); built = false;
     }
 
@@ -594,7 +613,7 @@
       var cam = coinCam + (CARD_CAM - coinCam) * smooth(t / 0.6) + 6 * Math.sin(t / 19 * 6.28318530718);
       var land = t - 0.22, shake = (land >= 0 && land < 0.5) ? 6 * (1 - land / 0.5) : 0;
       var sx = shake ? Math.round(Math.sin(t * 91) * shake) : 0, sy = shake ? Math.round(Math.cos(t * 73) * shake * 0.7) : 0;
-      var a = smooth((t - 0.30) / 0.35), ty;
+      var a = smooth((t - 0.30) / 0.35), ty, py = warpLine ? 155 : 164;
       R(x, C.black, 0, 0, VW, VH);
       x.save(); x.translate(sx, sy);
       drawCity(x, cam, t + 40, SUB_BOX);      // +40 s: the neon is mid-cycle, not all lit in unison
@@ -605,17 +624,239 @@
       if (a > 0) {
         plate(x, SUB, SUB_Y, 8, C.gold, a);
         scrim(x, 140, 76, 0.80 * a);
-        textOC(x, TAG, 160, 148, 8, LOOP2 ? C.gold : C.grey, C.black, a);
-        if (((t - 0.65) % 1.0) < 0.62) textOC(x, 'PRESS START', 160, 164, 16, C.white, C.black, a);
+        textOC(x, TAG, 160, warpLine ? 143 : 148, 8, LOOP2 ? C.gold : C.grey, C.black, a);
+        if (((t - 0.65) % 1.0) < 0.62) textOC(x, 'PRESS START', 160, py, 16, C.white, C.black, a);
+        if (warpLine) textOC(x, warpLine, 160, 175, 8, C.neonG, C.black, a);
         textOC(x, COPY, 160, 188, 8, C.grey, C.black, a);
         textOC(x, ETHICS, 160, 198, 8, C.greyD, C.black, a);
         text(x, CREDIT, 8, 207, 8, C.greyD, a);
       }
       if (t < 0.30) stip(x, C.white, 1 - t / 0.30, 0, 0, VW, VH);
       if (flourish > 0) {
-        textOC(x, 'PRESS START', 160, 164, 16, C.gold, C.black, 1);
+        textOC(x, 'PRESS START', 160, py, 16, C.gold, C.black, 1);
         stip(x, C.white, Math.max(0, 1 - flourish / 0.30), 0, 0, VW, VH);
       }
+    }
+
+
+    /* ---------------------------------------------------------------- the PALMER logotype
+       Six letters in the SEGA construction: heavy strokes with round corners and square-cut
+       ends, and one thin white inline following the outline of every stroke. Each letter is a
+       few centre-line paths stroked into a 1-bit mask; the inline is whatever lies exactly
+       three pixels inside the edge. The E is three separate bars and the A has no crossbar,
+       as in the original. One canvas per blue, so the shimmer is a palette cycle in bands. */
+    var LOGO = null, LOGOW = 0, LOGOH = 0, BAND = 6, LOGO_LEN = 3.4, CHANT_AT = 1.22;
+    var BLUES = [S(0, 36, 182), S(0, 73, 219), S(0, 109, 255), S(0, 146, 255), S(36, 182, 255), S(109, 219, 255)];
+    var GHOST = S(182, 219, 255);
+
+    function strokeInto(bits, BW, ox, cw, ch, pts, hw) {
+      var P = [], i, k;
+      function add(px, py) { var l = P.length && P[P.length - 1]; if (!l || Math.abs(l[0] - px) + Math.abs(l[1] - py) > 1e-6) P.push([px, py]); }
+      for (i = 0; i < pts.length; i++) {
+        var v = pts[i], r = v[2] || 0;
+        if (!r || i === 0 || i === pts.length - 1) { add(v[0], v[1]); continue; }
+        var a = pts[i - 1], b = pts[i + 1];
+        var d1x = v[0] - a[0], d1y = v[1] - a[1], l1 = Math.sqrt(d1x * d1x + d1y * d1y); d1x /= l1; d1y /= l1;
+        var d2x = b[0] - v[0], d2y = b[1] - v[1], l2 = Math.sqrt(d2x * d2x + d2y * d2y); d2x /= l2; d2y /= l2;
+        var cr = d1x * d2y - d1y * d2x, th = Math.atan2(Math.abs(cr), d1x * d2x + d1y * d2y), tn = r * Math.tan(th / 2);
+        var nx = cr > 0 ? -d1y : d1y, ny = cr > 0 ? d1x : -d1x;
+        var p1x = v[0] - d1x * tn, p1y = v[1] - d1y * tn, cx = p1x + nx * r, cy = p1y + ny * r;
+        var a0 = Math.atan2(p1y - cy, p1x - cx), sw = (cr > 0 ? 1 : -1) * th;
+        for (k = 0; k <= 8; k++) add(cx + r * Math.cos(a0 + sw * k / 8), cy + r * Math.sin(a0 + sw * k / 8));
+      }
+      var n = P.length - 1, x, y;
+      for (y = 0; y < ch; y++) for (x = 0; x < cw; x++) {
+        var px = x + 0.5, py = y + 0.5, best = 1e9;
+        for (i = 0; i < n; i++) {
+          var ax = P[i][0], ay = P[i][1], ex = P[i + 1][0] - ax, ey = P[i + 1][1] - ay;
+          var u = ((px - ax) * ex + (py - ay) * ey) / (ex * ex + ey * ey);
+          if ((i === 0 && u < 0) || (i === n - 1 && u > 1)) continue;        // square-cut ends
+          if (u < 0) u = 0; else if (u > 1) u = 1;
+          var qx = ax + ex * u - px, qy = ay + ey * u - py, d = qx * qx + qy * qy;
+          if (d < best) best = d;
+        }
+        if (best <= hw * hw) bits[y * BW + ox + x] = 1;
+      }
+    }
+    function buildLogo() {
+      var H = 54, hw = 7, r = 10, GAP = 3, i, j, k, n;
+      var G = [                                   // cell width, then centre-line paths of [x, y, corner radius]
+        [42, [[7, 54], [7, 7, r], [35, 7, r], [35, 27, r], [7, 27]]],                                          // P
+        [44, [[4.44, 66], [18, 7, 5], [26, 7, 5], [39.56, 66]]],                                               // A: no crossbar
+        [36, [[7, 0], [7, 47, r], [36, 47]]],                                                                  // L
+        [60, [[7, 54], [7, 7, r], [53, 7, r], [53, 54]], [[30, 7], [30, 54]]],                                 // M
+        [42, [[0, 7], [42, 7]], [[0, 27], [39, 27]], [[0, 47], [42, 47]]],                                     // E: three plain bars
+        [44, [[7, 54], [7, 7, r], [35, 7, r], [35, 27, r], [7, 27]], [[22, 27], [39, 60]]]                     // R
+      ];
+      var KERN = [0, -7, -1, 0, 0, 0];            // before each letter: the A's foot tucks under the P's bowl
+      var W = -GAP, OX = [], x, y;
+      for (i = 0; i < G.length; i++) { W += KERN[i]; OX.push(W + GAP); W += G[i][0] + GAP; }
+      var bits = new Uint8Array(W * H);
+      for (i = 0; i < G.length; i++)
+        for (j = 1; j < G[i].length; j++) strokeInto(bits, W, OX[i], G[i][0], H, G[i][j], hw);
+      for (y = 0; y < hw; y++) for (x = 0; x < hw; x++) {                  // the E: round only its two outer corners
+        var ex = hw - x - 0.5, ey = hw - y - 0.5;
+        if (ex * ex + ey * ey > hw * hw) { bits[y * W + OX[4] + x] = 0; bits[(H - 1 - y) * W + OX[4] + x] = 0; }
+      }
+      // the inline: pixels whose nearest outside pixel is three away
+      var blue = new Uint8Array(W * H);
+      for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+        if (!bits[y * W + x]) continue;
+        var best = 99;
+        for (j = -3; j <= 3; j++) for (k = -3; k <= 3; k++) {
+          var xx = x + k, yy = y + j;
+          if (xx >= 0 && yy >= 0 && xx < W && yy < H && bits[yy * W + xx]) continue;
+          var d = k * k + j * j; if (d < best) best = d;
+        }
+        if (!(best > 4.5 && best < 9.5)) blue[y * W + x] = 1;
+      }
+      var cols = BLUES.concat([GHOST]), cv = [];
+      for (n = 0; n < cols.length; n++) {
+        var c = mk(W, H), cx = c.getContext('2d'), img = cx.createImageData(W, H), p = img.data, col = cols[n];
+        var cr = parseInt(col.substr(1, 2), 16), cg = parseInt(col.substr(3, 2), 16), cb = parseInt(col.substr(5, 2), 16);
+        for (i = 0; i < W * H; i++) if (blue[i]) { p[i * 4] = cr; p[i * 4 + 1] = cg; p[i * 4 + 2] = cb; p[i * 4 + 3] = 255; }
+        cx.putImageData(img, 0, 0);
+        cv.push(c);
+      }
+      LOGO = cv; LOGOW = W; LOGOH = H;
+    }
+    // the logo between two logo-space columns, in vertical bands; shade(bandCentre) picks the blue
+    function logoBands(x, x0, y0, from, to, shade) {
+      if (from < 0) from = 0; if (to > LOGOW) to = LOGOW;
+      for (var b = Math.floor(from / BAND) * BAND; b < to; b += BAND) {
+        var s0 = Math.max(b, from), s1 = Math.min(b + BAND, to);
+        if (s1 > s0) x.drawImage(LOGO[shade(b + BAND / 2)], s0, 0, s1 - s0, LOGOH, x0 + s0, y0, s1 - s0, LOGOH);
+      }
+    }
+
+    /* the box-art man at a sprint: blond, glasses, grey suit, all boxes, with hard-edged speed
+       streaks in his own colours thinning out behind him. dir = +1 runs right. */
+    var MAN = { skin: S(255, 219, 182), hair: S(255, 219, 109), suit: S(109, 109, 146), suitD: S(73, 73, 109),
+                dark: S(36, 36, 73), tie: S(219, 146, 219) };
+    function drawRunner(x, cx, top, dir, fr) {
+      var SW = 24, x0 = Math.round(cx - SW / 2), i, s;
+      function B(col, rx, ry, rw, rh) { R(x, col, dir > 0 ? x0 + rx : x0 + SW - rx - rw, top + ry, rw, rh); }
+      var rows = [[1, MAN.hair], [6, MAN.skin], [10, MAN.skin], [17, MAN.suit], [21, MAN.suit], [25, MAN.suitD], [32, MAN.dark], [38, MAN.dark]];
+      var cov = [0.75, 0.44, 0.19];
+      for (i = 0; i < rows.length; i++) for (s = 0; s < 3; s++) {
+        var len = 18 + ((i * 7) % 11), off = 2 + s * len;
+        stip(x, rows[i][1], cov[s], dir > 0 ? x0 - off - len : x0 + SW + off, top + rows[i][0], len, 2);
+      }
+      B(MAN.hair, 5, 0, 14, 4); B(MAN.hair, 4, 2, 4, 9);                                  // hair, and the back of it
+      B(MAN.skin, 8, 4, 11, 10);                                                          // head
+      B(MAN.dark, 13, 6, 7, 4); B(MAN.dark, 8, 7, 5, 1); B(C.white, 15, 7, 2, 1);         // glasses
+      B(MAN.suit, 5, 15, 13, 14); B(C.white, 15, 15, 3, 7); B(MAN.tie, 16, 16, 1, 6);     // suit, shirt, tie
+      if (fr) {
+        B(MAN.suitD, 0, 19, 10, 4); B(MAN.skin, -3, 19, 3, 4);                            // arm back
+        B(MAN.dark, 7, 29, 7, 10); B(C.black, 7, 39, 9, 3);                               // legs passing
+        B(MAN.dark, 12, 29, 6, 6); B(C.black, 15, 34, 5, 3);
+      } else {
+        B(MAN.suitD, 9, 18, 11, 4); B(MAN.skin, 20, 18, 3, 4);                            // arm forward
+        B(MAN.dark, 11, 29, 10, 5); B(MAN.dark, 17, 33, 4, 6); B(C.black, 17, 39, 7, 3);  // front leg reaching
+        B(MAN.dark, 1, 29, 8, 5); B(MAN.dark, -2, 31, 5, 4); B(C.black, -5, 30, 3, 6);    // back leg kicked up
+      }
+    }
+
+    /* ---- the logo screen. t = 0 is the coin. White; he dashes right-to-left and leaves the
+            logotype behind him as a pale ghost; back left-to-right and it is inked in; two
+            highlights run across the blues; hold; dissolve to white, which is the title
+            card's own opening flash. ---- */
+    var D1 = 0.20, D2 = 0.80, DASH = 0.42, SHIM = 1.22, SHIM_LEN = 0.55, FADE_LEN = 0.4;
+    function shadeBase() { return 1; }
+    function shadeGhost() { return BLUES.length; }
+    function drawLogo(x, t) {
+      var x0 = (VW - LOGOW) >> 1, y0 = (VH - LOGOH) >> 1, man = null, dir = 0, cut;
+      R(x, C.white, 0, 0, VW, VH);
+      if (!LOGO) return;
+      if (t >= D1 && t < D1 + DASH) { man = VW + 40 - (VW + 100) * (t - D1) / DASH; dir = -1; }
+      else if (t >= D2 && t < D2 + DASH) { man = -60 + (VW + 100) * (t - D2) / DASH; dir = 1; }
+      if (t < D1) { /* white */ }
+      else if (t < D2) { cut = man === null ? 0 : Math.round(man - x0) + 8; logoBands(x, x0, y0, cut, LOGOW, shadeGhost); }
+      else if (t < D2 + DASH) {
+        cut = Math.round(man - x0) - 8;                    // the ink is laid down behind his back, not through him
+        logoBands(x, x0, y0, 0, cut, shadeBase);
+        logoBands(x, x0, y0, Math.max(0, cut), LOGOW, shadeGhost);
+      } else {
+        var u = (t - SHIM) / SHIM_LEN, c = (u >= 0 && u < 2) ? -54 + (u % 1) * (LOGOW + 108) : -999;
+        logoBands(x, x0, y0, 0, LOGOW, function (bc) {
+          var k = 1 + Math.round(4.4 * (1 - Math.abs(bc - c) / 48));
+          return k < 1 ? 1 : k > 5 ? 5 : k;
+        });
+      }
+      if (dir) drawRunner(x, man, y0 + 4, dir, Math.floor(t * 30) & 1);
+      if (t > LOGO_LEN - FADE_LEN) stip(x, C.white, (t - (LOGO_LEN - FADE_LEN)) / FADE_LEN, 0, 0, VW, VH);
+    }
+
+    /* ---- the level select (after Sonic 2's): two groups of three, the pick in yellow ---- */
+    var ENTRIES = [
+      { loop: 1, level: 'town',  name: 'OVERWORLD',           dest: 'OVERWORLD' },
+      { loop: 1, level: 'boss',  name: 'THE EDITOR-IN-CHIEF', dest: 'THE EDITOR-IN-CHIEF' },
+      { loop: 1, level: 'shmup', name: 'PUBLISH OR PERISH',   dest: 'PUBLISH OR PERISH' },
+      { loop: 2, level: 'town',  name: 'OVERWORLD',           dest: 'MASTER QUEST' },
+      { loop: 2, level: 'boss',  name: 'REVIEWER 2',          dest: 'REVIEWER 2' },
+      { loop: 2, level: 'shmup', name: 'PUBLISH OR PERISH 2', dest: 'PUBLISH OR PERISH 2' }
+    ];
+    var SEL_X = 16, SEL_Y = [58, 72, 86, 124, 138, 152], BACK_BOX = [8, 201, 120, 219];
+    function hitSelect(px, py) {                 // entry index, -1 for BACK, -2 for nothing
+      for (var i = 0; i < 6; i++) if (px >= SEL_X - 4 && px < SEL_X + 180 && py >= SEL_Y[i] - 3 && py < SEL_Y[i] + 11) return i;
+      if (px >= BACK_BOX[0] && px < BACK_BOX[2] && py >= BACK_BOX[1] && py < BACK_BOX[3]) return -1;
+      return -2;
+    }
+    function drawIcon(x, en, ix, iy, t) {       // a postcard of the level, in boxes
+      var w = 92, h = 62, two = en.loop === 2, i, f = Math.floor(t * 4);
+      R(x, C.white, ix - 2, iy - 2, w + 4, h + 4); R(x, C.black, ix - 1, iy - 1, w + 2, h + 2);
+      if (en.level === 'town') {
+        R(x, two ? C.sky2 : C.skyA, ix, iy, w, h); R(x, two ? C.sky4 : C.sky1, ix, iy + 30, w, 14);
+        R(x, two ? S(73, 36, 73) : S(36, 109, 73), ix, iy + 44, w, h - 44);
+        for (i = 0; i < 3; i++) {
+          var hx = two ? ix + w - 26 - i * 30 : ix + 6 + i * 30, hh = 16 + (i * 7) % 10;
+          R(x, C.stoneM, hx, iy + 46 - hh, 20, hh); R(x, C.roofD, hx - 1, iy + 42 - hh, 22, 4);
+          R(x, C.win, hx + 4, iy + 50 - hh, 4, 5); R(x, C.winD, hx + 12, iy + 50 - hh, 4, 5);
+        }
+        R(x, MAN.hair, ix + 43, iy + 44, 6, 2); R(x, MAN.skin, ix + 44, iy + 46, 4, 4); R(x, MAN.suit, ix + 43, iy + 50, 6, 7);
+      } else if (en.level === 'boss') {
+        R(x, two ? C.sky1 : C.red1, ix, iy, w, h); stip(x, C.black, 0.5, ix, iy, w, h);
+        R(x, C.black, ix + 22, iy + 44, 48, 18); R(x, two ? C.sky2 : C.steelD, ix + 24, iy + 46, 44, 16);       // shoulders
+        R(x, MAN.skin, ix + 31, iy + 14, 30, 30);                                                               // the head
+        if (two) { R(x, C.black, ix + 27, iy + 10, 38, 5); R(x, C.black, ix + 33, iy - 0, 26, 11); R(x, C.neonM, ix + 33, iy + 7, 26, 2); }
+        else R(x, C.greyD, ix + 31, iy + 10, 30, 6);
+        R(x, C.black, ix + 34, iy + 22, 10, 3); R(x, C.black, ix + 48, iy + 22, 10, 3);                         // the brow
+        R(x, (f & 1) ? C.neonR : C.ember, ix + 37, iy + 26, 5, 4); R(x, (f & 1) ? C.neonR : C.ember, ix + 50, iy + 26, 5, 4);
+        R(x, C.black, ix + 39, iy + 36, 14, 3);
+        R(x, C.white, ix + 43, iy + 46, 6, 8); R(x, two ? C.neonM : C.neonR, ix + 45, iy + 47, 2, 9);
+      } else {
+        R(x, C.black, ix, iy, w, h);
+        for (i = 0; i < 22; i++) R(x, i % 3 ? C.starD : C.white, ix + ((i * 37 + (two ? 11 : 0) + w - (f * (1 + i % 3)) % w) % w), iy + (i * 23) % h, 1, 1);
+        R(x, C.grey, ix + 12, iy + 28, 16, 6); R(x, C.white, ix + 20, iy + 25, 6, 3); R(x, C.neonC, ix + 24, iy + 29, 4, 3);   // the ship
+        R(x, (f & 1) ? C.ember : C.gold, ix + 6, iy + 29, 6, 4);
+        R(x, C.gold, ix + 34, iy + 30, 6, 2); R(x, C.gold, ix + 48, iy + 30, 6, 2);
+        for (i = 0; i < 3; i++) { R(x, two ? C.neonM : C.neonR, ix + 64 + i * 8, iy + 10 + i * 18, 10, 8); R(x, C.black, ix + 66 + i * 8, iy + 12 + i * 18, 2, 2); }
+      }
+    }
+    function drawSelect(x, t) {
+      var i, j, sc = Math.floor(t * 10) % 16;
+      R(x, C.sky0, 0, 0, VW, VH);
+      for (j = -16; j < VH; j += 16) stip(x, C.skyA, 0.5, 0, j + sc, VW, 8);
+      R(x, C.black, 0, 0, VW, 36); R(x, C.gold, 0, 36, VW, 1);
+      textOC(x, 'LEVEL SELECT', 160, 11, 16, C.gold, C.red1, 1);
+      textO(x, 'STANDARD', SEL_X, 44, 8, C.neonC, C.black, 1);
+      textO(x, 'MASTER QUEST', SEL_X, 110, 8, C.neonM, C.black, 1);
+      for (i = 0; i < 6; i++) {
+        var on = i === sel, y = SEL_Y[i];
+        if (on) {
+          R(x, C.black, SEL_X - 4, y - 3, 184, 14);
+          if (warpSent ? (Math.floor(t * 12) & 1) : true) text(x, ENTRIES[i].name, SEL_X + 14, y, 8, C.gold, 1);
+          if (warpSent || (t % 0.5) < 0.32) text(x, '>', SEL_X + 2, y, 8, C.gold, 1);
+        } else textO(x, ENTRIES[i].name, SEL_X + 14, y, 8, C.white, C.black, 1);
+      }
+      drawIcon(x, ENTRIES[sel], 214, 74, t);
+      textO(x, sel < 3 ? 'LOOP 1' : 'LOOP 2', 236, 142, 8, sel < 3 ? C.neonC : C.neonM, C.black, 1);
+      R(x, C.neonR, SEL_X, 177, 2, 3); R(x, C.neonR, SEL_X + 4, 177, 2, 3); R(x, C.neonR, SEL_X + 1, 178, 5, 3);   // one heart
+      R(x, C.neonR, SEL_X + 2, 181, 3, 1); R(x, C.neonR, SEL_X + 3, 182, 1, 1);
+      textO(x, 'LIVES x50', SEL_X + 14, 176, 8, C.neonG, C.black, 1);
+      R(x, C.black, 0, 196, VW, VH - 196); R(x, C.gold, 0, 196, VW, 1);
+      text(x, '< BACK', 14, 206, 8, C.grey, 1);
+      text(x, 'ENTER OR TAP TO GO', VW - 14 - 144, 206, 8, C.greyD, 1);
     }
 
     /* ---------------------------------------------------------------- the machine */
@@ -630,7 +871,165 @@
     // outlasts an OS double-click (about 500 ms). After 2.5 s of wall clock it is taken regardless: a starved rAF
     // must never hold the card hostage.
     var DWELL = 0.65, DWELL_CAP = 2500, coinAt = 0, gen = 0, keyHost = null;
+    var LOGO_DWELL = 350, logoAt = 0;         // a double-click on the coin must not skip the logo it just bought
+    var chant = null, chantLen = 0, chantTimer = 0, warmTimer = 0, rearmTimer = 0, oldTouch = null;
+    var warpLine = '', sel = 0, warpSent = false;
+    // the Konami code. U D L R come from the arrow keys or from swipes; B and A from the keys or from any two taps.
+    var SEQ = 'UUDDLRLRBA', KSYM = { ArrowUp: 'U', ArrowDown: 'D', ArrowLeft: 'L', ArrowRight: 'R', KeyB: 'B', KeyA: 'A' };
+    var ki = 0, kiAt = 0, KI_GAP = 4000, touch0 = null;
+
     function onKey(e) { if (e.repeat) { e.stopImmediatePropagation(); e.preventDefault(); } }   // a held key is one press
+    function eat(e) { try { e.preventDefault(); e.stopImmediatePropagation(); } catch (er) { } }
+    function onScreen() {                      // the keyboard only belongs to the game while the game is in view
+      try {
+        var r = host.getBoundingClientRect(), vh = window.innerHeight || document.documentElement.clientHeight;
+        return r.height > 0 && (Math.min(r.bottom, vh) - Math.max(r.top, 0)) >= r.height * 0.4;
+      } catch (e) { return false; }
+    }
+    function canCode() { return self.active && self.phase !== 'select' && !doneSent && flourish <= 0; }
+    // one step of the code. True if `sym` was taken as part of it.
+    function feed(sym) {
+      var now = performance.now();
+      if (ki > 0 && now - kiAt > KI_GAP) ki = 0;
+      if (sym === SEQ.charAt(ki)) {
+        ki++; kiAt = now;
+        if (ki === SEQ.length) { ki = 0; enterSelect(); }
+        return true;
+      }
+      if (sym === 'U' && ki === 2) { kiAt = now; return true; }      // a third UP is still two UPs
+      ki = sym === 'U' ? 1 : 0; kiAt = now;
+      return false;
+    }
+    function onWinKey(e) {
+      try {
+        if (!self.active || e.ctrlKey || e.metaKey || e.altKey) return;
+        var tg = e.target, tn = tg && tg.tagName, c = e.code, used = true;
+        if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || (tg && tg.isContentEditable)) return;
+        if (!onScreen()) return;
+        if (self.phase === 'select') {                      // a held key is one press: the A that ends the code is not a LEFT
+          var rp = e.repeat;
+          if (c === 'ArrowUp' || c === 'KeyW') { if (!rp) moveSel(-1); }
+          else if (c === 'ArrowDown' || c === 'KeyS') { if (!rp) moveSel(1); }
+          else if (c === 'ArrowLeft' || c === 'KeyA' || c === 'ArrowRight' || c === 'KeyD') { if (!rp) moveSel(3); }
+          else if (c === 'Enter' || c === 'Space' || c === 'KeyF') { if (!rp) choose(); }
+          else if (c === 'Escape' || c === 'Backspace') { if (!rp) leaveSelect(); }
+          else used = false;
+          if (used) eat(e);
+          return;
+        }
+        if (e.repeat || !canCode()) return;
+        var sym = KSYM[c], was = ki;
+        if (!sym) { ki = 0; return; }
+        if (was > 0 && performance.now() - kiAt > KI_GAP) was = 0;
+        // With the focus on the game, a key of the code is the code's alone: it neither scrolls the page nor
+        // presses START. Without it the code still advances, but UP and DOWN stay the page's own scroll keys
+        // (a reader tapping UP must never be swallowed); only the later LEFT/RIGHT/B/A of a code in progress are taken.
+        var focused = !!(host && host.contains(document.activeElement));
+        if (feed(sym) && (focused || (was > 0 && sym !== 'U' && sym !== 'D'))) eat(e);
+      } catch (er) { }
+    }
+    function bufXY(e) {
+      try {
+        var r = view.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) return null;
+        var px = (e.clientX - r.left) / r.width * VW, py = (e.clientY - r.top) / r.height * VH;
+        return (px >= 0 && py >= 0 && px < VW && py < VH) ? { x: px, y: py } : null;
+      } catch (er) { return null; }
+    }
+    // capture on the overlay, ahead of the host's own click handler
+    function onHostClick(e) {
+      try {
+        if (!self.active) return;
+        if (self.phase === 'select') {
+          eat(e);
+          var p = bufXY(e), h = p ? hitSelect(p.x, p.y) : -2;
+          if (h >= 0) { if (!warpSent) sel = h; choose(); }
+          else if (h === -1) leaveSelect();
+          return;
+        }
+        if (!canCode()) return;
+        if (ki >= 8 && performance.now() - kiAt <= KI_GAP) { eat(e); feed(SEQ.charAt(ki)); return; }   // the two taps: B, A
+        ki = 0;
+      } catch (er) { }
+    }
+    function onTouchStart(e) { try { var t = e.changedTouches && e.changedTouches[0]; touch0 = t ? { x: t.clientX, y: t.clientY } : null; } catch (er) { touch0 = null; } }
+    function onTouchEnd(e) {
+      try {
+        var t = e.changedTouches && e.changedTouches[0], t0 = touch0; touch0 = null;
+        if (!t || !t0 || !self.active) return;
+        var dx = t.clientX - t0.x, dy = t.clientY - t0.y, ax = Math.abs(dx), ay = Math.abs(dy);
+        if (Math.max(ax, ay) < 24) return;                                // a tap: the click that follows deals with it
+        var sym = ax > ay ? (dx > 0 ? 'R' : 'L') : (dy > 0 ? 'D' : 'U');
+        if (self.phase === 'select') { moveSel(sym === 'U' ? -1 : sym === 'D' ? 1 : 3); return; }
+        if (canCode()) feed(sym);
+      } catch (er) { }
+    }
+
+    /* ---- sound: the chant, and three small cues of our own, all on the host's context ---- */
+    function ac() {
+      try {
+        if (!api || !api.audio || !api.musicWanted || !api.musicWanted()) return null;
+        var c = api.audio();
+        if (c && c.state === 'suspended' && c.resume) c.resume();
+        return c || null;
+      } catch (e) { return null; }
+    }
+    function startChant() {
+      try {
+        var c = window.PalmerChant ? ac() : null;
+        if (c) {
+          chant = window.PalmerChant.play(c);
+          // a late timer (busy main thread) must not have the fade cut the chant short: the logo waits for it
+          var need = (performance.now() - logoAt) / 1000 + chantLen + FADE_LEN;
+          if (chantLen > 0 && need > LOGO_LEN) LOGO_LEN = Math.min(need, LOGO_LEN + 3);
+        }
+      } catch (e) { chant = null; }
+    }
+    function stopChant(fade) {
+      if (chantTimer) { clearTimeout(chantTimer); chantTimer = 0; }
+      var c = chant; chant = null;
+      try { if (c && c.stop) c.stop(fade); } catch (e) { }
+    }
+    function tone(c, f, t0, dur, vol) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = 'square'; o.frequency.setValueAtTime(f, t0);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(c.destination); o.start(t0); o.stop(t0 + dur + 0.02);
+    }
+    function cue(kind) {
+      try {
+        var c = ac(); if (!c) return;
+        var t = c.currentTime + 0.01, i;
+        if (kind === 'code') { var n = [1319, 1568, 2093, 2637]; for (i = 0; i < 4; i++) tone(c, n[i], t + i * 0.06, i === 3 ? 0.5 : 0.09, 0.05); }
+        else if (kind === 'move') tone(c, 1568, t, 0.05, 0.035);
+        else if (kind === 'go') { tone(c, 1047, t, 0.08, 0.05); tone(c, 2093, t + 0.07, 0.3, 0.05); }
+      } catch (e) { }
+    }
+
+    /* ---- the level select ---- */
+    function enterSelect() { sel = LOOP2 ? 3 : 0; warpSent = false; setPhase('select'); cue('code'); }
+    function leaveSelect() { if (!warpSent) setPhase('title'); }
+    function moveSel(d) {
+      if (warpSent) return;
+      sel = d === 3 ? (sel + 3) % 6 : (sel + d + 6) % 6;
+      cue('move'); render();
+    }
+    function choose() {
+      if (warpSent || !self.active) return;
+      warpSent = true;
+      var en = ENTRIES[sel], o = opts, sent = false;
+      cue('go'); render();
+      var ret, g = gen;
+      try { if (o && o.onWarp) { sent = true; ret = o.onWarp({ loop: en.loop, level: en.level }); } } catch (e) { }
+      if (!sent) { finish(); return; }         // no host to warp us: start the game rather than strand the player
+      // The host either stops us (same loop) or reloads the page (other loop). If it could do neither (storage
+      // blocked, say) the menu must come back to life rather than become a dead end.
+      if (rearmTimer) clearTimeout(rearmTimer);
+      rearmTimer = setTimeout(function () {
+        rearmTimer = 0;
+        if (g === gen && self.active && self.phase === 'select' && warpSent) { warpSent = false; render(); }
+      }, ret === false ? 0 : 1200);
+    }
 
     function fit() {
       if (!view || !host) return;
@@ -652,6 +1051,8 @@
       if (!bx) return;
       try {
         if (self.phase === 'attract') drawAttract(bx, T);
+        else if (self.phase === 'logo') drawLogo(bx, T);
+        else if (self.phase === 'select') drawSelect(bx, T);
         else drawTitleCard(bx, T);
       } catch (e) { noteDrawError('draw', e); }
       if (!vx) return;
@@ -663,6 +1064,10 @@
 
     function update(dt) {
       T += dt;
+      if (self.phase === 'logo') {
+        T = (performance.now() - logoAt) / 1000;             // wall clock: a starved rAF must not outlast the chant
+        if (T >= LOGO_LEN) { setPhase('title'); return; }
+      }
       if (flourish > 0) {
         flourish += dt;
         if (flourish > 0.42) finish();
@@ -676,15 +1081,44 @@
     }
 
     function setPhase(name) {
-      if (name !== 'attract' && name !== 'title') return;
-      if (name === 'title' && self.phase === 'attract') coinCam = attractCam(T);
+      if (name !== 'attract' && name !== 'logo' && name !== 'title' && name !== 'select') return;
+      if (self.phase === 'attract' && (name === 'logo' || name === 'title')) coinCam = attractCam(T);
+      if (self.phase === 'logo' && name !== 'logo') stopChant(0.08);
+      if (name === 'logo') logoAt = performance.now();
       if (name === 'title') coinAt = performance.now();
       self.phase = name; T = 0; flourish = 0;
-      if (name === 'title' && !scoreSent) {                 // the coin: the host starts the title theme, once
+      if (name === 'title' && !scoreSent) {                 // the host starts the title theme, once
         scoreSent = true;
         try { if (opts && opts.onScore) opts.onScore('title'); } catch (e) { }
       }
       render();
+    }
+
+    // Wake both audio contexts inside the user's gesture: what follows (the chant, the title theme,
+    // the game's own music after a warp) starts from a frame callback or a timer, not from a click.
+    function wake() {
+      try {
+        if (api && api.musicWanted && api.musicWanted() && window.Riff && window.Riff.kit) {
+          var k = window.Riff.kit();
+          if (k && k.AC && k.AC.state === 'suspended' && k.AC.resume) k.AC.resume();
+        }
+      } catch (e) { }
+      return ac();
+    }
+    // the coin. The dashes are silent; the chant lands on the finished logo and the fade follows it.
+    function coin() {
+      var d = 0;
+      try { if (wake() && window.PalmerChant) d = +window.PalmerChant.duration || 0; } catch (e) { d = 0; }
+      chantLen = d > 0 ? Math.min(5, Math.max(1.5, d)) : 0;
+      LOGO_LEN = d > 0 ? CHANT_AT + chantLen + FADE_LEN : 3.4;
+      setPhase('logo');
+      if (d > 0) {                                           // a timer, not a frame: it keeps time when frames are scarce
+        var g = gen;
+        chantTimer = setTimeout(function () {
+          chantTimer = 0;
+          if (g === gen && self.active && self.phase === 'logo') startChant();
+        }, CHANT_AT * 1000);
+      }
     }
 
     function seek(sec) {
@@ -707,9 +1141,12 @@
       if (!self.active) return false;
       frozen = false;
       try {
-        if (self.phase === 'attract') { setPhase('title'); return true; }
+        if (self.phase === 'attract') { coin(); return true; }
+        if (self.phase === 'logo') { if (performance.now() - logoAt >= LOGO_DWELL) setPhase('title'); return true; }
+        if (self.phase === 'select') { choose(); return true; }
         if (T < DWELL && performance.now() - coinAt < DWELL_CAP) return true;   // too soon: the card is still landing
         if (!doneSent && flourish <= 0) {
+          wake();
           flourish = 0.0001;
           doneTimer = setTimeout(finish, 430);   // belt and braces: a starved rAF must not delay the hand-off
           render();
@@ -725,11 +1162,18 @@
         opts = o || {}; host = opts.host;
         if (!host) return;
         keyHost = host; host.addEventListener('keydown', onKey, true);   // capture: before the host's own handler
+        host.addEventListener('click', onHostClick, true);
+        host.addEventListener('touchstart', onTouchStart, { passive: true });
+        host.addEventListener('touchend', onTouchEnd, { passive: true });
+        window.addEventListener('keydown', onWinKey, true);
+        // swipes on the box are the code's (and the level select's), not the page's; the game's own canvas
+        // already does the same. The page still scrolls from anywhere around the box.
+        try { oldTouch = host.style.touchAction || ''; host.style.touchAction = 'none'; } catch (e) { oldTouch = null; }
         buf = mk(VW, VH); bx = buf.getContext('2d'); bx.imageSmoothingEnabled = false;
         R(bx, C.black, 0, 0, VW, VH);
         view = document.createElement('canvas');
         view.className = 'q-intro';
-        view.style.cssText = 'display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;background:#000;';
+        view.style.cssText = 'display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;background:#000;touch-action:none;';
         host.appendChild(view);
         fit();
         onRes = function () { fit(); render(); };
@@ -737,6 +1181,18 @@
         buildAll();
         self.active = true; self.phase = 'attract';
         T = 0; flourish = 0; frozen = false; doneSent = false; scoreSent = false;
+        ki = 0; touch0 = null; sel = 0; warpSent = false; warpLine = ''; chant = null; LOGO_LEN = 3.4;
+        if (opts.warp) {                                     // reloaded into the other loop by a warp: straight to the card,
+          var wi, wn = '';                                   // already landed, and silent (the reload lost the audio gesture)
+          for (wi = 0; wi < ENTRIES.length; wi++) if (ENTRIES[wi].loop === opts.warp.loop && ENTRIES[wi].level === opts.warp.level) wn = ENTRIES[wi].dest;
+          warpLine = 'LEVEL SELECT - ' + (wn || 'WARP');
+          self.phase = 'title'; coinCam = CARD_CAM; T = 2; scoreSent = true; coinAt = performance.now() - DWELL_CAP;
+        } else {
+          warmTimer = setTimeout(function () {                // synthesise the chant during the attract, not on the coin
+            warmTimer = 0;
+            try { if (g === gen && window.PalmerChant && window.PalmerChant.warm) window.PalmerChant.warm(); } catch (e) { }
+          }, 500);
+        }
         if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
           document.fonts.ready.then(function () {                // the logo is cut from the pixel font once it is really here
             if (g !== gen) return;                               // stopped (or restarted) since
@@ -754,7 +1210,20 @@
         if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
         if (doneTimer) { clearTimeout(doneTimer); doneTimer = 0; }
         if (onRes) { window.removeEventListener('resize', onRes); onRes = null; }
-        if (keyHost) { keyHost.removeEventListener('keydown', onKey, true); keyHost = null; }
+        if (warmTimer) { clearTimeout(warmTimer); warmTimer = 0; }
+        if (rearmTimer) { clearTimeout(rearmTimer); rearmTimer = 0; }
+        stopChant(0.05);
+        if (host && oldTouch !== null) { try { host.style.touchAction = oldTouch; } catch (e) { } }
+        oldTouch = null;
+        if (keyHost) {
+          keyHost.removeEventListener('keydown', onKey, true);
+          keyHost.removeEventListener('click', onHostClick, true);
+          keyHost.removeEventListener('touchstart', onTouchStart, { passive: true });
+          keyHost.removeEventListener('touchend', onTouchEnd, { passive: true });
+          keyHost = null;
+        }
+        window.removeEventListener('keydown', onWinKey, true);
+        ki = 0; touch0 = null;
         if (view && view.parentNode) view.parentNode.removeChild(view);
         view = null; vx = null; host = null; opts = null;
         buf = null; bx = null; freeAll();                   // the host keeps this object for good: keep nothing heavy

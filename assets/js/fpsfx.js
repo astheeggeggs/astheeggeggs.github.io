@@ -778,9 +778,71 @@
   def('ui.go', { use: 'the countdown\'s GO', len: 0.55, level: 0.22, mix: MIX.warn, vary: 0, gate: 0.2, poly: 1, make: function (c) {
     var a = tone(c, 0.5, 'sqr', 880), b = tone(c, 0.5, 'sqr', 1320); mixIn(a, b, 0.6); lp1(c, a, 6000); amp(c, a, env([0, 0, 0.003, 1, 0.3, 0.7, 0.5, 0])); add(c, a, 0, 1);
   } });
+  // ---- the town in SNAKE MODE (quest.js, ten clears: the reviewers patrol with cones of vision)
+  def('alert', { use: 'SNAKE MODE: a reviewer spots him, the "!" over his head: a bright high note that snaps down, a click at the onset', len: 0.39, level: 0.46, mix: MIX.ding - 3, vary: 0, gate: 0.25, poly: 2, make: function (c) {
+    var n = white(c, 0.008); hp1(c, n, 4000); amp(c, n, perc(0.0003, 0.002)); add(c, n, 0, 0.5);                                 // the click
+    var a = tone(c, 0.08, 'sqr', env([0, 1976, 0.062, 1976, 0.08, 1500], true)); lp1(c, a, 9000); amp(c, a, env([0, 0, 0.002, 1, 0.062, 0.9, 0.08, 0])); add(c, a, 0.004, 1);
+    var b = tone(c, 0.3, 'sqr', 1318.5), f = fm(c, 0.3, 1318.5, 2, env([0, 1.2, 0.25, 0])); lp1(c, b, 8000); mixIn(b, f, 0.5);     // then the lower note, ringing down
+    amp(c, b, perc(0.002, 0.075)); add(c, b, 0.082, 1);
+  } });
+  def('lost', { use: 'SNAKE MODE: a reviewer loses him or gets suspicious, the "?": two softer notes rising', len: 0.42, level: 0.3, mix: MIX.ord, vary: 0, gate: 0.25, poly: 2, make: function (c) {
+    var a = tone(c, 0.14, 'sqr', 587.3), t = tone(c, 0.14, 'tri', 587.3); mixIn(a, t, 0.8); lp1(c, a, 5000); amp(c, a, env([0, 0, 0.003, 1, 0.11, 0.7, 0.14, 0])); add(c, a, 0, 0.8);
+    var b = tone(c, 0.27, 'sqr', 784), u = tone(c, 0.27, 'tri', 784); mixIn(b, u, 0.8); lp1(c, b, 5000); amp(c, b, perc(0.003, 0.09)); add(c, b, 0.15, 1);
+  } });
   def('ui.type', { use: 'a keystroke of the dossier card typing out', len: 0.04, level: 0.25, mix: MIX.ord, vary: 2, gate: 0.04, poly: 2, fout: 4, make: function (c) {
     var n = white(c, 0.02); filt(c, n, 'bp', 3500, 2); amp(c, n, perc(0.0002, 0.003)); add(c, n, 0, 1);
     var a = tone(c, 0.012, 'sqr', 1320); amp(c, a, perc(0.0005, 0.004)); add(c, a, 0, 0.5);
+  } });
+
+  // ---- the Master Chief's Warthog (warthog.js, twenty clears) and the fountain dive (quest.js)
+  def('engine', { use: 'LOOP: the Warthog\'s engine; play with ttl and feed() every frame, h.pitch(semitones) follows the speed', loop: true, len: 1.0, xf: 0.1, xlin: true, crush: [11025, 8], level: 0.4, mix: MIX.ord - 4, vary: 0, gate: 0.2, poly: 1, make: function (c) {
+    // every partial and the firing pulse complete whole cycles in 1 s, so the loop is phase-continuous; rough and boxy, under a bonnet
+    var L = 1.0, a = tone(c, L, 'raw', 26), b = tone(c, L, 'sqr', 52, { pw: 0.3 }), d = tone(c, L, 'saw', 78), e = tone(c, L, 'sqr', 13, { pw: 0.5 });
+    mixIn(a, b, 0.7); mixIn(a, d, 0.35);
+    for (var i = 0; i < a.length; i++) a[i] *= 0.72 + 0.28 * (e[i] > 0 ? 1 : 0.55);                      // the pulse of the firing order
+    filt(c, a, 'lp', function (t) { return 360 + 60 * Math.sin(TAU * 2 * t); }, 1.6); drive(a, 1.8); add(c, a, 0, 1);
+    var n = brown(c, L); lp1(c, n, 700); amp(c, n, function (t) { return 0.8 + 0.2 * Math.sin(TAU * 13 * t); }); add(c, n, 0, 0.3);   // intake
+    var w = white(c, L); filt(c, w, 'bp', 1200, 1.2); amp(c, w, function (t) { return 0.6 + 0.4 * Math.sin(TAU * 26 * t); }); add(c, w, 0, 0.1);   // valve hiss
+  } });
+  def('skid', { use: 'the Warthog\'s tyres sliding: a short squeal on tarmac', len: 0.6, level: 0.45, mix: MIX.ord, vary: 1, gate: 0.2, poly: 2, make: function (c) {
+    var w = white(c, 0.58), sw = function (t) { return t < 0.06 ? t / 0.06 : Math.max(0, 1 - (t - 0.06) / 0.52); };
+    filt(c, w, 'bp', env([0, 1400, 0.3, 2100, 0.58, 1700], true), 2.5); amp(c, w, sw); add(c, w, 0, 0.8);
+    var s = tone(c, 0.58, 'sin', env([0, 1900, 0.4, 1650, 0.58, 1500], true), { vib: { r: 18, d: 0.02 } }); amp(c, s, function (t) { return sw(t) * (0.8 + 0.2 * Math.sin(TAU * 31 * t)); }); add(c, s, 0, 0.7);
+    var s2 = tone(c, 0.58, 'tri', env([0, 2850, 0.4, 2480, 0.58, 2250], true), { vib: { r: 18, d: 0.02 } }); amp(c, s2, sw); add(c, s2, 0, 0.3);
+    drive(c.out, 1.5);
+  } });
+  def('thud', { use: 'a soft body hit: a reviewer run over, a box man landing flat', len: 0.32, level: 0.55, mix: MIX.ord, vary: 1.5, gate: 0.05, poly: 3, variants: 2, crush: [11025, 8], make: function (c) {
+    var v = c.v, s = tone(c, 0.2, 'sin', env([0, 95 - 10 * v, 0.1, 42], true)); amp(c, s, perc(0.001, 0.07)); drive(s, 2); add(c, s, 0, 1);
+    var n = white(c, 0.08); lp1(c, n, 500); lp1(c, n, 500); amp(c, n, perc(0.001, 0.03)); add(c, n, 0, 0.6);
+    squelch(c, 0.004, 0.16, 800 + 100 * v, 260, 0.04, 0.5);
+    var k = white(c, 0.015); filt(c, k, 'bp', 1100, 1.5); amp(c, k, perc(0.0003, 0.004)); add(c, k, 0, 0.35);
+  } });
+  def('bump', { use: 'the Warthog\'s chassis hitting something: a metal knock and a low thump', len: 0.45, level: 0.55, mix: MIX.ord, vary: 1, gate: 0.08, poly: 2, variants: 2, make: function (c) {
+    var v = c.v, n = white(c, 0.01); hp1(c, n, 2000); amp(c, n, perc(0.0002, 0.003)); add(c, n, 0, 0.8);
+    var m = modes(c, 0.4, 165 + 25 * v, [1, 1.58, 2.6, 3.9, 5.4], [1, 0.6, 0.4, 0.25, 0.15], [0.12, 0.08, 0.05, 0.03, 0.02]); add(c, m, 0, 0.7);
+    var s = tone(c, 0.2, 'sin', env([0, 70, 0.12, 35], true)); amp(c, s, perc(0.001, 0.06)); drive(s, 1.8); add(c, s, 0, 0.9);
+    var r = white(c, 0.12); filt(c, r, 'bp', 600, 1.2); amp(c, r, perc(0.001, 0.025)); add(c, r, 0, 0.4);
+  } });
+  def('chaingun', { use: 'one round of the Warthog\'s chain gun (twelve a second while the trigger is held)', len: 0.16, level: 0.5, mix: MIX.bfg - 2, vary: 0.6, gate: 0.035, poly: 6, variants: 3, crush: [22050, 10], make: function (c) {
+    var v = c.v, n = white(c, 0.012); hp1(c, n, 4500); amp(c, n, perc(0.0002, 0.0015)); add(c, n, 0, 0.5);
+    var k = white(c, 0.09); filt(c, k, 'bp', env([0, 2600 + 200 * v, 0.04, 1500], true), 1.2); amp(c, k, perc(0.0003, 0.014)); drive(k, 2.8); add(c, k, 0, 1);
+    var s = tone(c, 0.11, 'sin', env([0, 170 + 15 * v, 0.05, 55], true)); amp(c, s, perc(0.0005, 0.022)); drive(s, 2); add(c, s, 0, 0.6);
+    var m = modes(c, 0.07, 2100 + 150 * v, [1, 1.7, 2.9], [1, 0.5, 0.3], [0.012, 0.008, 0.006]); add(c, m, 0.004, 0.3);   // the bolt
+    var q = tone(c, 0.06, 'saw', env([0, 520, 0.05, 180], true)); filt(c, q, 'lp', 2400, 0.8); amp(c, q, perc(0.0006, 0.012)); add(c, q, 0, 0.25);
+    drive(c.out, 1.6);
+  } });
+  def('door', { use: 'climbing into or out of the Warthog: a latch and a hollow door thunk', len: 0.4, level: 0.45, mix: MIX.ord, vary: 0.5, gate: 0.15, poly: 1, make: function (c) {
+    action(c, 0, 1500, 1);
+    var m = modes(c, 0.3, 140, [1, 1.9, 2.8, 4.1], [1, 0.5, 0.35, 0.2], [0.09, 0.06, 0.04, 0.03]); add(c, m, 0.03, 0.7);
+    var n = white(c, 0.06); lp1(c, n, 900); amp(c, n, perc(0.001, 0.018)); add(c, n, 0.03, 0.5);
+    action(c, 0.17, 1100, 0.8);
+    room(c, c.out, { size: 0.5, rt: 0.25, damp: 0.5, mix: 0.1 });
+  } });
+  def('splash', { use: 'the dive into the fountain', len: 0.7, level: 0.5, mix: MIX.ord, vary: 0.5, gate: 0.2, poly: 2, make: function (c) {
+    var n = white(c, 0.65); filt(c, n, 'lp', env([0, 5000, 0.5, 500], true), 0.9); amp(c, n, perc(0.004, 0.18)); drive(n, 1.5); add(c, n, 0, 1);
+    var k = pops(c, 0.6, env([0, 140, 0.6, 10]), { f0: 900, f1: 2200, tau0: 0.003, tau1: 0.012, a0: 0.3, a1: 1 }); add(c, k, 0.02, 0.45);   // bubbles
+    var s = tone(c, 0.15, 'sin', env([0, 180, 0.12, 70], true)); amp(c, s, perc(0.002, 0.05)); add(c, s, 0, 0.4);
+    var h = white(c, 0.3); filt(c, h, 'bp', 3200, 1.5); amp(c, h, env([0, 0, 0.08, 1, 0.3, 0])); add(c, h, 0.25, 0.3);                 // the spray coming down
   } });
 
   /* ------------------------------------------------------------ render */
@@ -876,7 +938,7 @@
     var side = h > 1e-6 ? (dx * l.rx + dz * l.rz) / h : 0;
     return { att: d <= ref ? 1 : Math.max(floor, ref / d), pan: clamp(side * 0.85 * Math.min(1, h / 2), -0.85, 0.85) };
   }
-  var DEAD = { name: '', ok: false, stop: noop, fade: noop, feed: noop, place: noop, playing: function () { return false; } };
+  var DEAD = { name: '', ok: false, stop: noop, fade: noop, feed: noop, place: noop, pitch: noop, playing: function () { return false; } };
   var NULL_KIT = {
     ac: null, bus: null, play: function () { return DEAD; }, has: function (n) { return !!DEFS[n]; }, names: function () { return NAMES.slice(); },
     warm: function (names, done) { if (done) try { done(0); } catch (e) {} }, prerender: function () { return 0; }, stopAll: noop, volume: noop,
@@ -981,6 +1043,8 @@
           if (!v.pg) return;
           try { var s = spatial(pos, L || lis, v.o); if (!s) return; var now = ac.currentTime; v.pg.gain.setTargetAtTime(s.att, now, 0.03); if (v.pn) v.pn.pan.setTargetAtTime(s.pan, now, 0.03); } catch (e) {}
         },
+        // move the pitch by `semi` semitones from the pitch it was played at, over about `secs` (a loop following a speed)
+        pitch: function (semi, secs) { try { if (v.done || v.cut < Infinity) return; v.src.playbackRate.setTargetAtTime(v.rate * Math.pow(2, (+semi || 0) / 12), ac.currentTime, Math.max(0.005, (secs > 0 ? +secs : 0.08) / 4)); } catch (e) {} },
         playing: function () { return alive(v, ac.currentTime); }
       };
     }
@@ -1007,7 +1071,7 @@
         var src = ac.createBufferSource(), g = ac.createGain(), gain = (o.gain != null ? Math.max(0, +o.gain || 0) : 1) * duck;
         src.buffer = buf; src.loop = !!d.loop; src.playbackRate.value = rate;
         src.connect(g);
-        var v = { name: name, group: o.group || '', src: src, g: g, pg: null, pn: null, t0: t0, end: Infinity, cut: Infinity, gain: gain, lvl: 1, loop: !!d.loop, done: false, ttl: 0, fed: 0, tailAt: Infinity, tailTau: 0.05, o: o };
+        var v = { name: name, group: o.group || '', src: src, g: g, pg: null, pn: null, t0: t0, end: Infinity, cut: Infinity, gain: gain, lvl: 1, loop: !!d.loop, done: false, ttl: 0, fed: 0, tailAt: Infinity, tailTau: 0.05, o: o, rate: rate };
         if (o.pos || o.pan != null) {
           v.pg = ac.createGain(); g.connect(v.pg);
           var s = o.pos ? spatial(o.pos, o.listener || lis, o) : null, pan = s ? s.pan : clamp(+o.pan || 0, -1, 1);

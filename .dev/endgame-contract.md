@@ -53,11 +53,15 @@ api.THREE, api.root (#quest element, position:relative), api.view (.q-view: the 
       4:3 under 640px wide), api.scene, api.camera (PerspectiveCamera fov 55, far 300), api.renderer
 api.WORLD = 52            // playable half-extent; ground plane y = 0; hills beyond
 api.EYE = 2.25            // first-person eye height above player.position.y
-api.colliders             // live array used by collide(): circles {x,z,r} and boxes {x,z,hw,hd}. 2D (infinite height). You may push/splice.
-api.collide(x, z, r)      // true if a circle of radius r at (x,z) hits any collider or leaves the world
+api.colliders             // live array used by collide(): circles {x,z,r} and boxes {x,z,hw,hd[,yaw]}. 2D (infinite height). You may push/splice.
+                          // Tags the Warthog reads: {water: R} (the lake, r 11) is ignored by the car (amphibious inside R of its centre);
+                          // {prop: {group, kind}} (lamps 'lamp', benches 'bench') is smashed by the car at > 5 u/s (spliced out, pieces fly).
+                          // A building's box carries yaw (its group.rotation.y): test in the box's frame, lx = dx*cos - dz*sin, lz = dx*sin + dz*cos, never |x - c.x| < hw.
+api.collide(x, z, r[, car]) // true if a circle of radius r at (x,z) hits any collider or leaves the world; car = true skips {water} colliders (the Warthog's question)
 api.safeSpot(x, z)        // nearest free point {x,z}
 api.player                // THREE.Group; position.x/z on the ground, position.y = jump height (0 on ground). api.pstate = {yaw, speed, y, vy, air,...}
-api.places                // the 8 buildings: {id, short, x, z, w, d, h, wall, roof, group: THREE.Group, collider, bushes: [Mesh], marker: Mesh, door:{x,z}}
+api.places                // the 8 buildings: {id, short, x, z, w, d, h, yaw, wall, roof, group: THREE.Group, collider, bushes: [Mesh], marker: Mesh, door:{x,z}}
+                          // yaw = atan2(-x, -z): the group is turned so its +z model face (door, steps, windows) looks at the fountain; w/d are the model's own extents
 api.fountain              // {group: THREE.Group at world origin, collider}
 api.npcs                  // 3 talkative NPCs: {x, z, mesh, title, text, voice}; they have circle colliders in api.colliders (not referenced; find by x/z if needed)
 api.flat(hex)             // MeshLambertMaterial
@@ -90,7 +94,8 @@ window.QuestBoss = function (api) { return {
   start: function (opts) {},   // opts {hp: 100, skipIntro: bool, retry: bool}. May be called again after stop() (retry after REJECTED!: retry=true, skipIntro=true → no intro, no re-destruction; boss already landed, full HP)
   stop: function () {},        // remove boss, projectiles, DOM, listeners; restore setHud(true), lockEnvironment(false); active=false, cinematic=false. Rubble may stay.
   update: function (dt, t) {}, // called by the host every frame while active and not game-over. dt seconds (already timescaled), t = elapsed seconds
-  hitTest: function (pos, prev) {},  // host calls for every live player shot every frame (THREE.Vector3 world positions; do not mutate). Do a swept test prev→pos. Return 'weak' | 'body' | null. YOU apply damage + feedback. Truthy → host deletes the shot.
+  hitTest: function (pos, prev, kind) {},  // host calls for every live player shot every frame (THREE.Vector3 world positions; do not mutate). Do a swept test prev→pos. Return 'weak' | 'body' | null. YOU apply damage + feedback. Truthy → host deletes the shot.
+                                     // kind: 'bfg' | 'paper' (a string; omitted = paper), OR an options object. {kind:'chain'} is the Warthog's chain gun: a swept hit anywhere on the body or the weak point returns 'chain' and takes 1 hit off the Editor (the weak-hit unit) or 2 REVISIONS off Reviewer 2 (his plates and teleports eat half the rounds; 100 hp falls in ~14 s of sustained fire either way) with a small spark + tick; chain rounds do not count in Reviewer 2's accuracy stat, never the weak-hit stinger; the guard (Editor's covers) / a plate (Reviewer 2) holds only when it is physically in the round's path (same geometric test as a paper ball, 'closed' states are otherwise ignored); the last round runs the normal death. Both modules; calls without opts are unchanged.
   active: false,               // true from start() until the blast-off has finished or stop()
   cinematic: false             // while true the host freezes the player, hides him and the weapon, and does NOT touch the camera: you drive api.camera
 }; };

@@ -160,6 +160,8 @@
       // a weak hit: the squelch of a paper ball into bare flesh under the confirmation tone, which climbs the scale as the
       // REVISIONS fall (k = 1 - hp / max); every fourth chained hit is the crit's triple strike and shriek
       ping: function (k, crit, x, y, z) { play('hit.flesh', at(x, y, z, { gain: 0.45 })); play(crit ? 'hit.crit' : 'hit.weak', { k: clamp(k, 0, 1) }); },
+      // a chain-gun round into him (twelve a second): the slap, small, never the confirmation tone - the REVISIONS count is the confirmation
+      tick: function (x, y, z) { if (gate('tick', 0.07)) play('hit.flesh', at(x, y, z, { gain: 0.35, pitch: 2 })); },
       whoosh: function () { play('teleport', him()); },                                                         // gone: a reversed swell that stops dead
       appear: function () { play('appear', him()); },
       // a column of flame: the burst of his arrival and the fire standing in it for as long as the column burns
@@ -1278,12 +1280,17 @@
     }
     /* The slide goes through lamp posts, bushes and trees (he is not entirely a man) and stops only for a
        building, the fountain or the arena edge, so a telegraphed line is a line he will actually travel. */
+    function inBox(c, x, z, pad) {                     // a host box collider, turned by c.yaw (the buildings face the fountain)
+      var dx = x - c.x, dz = z - c.z, s, cs;
+      if (c.yaw) { s = Math.sin(c.yaw); cs = Math.cos(c.yaw); var lx = dx * cs - dz * s; dz = dx * s + dz * cs; dx = lx; }
+      return Math.abs(dx) < c.hw + pad && Math.abs(dz) < c.hd + pad;
+    }
     function dashBlocked(x, z) {
       if (Math.hypot(x, z) > ARENA_R - 1) return true;
       for (var i = 0; i < api.colliders.length; i++) {
         var c = api.colliders[i];
         if (c.r !== undefined) { if (c.r >= 2 && Math.hypot(x - c.x, z - c.z) < c.r + 1.0) return true; }
-        else if (Math.abs(x - c.x) < c.hw + 1.0 && Math.abs(z - c.z) < c.hd + 1.0) return true;
+        else if (inBox(c, x, z, 1.0)) return true;
       }
       return false;
     }
@@ -1489,9 +1496,38 @@
       if (F.chain) { F.chain = 0; setChain(0); }
       if (F.taught < BODY_LINES.length && (F.bodyHits === 2 || F.bodyHits === 9 || F.bodyHits === 26)) say('showToast', BODY_LINES[F.taught++]);
     }
+    /* The Warthog's chain gun ({kind:'chain'}): two REVISIONS off for every round that lands on him, flesh or bare patch,
+       plates open or shut - only a plate that is physically in the round's path holds (the nearest-box test above is
+       the physical one; a shut state on its own is not). Two, not the Editor's one: his plates hold a good third of
+       the rounds that reach him and his teleports and dashes waste most of the rest, so at one a round a hundred
+       REVISIONS took ~28 s of sustained fire against the 10-15 s the gun is meant to need; at two it is ~14 s.
+       A spark and a tick where it struck, no combo, no crit, no confirmation tone: at twelve rounds a second the
+       tone would never stop. Chain rounds are not shots for the accuracy stat (the gun fires a hundred and fifty
+       of them in the time a ball takes to arrive, through pooled tracers). The last round kills him as a ball would. */
+    var CHAIN_DMG = 2;
+    function chainHit(x, y, z, weak) {
+      var b = boss;
+      F.chainRounds = (F.chainRounds || 0) + 1;
+      b.hp = Math.max(0, b.hp - CHAIN_DMG); b.flinch = Math.max(b.flinch, 0.3); if (weak) b.hitFlash = Math.max(b.hitFlash, 0.05);
+      SFX.tick(x, y, z);
+      burst(weak ? 'gold' : 'spark', x, y, z, 2, { spd: 7, up: 5, life: 0.3, s0: 0.2, s1: 0.03, grav: 18 });
+      fxSpawn('white', x, y, z, 0, 0, 0, { life: 0.07, s0: 0.3, s1: 1.1 });
+      if (dom.hp) { dom.hp.classList.add('is-hit'); F.hitFlash = Math.max(F.hitFlash, 0.05); }
+      if (weak && PRJ && PRJ.desp && !PRJ.desp.dead) { PRJ.desp.dead = PRJ.desp.dispelled = true; SFX.dispel(); say('showToast', 'COMMENT ADDRESSED'); F.despT = 8.5; }
+      setHpBar(b.hp, maxHp, F.ghost);
+      if (b.hp <= 0) setPhase('death');
+    }
+    function chainPlate(x, y, z) {
+      SFX.plate(x, y, z, { variant: 0, gain: 0.5 });
+      burst('spark', x, y, z, 2, { spd: 8, up: 5, life: 0.25, s0: 0.16, s1: 0.03, grav: 20 });
+    }
     function hitTest(pos, prev, kind) {
       if (!self.active || phase !== 'fight' || !boss || !F || boss.hp <= 0 || !pos) return null;
-      if (F.seen && !F.seen.has(pos)) { F.seen.add(pos); F.nShots++; }   // every live shot passes through here every frame
+      // `kind` is 'bfg' | 'paper' from the host, or an options object: {kind:'chain'} is the Warthog's chain gun
+      var chain = !!(kind && typeof kind === 'object' && kind.kind === 'chain');
+      // every live ball passes through here every frame: a distinct position object is one shot. Chain rounds reuse
+      // pooled tracer positions and land by the hundred, so they stay out of the accuracy stat (shots and hits both)
+      if (!chain && F.seen && !F.seen.has(pos)) { F.seen.add(pos); F.nShots++; }
       var ax = prev ? prev.x : pos.x, ay = prev ? prev.y : pos.y, az = prev ? prev.z : pos.z;
       var bx = pos.x, by = pos.y, bz = pos.z, t, i, hx, hy, hz, big = kind === 'bfg';
       // his manuscripts first: they are between you and him, and popping one opens him up
@@ -1499,7 +1535,7 @@
         var m = PRJ.ms[i], mp = m.g.position;
         t = segSphere(ax, ay, az, bx, by, bz, mp.x, mp.y, mp.z, m.r + (big ? 1.5 : 0));
         if (t >= 0) {
-          msPop(m, true); msFree(m, i); F.hits++;
+          msPop(m, true); msFree(m, i); if (!chain) F.hits++;
           expose(F.phase >= 3 ? 0.6 : 0.85); SFX.chime();
           if (!F.msTaught) { F.msTaught = true; say('showToast', 'MANUSCRIPT DOWN. HE FLINCHES.'); }
           return 'body';
@@ -1510,7 +1546,7 @@
          (its colliders are columns with no top). A shot that got there above the eaves is flying over the roof, not into a
          wall, so follow its line on to him: otherwise nothing could ever reach him up there. */
       var pl = F.where === 'roof' ? F.place : null, c = pl && pl.collider;
-      if (c && by > pl.h + 0.3 && Math.abs(bx - c.x) < c.hw + 0.05 && Math.abs(bz - c.z) < c.hd + 0.05) {
+      if (c && by > pl.h + 0.3 && inBox(c, bx, bz, 0.05)) {
         var ex = bx - ax, ey = by - ay, ez = bz - az, el = Math.sqrt(ex * ex + ey * ey + ez * ez) || 1, reach = Math.hypot(boss.x - ax, boss.z - az) + 4;
         if (reach > el) { bx = ax + ex / el * reach; by = ay + ey / el * reach; bz = az + ez / el * reach; }
       }
@@ -1527,6 +1563,7 @@
       }
       if (!hit) return null;
       hx = lerp(ax, bx, best); hy = lerp(ay, by, best); hz = lerp(az, bz, best);
+      if (chain) { if (hit.k === 'plate') chainPlate(hx, hy, hz); else chainHit(hx, hy, hz, hit.k === 'weak'); return 'chain'; }
       if (hit.k === 'weak' && boss.open > 0.3) { weakHit(hx, hy, hz); return 'weak'; }
       if (hit.k !== 'body') { plateHit(hx, hy, hz); return 'body'; }   // a plate, or a sliver of flesh past a shut one: it counts only while the plates are open
       bodyHit(hx, hy, hz); return 'body';
@@ -1584,7 +1621,9 @@
         F.banner = true;
         hideHpBar(); rm('cap'); sayHide();
         var acc = F.nShots > 0 ? (F.weakHits + (F.hits - F.weakHits - F.bodyHits - F.plateHits)) / F.nShots : 0;
-        showBanner('REBUTTAL ACCEPTED', NAME + ' HAS NO FURTHER COMMENTS  ·  ACCURACY ' + Math.round(clamp(acc, 0, 1) * 100) + '%  ·  RANK ' + rank(acc));
+        // not one ball thrown, only the Warthog's chain gun: no accuracy to speak of, and he said so himself
+        var score = (F.nShots === 0 && F.chainRounds) ? 'SPRAY AND PRAY  ·  RANK S' : 'ACCURACY ' + Math.round(clamp(acc, 0, 1) * 100) + '%  ·  RANK ' + rank(acc);
+        showBanner('REBUTTAL ACCEPTED', NAME + ' HAS NO FURTHER COMMENTS  ·  ' + score);
         say('stinger', 'victory');
       }
       if (F.banner) setBanner(clamp((T - 2.0) / 0.7, 0, 1));
@@ -1711,7 +1750,7 @@
       for (i = 1; i <= n; i++) {
         var k = i / n, x = ox + dx * k, y = oy + dy * k, z = oz + dz * k;
         for (j = 0; j < bld.length; j++) {           // walls and eaves to just over h; the square roof pyramid (wider than a long building) to 1.45 h
-          var b = bld[j], ax = Math.abs(x - b.x), az = Math.abs(z - b.z);
+          var b = bld[j], wx = x - b.x, wz = z - b.z, ax = Math.abs(wx * b.c - wz * b.s), az = Math.abs(wx * b.s + wz * b.c);   // in the building's frame
           if ((ax < b.hw && az < b.hd && y < b.h + 0.3) || (ax < b.rr && az < b.rr && y > b.h && y < b.h * (1 + 0.45 * (1 - Math.max(ax, az) / b.rr)))) return 1;
         }
         if (!cost) for (j = 0; j < trees.length; j++) { t = trees[j]; if (y > t.lo && y < t.top && Math.hypot(x - t.x, z - t.z) < t.R) { cost = 0.6; break; } }
@@ -1727,7 +1766,7 @@
         if (pads.length < 7 && Math.hypot(x, z) < ARENA_R && Math.hypot(x, z) > 5 && !api.collide(x, z, 2.6)) pads.push({ x: x, z: z });
       });
       if (!pads.length) { var s0 = null; guard(function () { s0 = api.safeSpot(p.x + 2.2, p.z); }); pads.push(s0 || { x: p.x, z: p.z }); }
-      (api.places || []).forEach(function (pl) { var cl = pl.collider; if (cl && Math.hypot(cl.x - p.x, cl.z - p.z) < 48) bld.push({ x: cl.x, z: cl.z, hw: cl.hw, hd: cl.hd, h: pl.h, rr: 0.552 * Math.max(pl.w || 0, pl.d || 0) + 0.2 }); });
+      (api.places || []).forEach(function (pl) { var cl = pl.collider; if (cl && Math.hypot(cl.x - p.x, cl.z - p.z) < 48) bld.push({ x: cl.x, z: cl.z, hw: cl.hw, hd: cl.hd, s: Math.sin(cl.yaw || 0), c: Math.cos(cl.yaw || 0), h: pl.h, rr: 0.552 * Math.max(pl.w || 0, pl.d || 0) + 0.2 }); });
       scene.children.forEach(function (g) {                           // the town's trees: a group standing on its trunk (a 0.22/0.42 cylinder)
         var tk = g.isGroup && g.children[0], pa = tk && tk.geometry && tk.geometry.parameters;
         if (pa && pa.radiusTop === 0.22 && pa.radiusBottom === 0.42 && Math.hypot(g.position.x - p.x, g.position.z - p.z) < 40) {

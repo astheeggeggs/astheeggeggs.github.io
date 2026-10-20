@@ -288,6 +288,15 @@ interpolation) or clean (HotD, synthesised at ≤ 32 kHz and interpolated up).
 | `ui.confirm` | 0.3 | -10.5 | 0.06 | 0.06 / 0.038 | -27.6 | 0 | 1 | 0.05 / 2 |  | clean | a menu confirm: PRESS START, RESUBMIT, a talk prompt accepted |
 | `ui.tick` | 0.18 | -1.9 | 0.193 | 0.193 / 0.132 | -20.6 | 0 | 1 | 0.2 / 1 |  | clean | a countdown beep (3, 2, 1) |
 | `ui.go` | 0.55 | -1.9 | 0.177 | 0.177 / 0.116 | -18.7 | 0 | 1 | 0.2 / 1 |  | clean | the countdown's GO |
+| `engine` | 0.9 | -14.5 | 0.075 | not measured | not measured | 0 | 1 | 0.2 / 1 | loop | clean | LOOP: the Warthog's engine (warthog.js); played with ttl, feed() every frame, pitch follows the speed |
+| `skid` | 0.6 | -10.5 | 0.134 | not measured | not measured | 1 | 1 | 0.2 / 2 |  | clean | the Warthog's tyres sliding: a short squeal on hard turns at speed, the handbrake |
+| `thud` | 0.32 | -10.5 | 0.164 | not measured | not measured | 1.5 | 2 | 0.05 / 3 |  | clean | a soft body hit: a reviewer run over, a box man landing flat |
+| `bump` | 0.45 | -10.5 | 0.164 | not measured | not measured | 1 | 2 | 0.08 / 2 |  | clean | the Warthog's chassis hitting a collider: a metal knock and a low thump |
+| `chaingun` | 0.16 | -15 | 0.089 | not measured | not measured | 0.6 | 3 | 0.035 / 6 |  | clean | one round of the chain gun (twelve a second while the trigger is held; the kit's gate and poly carry the rate) |
+| `door` | 0.4 | -10.5 | 0.134 | not measured | not measured | 0.5 | 1 | 0.15 / 1 |  | clean | climbing into or out of the Warthog: a latch and a hollow door thunk |
+| `splash` | 0.7 | -10.5 | 0.149 | not measured | not measured | 0.5 | 1 | 0.2 / 2 |  | clean | the dive into the fountain (quest.js startDive / diveFrame) |
+| `alert` | 0.39 | -3.4 | 0.311 | not measured | not measured | 0 | 1 | 0.25 / 2 |  | clean | SNAKE MODE (quest.js, ten clears): a reviewer spots him, the "!": a click, a 1976 Hz square snapping down to 1318 Hz, ringing off. Unducked, at `hit.crit`'s tier |
+| `lost` | 0.42 | -10.5 | 0.09 | not measured | not measured | 0 | 1 | 0.25 / 2 |  | clean | SNAKE MODE: he is lost, or a reviewer is curious about a cardboard box, the "?": two softer notes rising (587 then 784 Hz) |
 | `ui.type` | 0.04 | -10.5 | 0.075 | 0.075 / 0.007 | -Infinity | 2 | 1 | 0.04 / 2 |  | clean | a keystroke of the dossier card typing out |
 
 ## Wiring (as shipped; old call → new)
@@ -299,6 +308,9 @@ quest.js's sounds (the REJECTED! scream). `setListener` and `volume` are shared 
 (`sfx.setListener(api.camera)`) and pass `pos` for sounds that come from the boss, so they pan.
 
 quest.js (first person exists only in the endgame now, so reviewers are never shot)
+
+SNAKE MODE (2026-10-11, quest.js `snakeAlert` / `snakeLost`): `alert` positioned at the spotting reviewer (joiners who heard him
+play nothing), `lost` positioned at the reviewer on "?". Both warmed on the first Snake-mode frame. Not in the mix measurements above.
 | event | before | FPSFX |
 |---|---|---|
 | `fire()` paper ball | `blip(1200)` + `blip(300)` | `gun` (not while the boss card or the swoop is up) |

@@ -17,7 +17,7 @@ export const sleep = ms => new Promise(r => setTimeout(r, ms));
 const VK = { Space: 32, Enter: 13, Escape: 27, ShiftLeft: 16, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
 export async function launch({ port, profile, width = 1280, height = 900 }) {
   const chrome = spawn(CH, ['--headless=new', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars',
-    '--autoplay-policy=no-user-gesture-required', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`,
+    '--autoplay-policy=no-user-gesture-required', '--mute-audio', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`,
     `--user-data-dir=${SP}/chrome-${profile}`, 'about:blank'], { stdio: 'ignore' });
   let wsUrl = null;
   for (let i = 0; i < 60 && !wsUrl; i++) { try { const l = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); const p = l.find(t => t.type === 'page'); if (p) wsUrl = p.webSocketDebuggerUrl; } catch (e) {} if (!wsUrl) await sleep(250); }

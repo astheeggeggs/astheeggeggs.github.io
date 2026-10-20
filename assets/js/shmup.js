@@ -748,7 +748,7 @@
     function R(x, col, a, b, w, h) { x.fillStyle = col; x.fillRect(a, b, w, h); }
     function whiten(src) { var c = mk(src.width, src.height), x = c.getContext('2d'); x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-atop'; x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); return c; }
     function tint(src, col, alpha) { var c = mk(src.width, src.height), x = c.getContext('2d'); x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-atop'; x.globalAlpha = alpha; x.fillStyle = col; x.fillRect(0, 0, c.width, c.height); return c; }
-    var SPR = {}, WHT = {}, BS = [], SHIP = [], COVERS = [], GEAR = [], NEB = [], GIRDER = null, SKULL = [], ICON = {}, CELLS = new Float32Array(400), NCELL = 0;
+    var SPR = {}, WHT = {}, BS = [], SHIP = [], COVERS = [], GEAR = [], NEB = [], GIRDER = null, SKULL = [], ICON = {};
 
     function buildSprites() {
       var c, x, i, j, k;
@@ -808,31 +808,7 @@
       for (k = 0; k < 2; k++) { ox = k ? 144 : 0; R(x, PAL.k, ox, 36, 12, 40); R(x, PAL.M, ox + 1, 37, 10, 38); R(x, PAL.m, ox + 1, 37, 3, 38); R(x, PAL.k, ox + 2, 70, 8, 6); R(x, PAL.r, ox + 3, 40, 6, 2); }
       for (i = 0; i < 8; i++) { R(x, PAL.m, 14 + i * 18, 76, 2, 2); }
       SPR.typesetter = c;
-      // PEER REVIEW: a hive of anonymous comment bubbles. A flat-topped honeycomb in an ellipse, a socket for the core, a red nib below
-      c = mk(176, 128); x = c.getContext('2d');
-      var HR = 10, INR = HR * 0.866, seen = {}, xq, zr, yq, rx, rz, ry, hx, hy, cdx, cdy, nrm, typ, key, ccol;
-      for (j = 0; j < 128; j++) for (i = 0; i < 176; i++) {
-        var ex = (i - 88) / 86, ey = (j - 60) / 54; if (ex * ex + ey * ey > 1) continue;
-        xq = (i - 88) * 2 / 3 / HR; zr = (-(i - 88) / 3 + (j - 60) * 0.57735) / HR; yq = -xq - zr;
-        rx = Math.round(xq); ry = Math.round(yq); rz = Math.round(zr);
-        var ddx = Math.abs(rx - xq), ddy = Math.abs(ry - yq), ddz = Math.abs(rz - zr);
-        if (ddx > ddy && ddx > ddz) rx = -ry - rz; else if (ddy > ddz) ry = -rx - rz; else rz = -rx - ry;
-        hx = HR * 1.5 * rx; hy = HR * (0.866 * rx + 1.732 * rz);
-        if (hx * hx + hy * hy < 26 * 26) continue;
-        cdx = i - 88 - hx; cdy = j - 60 - hy; nrm = Math.max(Math.abs(cdy), Math.abs(cdx * 0.866 + cdy * 0.5), Math.abs(cdx * 0.866 - cdy * 0.5));
-        typ = ((rx * 5 + rz * 11) % 7 + 7) % 7; key = rx + ',' + rz;
-        if (!seen[key]) { seen[key] = 1; if (NCELL < 200) { CELLS[NCELL * 2] = 88 + hx; CELLS[NCELL * 2 + 1] = 60 + hy; NCELL++; } }
-        if (nrm > INR - 1.6) ccol = PAL.k;
-        else if (typ < 3) ccol = (cdy >= -4 && cdy < -2 && cdx > -5 && cdx < 5) || (cdy >= 0 && cdy < 2 && cdx > -5 && cdx < 3) ? PAL.b : (cdy >= 3 && cdy < 5 && cdx > -5 && cdx < 5) ? PAL.R : nrm > INR - 3 ? PAL.N : PAL.n;
-        else if (typ < 5) ccol = nrm > INR - 3 ? PAL.b : PAL.d;
-        else ccol = (cdy >= -3 && cdy < -1 && cdx > -4 && cdx < 4) || (cdy >= 1 && cdy < 3 && cdx > -4 && cdx < 2) ? PAL.M : nrm > INR - 3 ? PAL.m : PAL.p;
-        R(x, ccol, i, j, 1, 1);
-      }
-      for (j = 0; j < 16; j++) { var nw = 7 - (j >> 1); R(x, PAL.k, 87 - nw, 111 + j, nw * 2 + 3, 1); if (nw > 0) R(x, j > 11 ? PAL.R : PAL.r, 89 - nw, 111 + j, nw * 2 - 1, 1); }
-      SPR.hive = c;
-      c = mk(21, 19); x = c.getContext('2d');                                        // one lit cell
-      for (j = 0; j < 19; j++) for (i = 0; i < 21; i++) { cdx = i - 10; cdy = j - 9; nrm = Math.max(Math.abs(cdy), Math.abs(cdx * 0.866 + cdy * 0.5), Math.abs(cdx * 0.866 - cdy * 0.5)); if (nrm <= INR - 1.6) R(x, '#fff1a8', i, j, 1, 1); else if (nrm <= INR) R(x, PAL.n, i, j, 1, 1); }
-      SPR.cell = c;
+      androssBuild();                                                                // PEER REVIEW: the polygon face, its hands and the cube (see the block above the drawing section)
       for (k in SPR) if (SPR.hasOwnProperty(k)) WHT[k] = whiten(SPR[k]);
       // THE IMPACT FACTOR: a gear (steel, then furious red) and its orbiting journal covers
       for (k = 0; k < 2; k++) {
@@ -902,11 +878,19 @@
       hiSaved = G.hi;
       try { localStorage.setItem('quest.shmup.hi', String(G.hi)); } catch (e) {}
     }
+    function startLives() { return api.params && api.params.cheat ? 50 : 3; }   // the level select's cheat: fifty ships, and fifty again after a continue
+    // An honest clear of the first loop is counted (quest.clears: groundwork for a later feature; restart() and
+    // startLoop2() leave it alone). Not counted: the level-select cheat or a warp, and any test hook that skips or spares.
+    function countClear() {
+      var p = api.params || {};
+      if (L2 || JUMP || GOD || DBG || botOn || p.cheat || p.warp || p.god || p.shmup || p.endgame) return;
+      try { localStorage.setItem('quest.clears', String((parseInt(localStorage.getItem('quest.clears'), 10) || 0) + 1)); } catch (e) {}
+    }
     function newGame(loop) {
       var stored = 0; try { stored = parseInt(localStorage.getItem('quest.shmup.hi'), 10) || 0; } catch (e) {}
       hiSaved = stored; var hi = Math.max(158000, stored);
       L2 = loop === 2 || JUMP === 'tlb'; HPM = L2 ? 1.3 : 1; SM = L2 ? 2 : 1; BSP = 1; BEAM[2] = BEAM[3] = 0;
-      G = { mode: 'play', t: 0, loop: L2 ? 2 : 1, stage: 1, st: 0, si: 0, script: null, hold: false, score: 0, hi: hi, lives: 3, bombs: 3, chain: 0, maxChain: 0, gauge: 0, cites: 0, continues: 0, kills: 0,
+      G = { mode: 'play', t: 0, loop: L2 ? 2 : 1, stage: 1, st: 0, si: 0, script: null, hold: false, score: 0, hi: hi, lives: startLives(), bombs: 3, chain: 0, maxChain: 0, gauge: 0, cites: 0, continues: 0, kills: 0,
         weapon: 0, level: 1, speed: 0, extend: 0, paused: false, wipe: 0, flash: 1, shake: 0, cardT: 0, cardDur: 1, cardTitle: '', cardSub: '', warnT: 0, warnKind: 1, boss: null, contT: 0,
         who: '', say: '', sayT: 0, sayN: 0, endT: 0, scroll: 0, girderY: -200, girderSide: 0, girderOn: false, tauntT: 0, tauntI: 0, rank: 0, tlb: false, tlbLv: 1, ghosts: 0, bPeak: 0, revenge: 0, rankQ: 0 };
       G.script = scriptFor(1);
@@ -1070,7 +1054,7 @@
         taunts: ['OF INTEREST ONLY TO SPECIALISTS.', 'WE RECEIVE MANY MORE SUBMISSIONS THAN WE CAN PUBLISH.', 'HAVE YOU CONSIDERED OUR SISTER JOURNAL?', 'I AM A RATIO. YOU CANNOT KILL A RATIO.', 'TWO YEARS. THAT IS ALL YOU GET.'],
         taunts2: ['YOUR LAST PAPER HAS TWO CITATIONS. BOTH ARE YOURS.', 'I HAVE BEEN RECALCULATED. UPWARDS.', 'OF INTEREST ONLY TO SPECIALISTS. STILL.', 'I AM A RATIO. YOU CANNOT KILL A RATIO TWICE.', 'HAVE YOU CONSIDERED A DIFFERENT CAREER?'],
         breaks: ['SELF-CITATION ENGAGED.', 'ENOUGH. BEHOLD MY TRUE DENOMINATOR.'], last: 'BUT... MY... QUARTILE...' },
-      // the True Last Boss: the hive mind. Its HP is tuned absolutely (HPM leaves it alone); loop 2's bullet speed and rank drive it like everything else
+      // the True Last Boss (type 'hive' for historical reasons; drawn as a polygon face, two hands and a cube, see drawAndross). Its HP is tuned absolutely (HPM leaves it alone); loop 2's bullet speed and rank drive it like everything else
       hive: { name: 'PEER REVIEW', hp: 2200, hw: 64, hh: 46, score: 500000, cit: 120, boss: true, tlb: true, phases: [2200, 2000, 2100, 2100, 1500],
         taunts: ['WE ARE MANY. WE ARE ANONYMOUS. WE HAVE NOT READ IT.', 'REVIEWER 2 HAS CONCERNS. REVIEWER 2 IS ALL OF US.', 'THE SAMPLE SIZE IS INSUFFICIENT. THE SAMPLE IS YOU.', 'PLEASE ADDRESS OUR CONCERNS. WE WILL NOT SAY WHICH.', 'MAJOR REVISIONS. THEN MAJOR REVISIONS.'],
         breaks: ['REJECT. REJECT. REJECT.', 'CITE US.', 'YOUR RESPONSE TO REVIEWERS HAS BEEN NOTED.', 'WE HAVE NOW READ THE ABSTRACT.'], last: 'ACCEPT... REVIEWER 2 DISSENTING...' }
@@ -1242,7 +1226,7 @@
       if (on && was <= 0) sfx.beamWarn();                                          // heard charging, then heard biting
       if (BEAM[2] && !bit) sfx.beamFire();
     }
-    var CELLX = [-96, 96, -48, 48];                                                // the four needle cells, fired in an order that crosses the hive
+    var CELLX = [-96, 96, -48, 48];                                                // the four needle cells (the two hands' outer and inner slots), fired in an order that crosses the face
     function cellVolley(e, n, spd) {                                               // an aimed needle stream from the next cell, two strays either side of it
       var x0 = e.x + CELLX[e.fired++ % 4], y0 = e.y + (e.fired % 2 ? 14 : 24), a = aimAt(x0, y0);
       burst(x0, y0, a, n, spd, 28, 5); fan(x0, y0, a, 2, 0.56, spd * 0.75, 4);
@@ -1436,9 +1420,9 @@
     }
     function doContinue() {
       saveHi();
-      if (G.mode === 'continue') { G.mode = 'play'; G.score = 0; G.continues++; G.lives = 3; G.bombs = 3; respawn(); sfx.start(); floatText('RESUBMITTED', W / 2, H / 2, '#34d399'); }
+      if (G.mode === 'continue') { G.mode = 'play'; G.score = 0; G.continues++; G.lives = startLives(); G.bombs = 3; respawn(); sfx.start(); floatText('RESUBMITTED', W / 2, H / 2, '#34d399'); }
       else if (G.mode === 'gameover' && G.contT > 1) {                                // the count ran out: the stage starts again, nothing is lost but pride
-        var st = G.stage; clearPools(); G.mode = 'play'; G.score = 0; G.continues++; G.lives = 3; G.bombs = 3; G.chain = 0; G.gauge = 0; G.rank = 0; G.boss = null; G.hold = false; G.warnT = 0; BEAM[2] = BEAM[3] = 0;
+        var st = G.stage; clearPools(); G.mode = 'play'; G.score = 0; G.continues++; G.lives = startLives(); G.bombs = 3; G.chain = 0; G.gauge = 0; G.rank = 0; G.boss = null; G.hold = false; G.warnT = 0; BEAM[2] = BEAM[3] = 0;
         G.script = scriptFor(st); G.si = 0; G.st = 0; respawn(); sfx.start();
         if (G.tlb) { G.si = G.script.length; G.level = Math.max(G.level, G.tlbLv, 3); tlbWarning(); }   // the True Last Boss is its own checkpoint: no stage to replay, so no P boxes to win the power back from
         else api.music(stageMusic());
@@ -1452,6 +1436,7 @@
       G.mode = 'ending'; G.endT = 0; G.flash = 1; G.boss = null; G.warnT = 0; G.sayT = 0; cancelBullets(false); BEAM[2] = BEAM[3] = 0;
       for (var i = 0; i < NE; i++) EN[i].on = false;
       saveHi();
+      countClear();
       api.music('silence');
       if (L2) { if (!api.stinger('tenure')) api.stinger('ending'); } else api.stinger('ending');
       sfx.stamp();
@@ -1501,6 +1486,251 @@
       toBoring();
     }
 
+    /* ------------------------------------------------------------ PEER REVIEW, reskinned: a flat-shaded polygon face, two hands, a cube
+       Visuals only. Splices into shmup.js (see SPLICE.md): uses mk(), whiten() and TAU from that scope, adds nothing to the entity.
+       What the picture says, and why it is true:
+         mouth (e.x, e.y .. e.y+24)  every centre pattern and both lasers leave from it; it gapes while the boss fires, shuts while it cannot be hurt
+         hands (e.x -/+ 96 and 48)   the four needle "cells" of cellVolley: the left hand fires at e.y+14, the right at e.y+24, the palm gem flashes.
+                                     Open at the outer cells, a fist punched in front of the cheek at the inner ones
+         face, +/-67 x -59..+43      the 128 x 92 hit box; facets fall away at each phase break (while e.lt runs) and leave dull magenta hollows: the silhouette never shrinks
+         cube (phase 4)              the true form, 84 wide face-on and 119 corner-on in the same hit box. Dark steel face, gold eyes shut, a gold bar across the teeth = sealed
+                                     (e.shut or e.lt: shots deflect); the bright bare face, eyes and mouth lit pink = CORE EXPOSED
+         death                       the cube bursts into polygons over e.dying 6 -> 0 */
+    var AND = { OX: 84, OY: 66, SW: 168, SH: 130, CS: 84, DIE: 6, LT: 1.8, up: [], upW: [], jaw: [], jawW: [], eyes: [], cav: null, hand: [], tex: [], fac: [], cube: [],
+      hl: 96, hr: 96, fl: 0, fr: 0, jw: 0, fired: -1, lastT: -1, COL: ['#e3625b', '#e3625b', '#fb923c', '#fb923c', '#ff4fa3'] };
+    function androssBuild() {
+      var RAMP = [[42, 45, 60], [68, 74, 94], [100, 107, 130], [135, 142, 166], [170, 176, 196], [207, 211, 224], [244, 246, 251]];
+      var LX = -0.47, LY = -0.6, LZ = 0.65, K = [17, 19, 28], seed = 0x9e3779, i, j, k, f, p, c, hv, q4, pg;
+      function rand() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+      function css(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+      function shade(a, b, d) {                                                     // Lambert on the facet's own normal, snapped to the ramp: hard edges, no gradients
+        var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        return RAMP[Math.max(0, Math.min(6, Math.round((0.12 + 0.88 * Math.max(0, (nx * LX + ny * LY + nz * LZ) / l)) * 6)))];
+      }
+      function facet(id, part, vs, fall, col, over) {                               // vs: [[x, y, z], ...] around the boss centre
+        var pts = [], cx = 0, cy = 0, n = vs.length, q, d, sp;
+        for (q = 0; q < n; q++) { pts.push(vs[q][0], vs[q][1]); cx += vs[q][0] / n; cy += vs[q][1] / n; }
+        d = Math.sqrt(cx * cx + cy * cy) || 1; sp = 50 + rand() * 90;
+        return { id: id, part: part, pts: pts, n: n, cx: cx, cy: cy, fall: fall, col: col || shade(vs[0], vs[1], vs[2]), over: !!over, css: '',
+          vx: cx / d * sp + (rand() - 0.5) * 40, vy: cy / d * sp - 20 - rand() * 50, w: (rand() - 0.5) * 9, t0: 0 };
+      }
+      function inside(pts, n, x, y) {
+        var q, r, hit = false;
+        for (q = 0, r = n - 1; q < n; r = q++) { var xi = pts[q * 2], yi = pts[q * 2 + 1], xj = pts[r * 2], yj = pts[r * 2 + 1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) hit = !hit; }
+        return hit;
+      }
+      function raster(list, w, h, ox, oy, pick, outline) {                          // pick(facet) -> colour, 'in' for the hollow behind a fallen facet, or null to skip
+        var cv = mk(w, h), x = cv.getContext('2d'), im = x.createImageData(w, h), d = im.data, q, fc, col, a, b, o, x0, x1, y0, y1, e;
+        for (q = 0; q < list.length; q++) {
+          fc = list[q]; col = pick(fc); if (!col) continue;
+          x0 = y0 = 1e9; x1 = y1 = -1e9;
+          for (e = 0; e < fc.n; e++) { x0 = Math.min(x0, fc.pts[e * 2]); x1 = Math.max(x1, fc.pts[e * 2]); y0 = Math.min(y0, fc.pts[e * 2 + 1]); y1 = Math.max(y1, fc.pts[e * 2 + 1]); }
+          x0 = Math.max(0, Math.floor(x0 + ox)); x1 = Math.min(w - 1, Math.ceil(x1 + ox)); y0 = Math.max(0, Math.floor(y0 + oy)); y1 = Math.min(h - 1, Math.ceil(y1 + oy));
+          for (b = y0; b <= y1; b++) for (a = x0; a <= x1; a++) {
+            if (!inside(fc.pts, fc.n, a + 0.5 - ox, b + 0.5 - oy)) continue;
+            o = (b * w + a) * 4;
+            if (col === 'in') { e = ((a + b) % 4) === 0 ? [128, 62, 102] : [80, 38, 68]; d[o] = e[0]; d[o + 1] = e[1]; d[o + 2] = e[2]; }
+            else { d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; }
+            d[o + 3] = 255;
+          }
+        }
+        if (outline) for (b = 0; b < h; b++) for (a = 0; a < w; a++) {              // the house outline: one dark pixel round the silhouette
+          o = (b * w + a) * 4; if (d[o + 3]) continue;
+          if ((a > 0 && d[o - 1] === 255) || (a < w - 1 && d[o + 7] === 255) || (b > 0 && d[o - w * 4 + 3] === 255) || (b < h - 1 && d[o + w * 4 + 3] === 255)) { d[o] = K[0]; d[o + 1] = K[1]; d[o + 2] = K[2]; d[o + 3] = 254; }
+        }
+        x.putImageData(im, 0, 0); return cv;
+      }
+      function line(x, col, pts) {                                                  // a crack: a one-pixel polyline
+        x.fillStyle = col;
+        for (var q = 0; q + 3 < pts.length; q += 2) { var ax = pts[q], ay = pts[q + 1], bx = pts[q + 2], by = pts[q + 3], n = Math.max(Math.abs(bx - ax), Math.abs(by - ay)) || 1, s; for (s = 0; s <= n; s++) x.fillRect(Math.round(AND.OX + ax + (bx - ax) * s / n), Math.round(AND.OY + ay + (by - ay) * s / n), 1, 1); }
+      }
+
+      /* the face: the right half, mirrored. x, y in playfield pixels round (e.x, e.y); z towards the viewer, only for the shading */
+      var V = { c0: [0, -58, 8], r0: [34, -58, 2], r1: [59, -49, -14], r2: [67, -25, -24], r3: [62, -1, -20], r4: [56, 23, -16],
+        c1: [0, -41, 20], b1: [22, -43, 25], b2: [49, -37, 12], c2: [0, -28, 15], e1: [9, -25, 9], e2: [46, -32, 3], e3: [42, -21, 2], e4: [14, -18, 10],
+        c3: [0, -8, 34], n1: [12, -8, 17], k1: [40, -8, 8], c4: [0, 0, 22], l1: [14, 0, 15], m1: [34, 1, 4],
+        j0: [0, 3, 16], jl: [16, 3, 14], j1: [36, 3, 3], j2: [56, 20, -14], j3: [37, 41, 0], j4: [0, 42, 10], j5: [19, 21, 16], jc: [0, 19, 21] };
+      var F = [['F1', 'u', 'c0 r0 b1 c1'], ['F2', 'u', 'r0 r1 b2 b1'], ['F3', 'u', 'r1 r2 b2'], ['F4', 'u', 'b1 b2 e2 e1'], ['F5', 'u', 'c1 b1 e1 c2'], ['F6', 'u', 'e1 e2 e3 e4'],
+        ['F7', 'u', 'b2 r2 e3 e2'], ['F8', 'u', 'c2 e1 e4'], ['F9', 'u', 'c2 e4 n1 c3'], ['F10', 'u', 'e4 e3 k1 n1'], ['F11', 'u', 'e3 r2 r3 k1'], ['F12', 'u', 'c3 n1 l1 c4'],
+        ['F13', 'u', 'n1 k1 m1 l1'], ['F14', 'u', 'k1 r3 r4 m1'], ['J1', 'j', 'j0 jl j5 jc'], ['J2', 'j', 'jl j1 j2 j5'], ['J3', 'j', 'jc j5 j3 j4'], ['J4', 'j', 'j5 j2 j3']];
+      var FALL = { F3R: 1, F2L: 1, F14L: 1, F1R: 2, F11R: 2, F7L: 2, J4L: 2, F2R: 3, F10L: 3, F3L: 3, J2R: 3, F14R: 3 };   // which phase each facet is gone by; the rest go when the cube comes out
+      var EYE = [17, 19, 28], WHITE = RAMP[6], GOLD = [252, 211, 77], GOLDD = [184, 138, 30], LENS = [150, 178, 204], LENSH = [201, 222, 238];
+      AND.fac = [];
+      for (k = 0; k < F.length; k++) for (j = 0; j < 2; j++) {
+        var names = F[k][2].split(' '), vs = [];
+        for (i = 0; i < names.length; i++) { p = V[names[i]]; vs.push([j ? -p[0] : p[0], p[1], p[2]]); }
+        var id = F[k][0] + (j ? 'L' : 'R');
+        AND.fac.push(facet(id, F[k][1], vs, FALL[id] || 4, F[k][0] === 'F6' ? EYE : null));
+      }
+      for (j = 0; j < 2; j++) {                                                     // half-moon reading glasses, low on the nose: gold rim, two lens facets. The right lens goes at phase 2, the left at 3
+        var s = j ? -1 : 1, fl = j ? 3 : 2;
+        AND.fac.push(facet('G0' + j, 'u', [[s * 9, -16, 0], [s * 35, -17, 0], [s * 34, -10, 0], [s * 28, -5, 0], [s * 16, -5, 0], [s * 10, -10, 0]], fl, GOLD, true));
+        AND.fac.push(facet('G1' + j, 'u', [[s * 10, -14.5, 0], [s * 34, -15.5, 0], [s * 33, -10.5, 0], [s * 27.5, -6.5, 0], [s * 16.5, -6.5, 0], [s * 11, -10.5, 0]], fl, LENS, true));
+        AND.fac.push(facet('G2' + j, 'u', [[s * 10, -14.5, 0], [s * 34, -15.5, 0], [s * 22, -10, 0]], fl, LENSH, true));
+      }
+      AND.fac.push(facet('G3', 'u', [[-9, -17, 0], [9, -17, 0], [9, -15, 0], [-9, -15, 0]], 3, GOLDD, true));
+      for (i = -3; i <= 3; i++) AND.fac.push(facet('TU' + i, 'u', [[i * 9 - 4, 0, 0], [i * 9 + 4, 0, 0], [i * 9, 5.5, 0]], 4, WHITE));               // teeth: upper fangs on the lip, lower ones on the jaw
+      for (i = -3; i < 3; i++) AND.fac.push(facet('TL' + i, 'j', [[i * 9 + 0.5, 3.5, 0], [i * 9 + 8.5, 3.5, 0], [i * 9 + 4.5, -1.5, 0]], 4, WHITE));
+      for (k = 0; k < AND.fac.length; k++) { f = AND.fac[k]; f.css = css(f.col); }
+      var CRACK = [[], [[-20, -58, -15, -49, -19, -42, -13, -36], [38, 2, 44, 9, 41, 15], [20, 26, 25, 33]],
+        [[-20, -58, -15, -49, -19, -42, -13, -36], [38, 2, 44, 9, 41, 15], [20, 26, 25, 33], [-2, -56, 3, -47, -1, -42], [-50, -8, -42, -3, -46, 4], [-8, 24, -3, 31, -9, 37]],
+        [[-2, -56, 3, -47, -1, -42], [-8, 24, -3, 31, -9, 37], [22, -3, 27, -8], [6, 22, 11, 30, 7, 36], [-30, -40, -24, -36]]];
+      function sheet(part, ph) {
+        var cv = raster(AND.fac, AND.SW, AND.SH, AND.OX, AND.OY, function (fc) { return fc.part !== part ? null : fc.fall <= ph ? (fc.over ? null : 'in') : fc.col; }, true);
+        if (part === 'u') { var x = cv.getContext('2d'); for (var q = 0; q < CRACK[ph].length; q++) line(x, '#2a2d3c', CRACK[ph][q]); }
+        return cv;
+      }
+      for (p = 0; p < 4; p++) { AND.up[p] = sheet('u', p); AND.jaw[p] = sheet('j', p); AND.upW[p] = whiten(AND.up[p]); AND.jawW[p] = whiten(AND.jaw[p]); }
+      var cavF = [facet('C', 'c', [[-52, 19, 0], [-36, 4, 0], [36, 4, 0], [52, 19, 0], [52, 3, 0], [36, -14, 0], [-36, -14, 0], [-52, 3, 0]], 9, [11, 12, 20])];   // the dark behind the teeth: it rides on the jaw, hidden under the cheeks until the jaw drops
+      AND.cav = raster(cavF, AND.SW, AND.SH, AND.OX, AND.OY, function (fc) { return fc.col; }, false);
+      var GLOW = [[227, 98, 91], [251, 146, 60], [255, 79, 163]];                    // the eyes: one glow sheet per colour, the pupils are drawn live
+      for (k = 0; k < 3; k++) {
+        var ef = [];
+        for (j = 0; j < 2; j++) { s = j ? -1 : 1; ef.push(facet('E', 'e', [[s * 12, -24, 0], [s * 44, -30, 0], [s * 41, -22.5, 0], [s * 15, -19.5, 0]], 9, GLOW[k])); }
+        AND.eyes[k] = raster(ef, AND.SW, AND.SH, AND.OX, AND.OY, function (fc) { return fc.col; }, false);
+      }
+
+      /* the hands: palm towards you, fingers up, thumb on the side of the face. 64 x 64, the palm gem (the muzzle) at the centre */
+      for (j = 0; j < 4; j++) {                                                     // 0, 1: right and left of the face, open; 2, 3: the same two as fists (punched in to fire from the inner cells)
+        s = j % 2 ? -1 : 1; var hf = [], fist = j > 1, pc = [0, 4, 10], rim = [[-11, -6, 1], [11, -6, 1], [13, 6, 0], [7, 15, -2], [-7, 15, -2], [-13, 6, 0]], tips = fist ? [-11, -13, -13, -11] : [-18, -23, -22, -16];
+        hv = function (q) { return [s * q[0] * 1.4, q[1] * 1.4, q[2]]; };
+        for (i = 0; i < 6; i++) hf.push(facet('P' + i, 'h', [hv(pc), hv(rim[i]), hv(rim[(i + 1) % 6])], 9));
+        for (i = 0; i < 4; i++) { var fx = -11 + i * 5.75; hf.push(facet('N' + i, 'h', [hv([fx, -7, i % 2 ? 4 : 0]), hv([fx + 4.75, -7, i % 2 ? 0 : 5]), hv([fx + 4.25, tips[i], i % 2 ? -5 : -1]), hv([fx + 0.5, tips[i], i % 2 ? -1 : -6])], 9)); }
+        if (fist) hf.push(facet('T', 'h', [hv([-14, 7, 4]), hv([-12, 12, 4]), hv([4, 14, 12]), hv([5, 8, 4])], 9));
+        else hf.push(facet('T', 'h', [hv([-12, -3, 3]), hv([-13, 6, 0]), hv([-22, 0, -4]), hv([-21, -10, 2])], 9));
+        AND.hand[j] = raster(hf, 64, 64, 32, 36, function (fc) { return fc.col; }, true);
+      }
+
+      /* the cube's sides, drawn on a 68-unit square and scaled to CS: 0, 1 the bare face, bright (eyes dim / lit); 2, 3 the same face sealed: dark steel, eyes shut, a gold bar across the teeth (dim / lit) */
+      var S = AND.CS, D = 68, sc = S / D, tf, STEEL = [[31, 36, 48], [43, 48, 60], [59, 66, 82], [92, 107, 133]];
+      for (k = 0; k < 4; k++) {
+        tf = [];
+        q4 = function (x0, y0, x1, y1, col) { tf.push(facet('q', 't', [[x0 * sc, y0 * sc, 0], [x1 * sc, y0 * sc, 0], [x1 * sc, y1 * sc, 0], [x0 * sc, y1 * sc, 0]], 9, col)); };
+        pg = function (a, col) { var vs2 = []; for (var q = 0; q < a.length; q += 2) vs2.push([a[q] * sc, a[q + 1] * sc, 0]); tf.push(facet('p', 't', vs2, 9, col)); };
+        if (k < 2) {
+          q4(0, 0, D, D, K); q4(1, 1, D - 1, D - 1, RAMP[5]); pg([1, 1, D - 1, 1, D - 5, 5, 5, 5], RAMP[6]); pg([1, D - 1, D - 1, D - 1, D - 5, D - 5, 5, D - 5], RAMP[3]); pg([D - 1, 1, D - 1, D - 1, D - 5, D - 5, D - 5, 5], RAMP[4]);
+          pg([6, 10, 31, 18, 31, 26, 6, 19], RAMP[1]); pg([D - 6, 10, D - 31, 18, D - 31, 26, D - 6, 19], RAMP[1]);                       // brows
+          pg([7, 19, 31, 26, 29, 35, 10, 31], K); pg([D - 7, 19, D - 31, 26, D - 29, 35, D - 10, 31], K);                                 // eyes: sockets, glow, pupils
+          pg([9, 22, 29, 28, 28, 33, 11, 29.5], k ? GLOW[2] : [159, 47, 106]); pg([D - 9, 22, D - 29, 28, D - 28, 33, D - 11, 29.5], k ? GLOW[2] : [159, 47, 106]);
+          if (k) { q4(18, 26, 23, 30, WHITE); q4(D - 23, 26, D - 18, 30, WHITE); }
+          pg([34, 24, 41, 41, 27, 41], RAMP[6]); pg([34, 24, 41, 41, 34, 41], RAMP[3]);                                                // nose
+          q4(14, 45, D - 14, 59, K); q4(15, 46, D - 15, 58, k ? [255, 79, 163] : [122, 31, 36]);                                         // mouth
+          for (i = 0; i < 5; i++) { pg([16 + i * 7.4, 46, 23 + i * 7.4, 46, 19.5 + i * 7.4, 51], WHITE); pg([16 + i * 7.4, 58, 23 + i * 7.4, 58, 19.5 + i * 7.4, 53], WHITE); }
+        } else {
+          q4(0, 0, D, D, K); q4(1, 1, D - 1, D - 1, STEEL[2]); pg([1, 1, D - 1, 1, D - 5, 5, 5, 5], STEEL[3]); pg([1, D - 1, D - 1, D - 1, D - 5, D - 5, 5, D - 5], STEEL[0]); pg([D - 1, 1, D - 1, D - 1, D - 5, D - 5, D - 5, 5], STEEL[1]);
+          q4(5, 5, D - 5, 7, GOLDD); q4(5, D - 7, D - 5, D - 5, GOLDD); q4(5, 5, 7, D - 5, GOLDD); q4(D - 7, 5, D - 5, D - 5, GOLDD);       // the shutter's gold rim
+          pg([8, 11, 31, 18, 31, 26, 8, 20], STEEL[0]); pg([D - 8, 11, D - 31, 18, D - 31, 26, D - 8, 20], STEEL[0]);                     // brows
+          pg([9, 20, 31, 26, 29, 34, 11, 30], K); pg([D - 9, 20, D - 31, 26, D - 29, 34, D - 11, 30], K);                                 // eyes shut: a gold slit
+          pg([11, 24.5, 29, 29.5, 28.5, 31.5, 11.5, 26.5], k === 3 ? GOLD : GOLDD); pg([D - 11, 24.5, D - 29, 29.5, D - 28.5, 31.5, D - 11.5, 26.5], k === 3 ? GOLD : GOLDD);
+          pg([34, 24, 41, 41, 27, 41], STEEL[3]); pg([34, 24, 41, 41, 34, 41], STEEL[0]);                                              // nose
+          q4(13, 44, D - 13, 60, K); q4(14, 45, D - 14, 59, STEEL[0]);                                                                 // teeth clenched, barred
+          for (i = 0; i < 5; i++) { pg([16 + i * 7.4, 45, 23 + i * 7.4, 45, 19.5 + i * 7.4, 53], STEEL[3]); pg([16 + i * 7.4, 59, 23 + i * 7.4, 59, 19.5 + i * 7.4, 51], STEEL[2]); }
+          q4(10, 49.5, D - 10, 54.5, K); q4(11, 50.5, D - 11, 53.5, k === 3 ? GOLD : GOLDD);
+        }
+        AND.tex[k] = raster(tf, S, S, 0, 0, function (fc) { return fc.col; }, false);
+      }
+      AND.cube = [];                                                                // what the cube breaks into: a jittered grid of triangles
+      var N = 5, gp = [], h = S / 2 + 4;
+      for (j = 0; j <= N; j++) for (i = 0; i <= N; i++) gp.push([(i / N * 2 - 1) * h + (i > 0 && i < N ? (rand() - 0.5) * 9 : 0), (j / N * 2 - 1) * h + (j > 0 && j < N ? (rand() - 0.5) * 9 : 0), 0]);
+      for (j = 0; j < N; j++) for (i = 0; i < N; i++) {
+        var a = gp[j * (N + 1) + i], b = gp[j * (N + 1) + i + 1], cc = gp[(j + 1) * (N + 1) + i + 1], d = gp[(j + 1) * (N + 1) + i], flip = (i + j) % 2;
+        for (k = 0; k < 2; k++) {
+          f = facet('S', 's', flip ? (k ? [a, b, d] : [b, cc, d]) : (k ? [a, b, cc] : [a, cc, d]), 9, rand() < 0.12 ? GLOW[2] : RAMP[2 + ((rand() * 5) | 0)]);
+          f.css = css(f.col); f.t0 = rand() < 0.22 ? 0.3 + rand() * 1.7 : 2.2 + rand() * 0.12; AND.cube.push(f);
+        }
+      }
+    }
+
+    function andShards(g, list, x, y, tt, death, only) {                             // facets in flight. Stateless: where each one is depends only on how long ago it left
+      var k, q, f, t, life = death ? 3.2 : 1.5, gr = death ? 36 : 260, sp = death ? 0.75 : 1, px, py, sc, cs, sn, dx, dy;
+      for (k = 0; k < list.length; k++) {
+        f = list[k]; if (only >= 0 && f.fall !== only) continue;
+        t = tt - (death ? f.t0 : 0); if (t < 0 || t > life) continue;
+        if (t > life - 0.35 && ((t * 30) | 0) % 2) continue;
+        px = x + f.cx + f.vx * sp * t; py = y + f.cy + f.vy * sp * t + 0.5 * gr * t * t; sc = death ? 1 - t / life * 0.7 : 1; cs = Math.cos(f.w * t) * sc; sn = Math.sin(f.w * t) * sc;
+        g.fillStyle = t < 0.1 ? '#fff' : f.css; g.beginPath();
+        for (q = 0; q < f.n; q++) { dx = f.pts[q * 2] - f.cx; dy = f.pts[q * 2 + 1] - f.cy; if (q) g.lineTo(px + dx * cs - dy * sn, py + dx * sn + dy * cs); else g.moveTo(px + dx * cs - dy * sn, py + dx * sn + dy * cs); }
+        g.closePath(); g.fill();
+      }
+    }
+    function andCube(g, x, y, th, tex, wh) {                                         // a cube turning about its upright axis, seen from a little above: two sheared sides and the lid
+      var S = AND.CS, h = S / 2, r = h * 1.41421, ca = 0.94, sa = 0.34, k, a, b, ax, ay, bx, by, n, lit, cx = [], cy = [];
+      for (k = 0; k < 4; k++) { a = th + Math.PI / 4 + k * Math.PI / 2; cx[k] = Math.sin(a) * r; cy[k] = -h * ca + Math.cos(a) * r * sa; }
+      for (k = 0; k < 4; k++) {
+        n = th + (k + 1) * Math.PI / 2; if (Math.cos(n) <= 0.02) continue;
+        ax = cx[k]; ay = cy[k]; bx = cx[(k + 1) % 4]; by = cy[(k + 1) % 4]; lit = 0.5 - 0.5 * Math.sin(n);        // lit from the left
+        g.save(); g.transform((bx - ax) / S, (by - ay) / S, 0, ca, x + ax, y + ay);
+        g.drawImage(AND.tex[tex], 0, 0);
+        g.fillStyle = '#05060f'; g.globalAlpha = 0.5 * (1 - lit); g.fillRect(0, 0, S, S);
+        if (wh) { g.fillStyle = '#fff'; g.globalAlpha = 0.6; g.fillRect(0, 0, S, S); }
+        g.restore();
+      }
+      g.globalAlpha = 1; g.fillStyle = wh ? '#fff' : tex > 1 ? '#7686a3' : '#f4f6fb'; g.strokeStyle = '#11131c'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x + cx[0], y + cy[0]); for (k = 1; k < 4; k++) g.lineTo(x + cx[k], y + cy[k]); g.closePath(); g.fill(); g.stroke();
+    }
+    function andHand(g, j, hx, hy, glow, col, fall, down) {                          // j: 0 right of the face, 1 left; down: a fist (at an inner cell). The gem in the palm is the muzzle
+      if (fall > 0) { var dy = 150 * fall * fall; if (hy + dy > 520) return; g.save(); g.translate(hx, hy + dy); g.rotate((j ? -1 : 1) * fall * 2.6); g.drawImage(AND.hand[j], -32, -36); g.restore(); return; }
+      g.drawImage(AND.hand[down ? j + 2 : j], hx - 32, hy - 36);
+      g.fillStyle = '#11131c'; g.fillRect(hx - 4, hy - 1, 8, 6); g.fillRect(hx - 3, hy - 2, 6, 8);
+      g.fillStyle = glow > 0.5 ? '#fff' : col; g.fillRect(hx - 3, hy, 6, 4); g.fillRect(hx - 2, hy - 1, 4, 6);
+      if (glow > 0) { g.globalAlpha = glow * 0.5; g.fillStyle = col; g.fillRect(hx - 7, hy - 5, 14, 14); g.globalAlpha = 1; }
+      else { g.fillStyle = '#fff'; g.fillRect(hx - 1, hy, 2, 2); }
+    }
+    /* drawAndross(g, e, x, y, wh, px, py, t, beamA): the body of drawBoss's hive branch.
+       x, y: the boss centre drawBoss already rounded (and jittered while dying); wh: its hit-flash flag; px, py: the ship; t: G.t; beamA: BEAM[3] (0..1) */
+    function drawAndross(g, e, x, y, wh, px, py, t, beamA) {
+      var ph = e.phase, hy = y + Math.round(Math.sin(t * 1.7) * 3), col = AND.COL[ph] || AND.COL[4], gi = ph >= 4 ? 2 : ph >= 2 ? 1 : 0, pu = 0.5 + 0.5 * Math.sin(t * (ph >= 4 ? 14 : 9));
+      var dying = e.dying > 0, d = dying ? AND.DIE - e.dying : 0, rest = e.lt > 0, live = !rest && !dying && e.y >= e.ty - 1, k, m, dt, n, tl, tr, open, off, ex, ey, cx;
+      /* the hands slide to wherever cellVolley will fire from next (CELLX = [-96, 96, -48, 48], next index e.fired % 4), and flash when e.fired says they did */
+      dt = t - AND.lastT; if (!(dt >= 0 && dt < 0.25)) { dt = 0; AND.fired = e.fired; AND.hl = AND.hr = 96; AND.fl = AND.fr = AND.jw = 0; } AND.lastT = t;
+      m = ((e.fired % 4) + 4) % 4; tl = tr = 96;
+      if (live && (ph === 1 || (ph === 4 && e.shut > 0))) { tl = m === 1 || m === 2 ? 48 : 96; tr = m > 1 ? 48 : 96; }
+      if (ph === 1 || ph === 4) { n = e.fired - AND.fired; if (n > 0 && n < 5) for (k = 0; k < n; k++) { if ((AND.fired + k) % 2) AND.fr = 1; else AND.fl = 1; } }
+      AND.fired = e.fired; k = Math.min(1, dt * 16); AND.hl += (tl - AND.hl) * k; AND.hr += (tr - AND.hr) * k; AND.fl = Math.max(0, AND.fl - dt * 5); AND.fr = Math.max(0, AND.fr - dt * 5);
+
+      if (ph >= 4) {                                           // the true form
+        if (dying && d >= 2.2) {                                                    // ... and its end: the light inside gutters while the polygons scatter
+          var cr = Math.max(0, 20 * (1 - (d - 2.2) / 3.8)), fk = ((t * 20) | 0) % 2;
+          g.globalAlpha = 0.5; g.strokeStyle = fk ? '#fff' : '#ff9ccc'; g.lineWidth = 2; g.beginPath();
+          for (k = 0; k < 4; k++) { n = t * 1.3 + k * Math.PI / 2; g.moveTo(x + Math.cos(n) * cr, hy + Math.sin(n) * cr); g.lineTo(x + Math.cos(n) * (cr + 18 + d * 14), hy + Math.sin(n) * (cr + 18 + d * 14)); }
+          g.stroke(); g.globalAlpha = 1;
+          g.fillStyle = '#ff4fa3'; g.beginPath(); g.moveTo(x, hy - cr - 3); g.lineTo(x + cr + 3, hy); g.lineTo(x, hy + cr + 3); g.lineTo(x - cr - 3, hy); g.closePath(); g.fill();
+          g.fillStyle = '#fff'; g.beginPath(); g.moveTo(x, hy - cr * 0.7); g.lineTo(x + cr * 0.7, hy); g.lineTo(x, hy + cr * 0.7); g.lineTo(x - cr * 0.7, hy); g.closePath(); g.fill();
+        } else {
+          var sealed = !dying && (rest || e.shut > 0), blink = ((t * 6) | 0) % 2;
+          if (!sealed) { g.globalAlpha = 0.16 + 0.12 * pu; g.fillStyle = col; g.beginPath(); g.moveTo(x, hy - 72); g.lineTo(x + 82, hy); g.lineTo(x, hy + 72); g.lineTo(x - 82, hy); g.closePath(); g.fill(); g.globalAlpha = 1; }
+          andCube(g, x, hy, t * 1.3 + d * d * 2.2, sealed ? 2 + blink : (dying ? ((t * 16) | 0) % 2 : pu > 0.5 ? 1 : 0), wh || (dying && ((t * 12) | 0) % 3 === 0));
+        }
+        if (rest) andShards(g, AND.fac, x, hy, AND.LT - e.lt, false, 4);            // the last of the face, blown clear
+        if (dying) andShards(g, AND.cube, x, hy, d, true, -1);
+      } else {
+        open = !live ? 0 : Math.min(1, e.a * 5) * (ph === 0 ? 0.7 + 0.3 * Math.min(1, Math.max(0, e.ft4)) : ph === 1 ? 0.35 + 0.65 * Math.min(1, Math.max(0, e.ft3 / 0.8)) : ph === 2 ? 1 : 0.45 + 0.55 * Math.min(1, Math.max(0, e.ft2 / 0.6)));
+        AND.jw += (open - AND.jw) * Math.min(1, dt * 14); off = Math.round(AND.jw * 15);                 // the jaw swings, it does not snap
+        if (dying) andShards(g, AND.fac, x, hy, d, false, -1);
+        else {
+          g.drawImage(AND.cav, x - AND.OX, hy - AND.OY + off);
+          if (off > 2) {                                                            // the throat: lit in the phase colour, white-hot where the lasers leave
+            g.globalAlpha = 0.4 + 0.3 * pu; g.fillStyle = col; g.fillRect(x - 26, hy + 2, 52, off); g.globalAlpha = 1;
+            if (ph === 2 && beamA > 0) { g.globalAlpha = beamA; g.fillStyle = '#ff4fa3'; g.fillRect(x - 9, hy + 3, 18, 10); g.fillStyle = '#fff'; g.fillRect(x - 5, hy + 5, 10, 6); g.globalAlpha = 1; }
+          }
+          g.drawImage(AND.jaw[ph], x - AND.OX, hy - AND.OY + off); g.drawImage(AND.up[ph], x - AND.OX, hy - AND.OY);
+          if (wh) { g.globalAlpha = 0.6; g.drawImage(AND.jawW[ph], x - AND.OX, hy - AND.OY + off); g.drawImage(AND.upW[ph], x - AND.OX, hy - AND.OY); g.globalAlpha = 1; }
+          g.globalAlpha = rest || !live ? 0.3 : 0.75 + 0.25 * pu; g.drawImage(AND.eyes[gi], x - AND.OX, hy - AND.OY); g.globalAlpha = 1;
+          if (live) {                                                               // the pupils follow the ship along the slant of each eye
+            ex = Math.max(-1, Math.min(1, (px - x) / 110)) * 8; ey = Math.max(0, Math.min(1, (py - hy) / 260)) * 1.5;
+            for (k = -1; k <= 1; k += 2) { cx = k * 28 + ex; g.fillStyle = '#fff'; g.fillRect(Math.round(x + cx - 3), Math.round(hy - 26 - k * (cx - k * 28) * 0.15 - (k * cx - 28) * 0.17 + ey), 6, 4); }
+          }
+          if (rest && ph > 0) andShards(g, AND.fac, x, hy, AND.LT - e.lt, false, ph);  // this phase's facets, falling away while it catches its breath
+        }
+      }
+      if (dying && d > 3.4) return;
+      k = dying ? Math.max(0.001, d - 0.25) : 0;
+      andHand(g, 1, Math.round(x - AND.hl), y + 14, AND.fl, col, dying ? (d > 0.25 ? k : 0) : 0, AND.hl < 72);
+      andHand(g, 0, Math.round(x + AND.hr), y + 24, AND.fr, col, dying ? (d > 0.55 ? Math.max(0.001, d - 0.55) : 0) : 0, AND.hr < 72);
+    }
+
     /* ------------------------------------------------------------ drawing: the playfield (360 x H logical pixels) */
     var overlay = null, styleEl = null, scr = null, sx = null, pf = null, g = null, endEl = null, bombBtn = null, pauseBtn = null, exitBtn = null;
     var narrow = false, fixedOn = false, bandSay = false, dpr = 1, U = 1, pfX = 0, pfY = 0, pfW = 0, pfH = 0, scrW = 0, scrH = 0, gFont = 0, zig = new Float32Array(16);
@@ -1515,7 +1745,6 @@
       g.fillStyle = c2; g.fillRect(x - hw + 2, top, Math.max(2, hw * 2 - 4), h); g.fillStyle = '#fff'; g.fillRect(x - Math.max(1, hw - 4), top, Math.max(2, hw * 2 - 8), h);
       g.fillStyle = c2; for (y = bot - ((G.t * 700) % 24); y > top; y -= 24) g.fillRect(x - hw - 1, y, hw * 2 + 2, 3);
     }
-    function hexPath(cx, cy, r) { g.beginPath(); for (var k = 0; k < 6; k++) { var a = k / 6 * TAU; if (k) g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); else g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); } g.closePath(); }
     function drawBoss(e) {
       var k, wh = e.flash > 0 && ((G.t * 8) | 0) % 2 === 0, jx = e.dying > 0 ? ((Math.random() * 5) | 0) - 2 : 0, x = Math.round(e.x) + jx, y = Math.round(e.y);
       if (e.type === 'typesetter') {
@@ -1524,22 +1753,7 @@
         var pulse = 0.5 + 0.5 * Math.sin(G.t * 9); g.fillStyle = e.phase ? '#ff4fa3' : '#e3625b'; g.fillRect(x - 9, y - 14, 18, 12); g.fillStyle = '#fff'; g.globalAlpha = 0.4 + pulse * 0.6; g.fillRect(x - 5, y - 11, 10, 6); g.globalAlpha = 1;
         return;
       }
-      if (e.type === 'hive') {                                                     // the hive: cells flicker, the core pulses and watches you, a shutter seals it between volleys
-        var bob = Math.round(Math.sin(G.t * 1.7) * 3), hy = y + bob, seed = (G.t * 5) | 0, lit = e.dying > 0 ? 5 : 23;
-        g.drawImage(SPR.hive, x - 88, hy - 60);
-        g.globalAlpha = 0.85;
-        for (k = 0; k < NCELL; k++) if (((k * 31 + seed * 17) % lit) < 2) g.drawImage(SPR.cell, Math.round(x - 88 + CELLS[k * 2]) - 10, Math.round(hy - 60 + CELLS[k * 2 + 1]) - 9);
-        g.globalAlpha = 1;
-        if (wh) { g.globalAlpha = 0.6; g.drawImage(WHT.hive, x - 88, hy - 60); g.globalAlpha = 1; }
-        var pu = 0.5 + 0.5 * Math.sin(G.t * (e.phase >= 4 ? 14 : 9)), pc = e.phase >= 4 ? '#ff4fa3' : e.phase >= 2 ? '#fb923c' : '#e3625b';
-        g.fillStyle = '#11131c'; g.beginPath(); g.arc(x, hy, 23, 0, TAU); g.fill();
-        g.fillStyle = pc; g.beginPath(); g.arc(x, hy, 17 + pu * 2, 0, TAU); g.fill();
-        g.fillStyle = '#fff'; g.beginPath(); g.arc(x, hy, 7 + pu * 4, 0, TAU); g.fill();
-        var ex = P.x - x, ey = P.y - hy, el = Math.hypot(ex, ey) || 1;
-        g.fillStyle = '#11131c'; g.beginPath(); g.arc(x + ex / el * 4, hy + ey / el * 4, 3, 0, TAU); g.fill();
-        if (e.shut > 0) { g.fillStyle = '#2b303c'; hexPath(x, hy, 22); g.fill(); g.strokeStyle = '#b88a1e'; g.lineWidth = 2; hexPath(x, hy, 20); g.stroke(); g.fillStyle = ((G.t * 6) | 0) % 2 ? '#fcd34d' : '#b88a1e'; g.fillRect(x - 7, hy - 1, 14, 3); }
-        return;
-      }
+      if (e.type === 'hive') { drawAndross(g, e, x, y, wh, P.x, P.y, G.t, BEAM[3]); return; }   // a polygon face, two hands, a cube
       for (var pass = 0; pass < 2; pass++) {
         if (pass === 1) {
           g.save(); g.translate(x, y); g.rotate(e.t * (e.phase === 2 ? 2.4 : 0.7)); g.drawImage(GEAR[e.phase === 2 ? 1 : 0], -56, -56); if (wh) { g.globalAlpha = 0.6; g.drawImage(GEAR[2], -56, -56); g.globalAlpha = 1; } g.restore();
@@ -1658,7 +1872,8 @@
       txt(fmt(G.score), 6, 6, 8, '#fff', 'left'); txt('HI ' + fmt(G.hi), W - 6, 6, 8, '#9aa3b8', 'right');
       if (G.chain > 0) { txt(G.chain + ' HIT', 6, 18, 8, '#fcd34d', 'left'); g.fillStyle = '#11131c'; g.fillRect(6, 28, 62, 4); g.fillStyle = G.gauge < 0.3 && fr ? '#fff' : '#34d399'; g.fillRect(7, 29, (60 * G.gauge) | 0, 2); }
       if (L2) { k = G.chain > 0 ? 34 : 18; g.fillStyle = '#11131c'; g.fillRect(6, k, 62, 4); g.fillStyle = '#ff4fa3'; g.fillRect(7, k + 1, (60 * G.rank) | 0, 2); }   // the rank bar
-      if (G.lives > 0) { for (k = 0; k < Math.min(G.lives, 6); k++) g.drawImage(ICON.life, 6 + k * 11, y - 1); }
+      if (G.lives > 6) { g.drawImage(ICON.life, 6, y - 1); txt('x' + G.lives, 18, y, 8, '#fff', 'left'); }             // the level select's fifty ships: a count
+      else if (G.lives > 0) { for (k = 0; k < Math.min(G.lives, 6); k++) g.drawImage(ICON.life, 6 + k * 11, y - 1); }
       else txt('LAST ONE', 6, y - 1, 8, '#ff6b7a', 'left');
       for (k = 0; k < Math.min(G.bombs, 6); k++) g.drawImage(ICON.bomb, 6 + k * 11, y - 11);
       txt('RBG'.charAt(G.weapon) + ' LV' + G.level, W - 6, y, 8, WEAP[G.weapon].col, 'right');
@@ -1885,7 +2100,8 @@
       panelFrame(RX, RW, pad);
       x = RX + pad * 2; y = pad * 3;
       ptxt('SHIPS', x, y, fl, '#9aa3b8'); y += Math.round(fl * 1.9);
-      if (G.lives > 0) icons(ICON.life, x, y, G.lives, 5, si); else ptxt('LAST ONE', x, y, fl, '#ff6b7a');
+      if (G.lives > 6) { icons(ICON.life, x, y, 1, 1, si); ptxt('x' + G.lives, x + (ICON.life.width + 3) * si, y + Math.max(0, Math.round((ICON.life.height * si - fs) / 2)), fs, '#fff'); }
+      else if (G.lives > 0) icons(ICON.life, x, y, G.lives, 5, si); else ptxt('LAST ONE', x, y, fl, '#ff6b7a');
       y += ICON.life.height * si + Math.round(fl * 1.6);
       ptxt('BOMBS', x, y, fl, '#9aa3b8'); y += Math.round(fl * 1.9);
       if (G.bombs > 0) icons(ICON.bomb, x, y, G.bombs, 5, si); else ptxt('NONE', x, y, fl, '#ff6b7a');
