@@ -30,7 +30,7 @@ quest: true
 <section id="play" style="padding-top:2.5rem;">
   <div class="wrap">
     <p class="prose reveal" style="margin-bottom:1.2rem;">
-      Run around, walk up to a building, read the sign. Eight facts, three people to annoy, six
+      Run around, walk up to a building, read the sign. Eight facts, two people to annoy, six
       reviewers. Press F to rebut, Space to jump over them. Don't stay too long.
     </p>
 

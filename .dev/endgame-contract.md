@@ -63,7 +63,7 @@ api.player                // THREE.Group; position.x/z on the ground, position.y
 api.places                // the 8 buildings: {id, short, x, z, w, d, h, yaw, wall, roof, group: THREE.Group, collider, bushes: [Mesh], marker: Mesh, door:{x,z}}
                           // yaw = atan2(-x, -z): the group is turned so its +z model face (door, steps, windows) looks at the fountain; w/d are the model's own extents
 api.fountain              // {group: THREE.Group at world origin, collider}
-api.npcs                  // 3 talkative NPCs: {x, z, mesh, title, text, voice}; they have circle colliders in api.colliders (not referenced; find by x/z if needed)
+api.npcs                  // 2 talkative NPCs: {x, z, mesh, title, text, voice}; they have circle colliders in api.colliders (not referenced; find by x/z if needed)
 api.flat(hex)             // MeshLambertMaterial
 api.boxMan(opts)          // box character ~2.9 units tall. opts {suit, hair, tie, glasses:false, angry:true}. userData {la, ra, ll, rl} limb meshes pivoted at shoulder/hip
 api.pose(char, {walk, speed, air})

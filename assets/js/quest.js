@@ -90,8 +90,6 @@
       link: { href: 'mailto:duncan.palmer@stats.ox.ac.uk', label: 'Send an email' } }
   ];
   var NPCS = [
-    { x: 4, z: -4, color: 0xfb7185, title: 'Reviewer 2', voice: { base: 150, wave: 'sawtooth', spread: 0.3 },
-      text: '"Interesting, but have the authors considered that the h-index is 28 and citations are around 15,800? Also please cite my paper."' },
     { x: -18, z: 2, color: 0x34d399, title: 'A lost postdoc', voice: { base: 430, wave: 'square', spread: 0.45 },
       text: '"Is this the way to the Big Data Institute? I have a Hail job that has been running since 2021."' },
     { x: 44, z: -8, color: 0x1f2430, tie: 0xfcd34d, title: 'Research Finance', voice: { base: 105, wave: 'sawtooth', spread: 0.18 },
