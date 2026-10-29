@@ -937,6 +937,10 @@
   function viewDir() { return fwd.set(-Math.sin(camYaw) * Math.cos(fpPitch), Math.sin(fpPitch), -Math.cos(camYaw) * Math.cos(fpPitch)); }
   var swoopYaw = 0, keysPill = root.querySelector('.q-keys');
   if (hwTrap && keysPill) keysPill.textContent = keysPill.textContent.replace('REBUT', 'TRAP');   // the Ghostbuster traps, he does not rebut
+  if (hwTrap) try {                                    // and the hint line under the game box says so too (text nodes only, the <kbd> keys stay)
+    var kbdHint = document.querySelector('.q-kbd'), hn = kbdHint ? kbdHint.childNodes : [];
+    for (var hk = 0; hk < hn.length; hk++) if (hn[hk].nodeType === 3 && hn[hk].nodeValue.indexOf('talk or rebut') >= 0) hn[hk].nodeValue = hn[hk].nodeValue.replace('talk or rebut', 'talk or trap');
+  } catch (e) {}
   function enterFP() {
     fp = true; fpPitch = 0; swoopYaw = camYaw; camYaw = pstate.yaw + Math.PI;   // look where he was facing; the swoop leaves from the orbit he had
     fpCue = 1;                                               // the gun is readied as the swoop starts and the toast waits for its end (update)
