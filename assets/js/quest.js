@@ -561,6 +561,17 @@
     }
   } catch (e) { hats = null; hatLift = 0; }
   var hatAt = new THREE.Vector3();
+  // HALLOWEEN (halloween.js, optional): 30 Oct to 1 Nov in the visitor's own calendar (?halloween=1 / 0 forces it) the
+  // reviewers come in costume, the town dresses up, and the plain man is a Ghostbuster who traps reviewers instead of
+  // rebutting them (the same rebut underneath: rebut(), then hween holds him in b.ko for the show). An earned skin wins
+  // and keeps the ordinary rebut. Outside those days, no module, or a throw: hween stays null and nothing is touched.
+  var hween = null, hwTrap = false;
+  try { hween = window.QuestHalloween ? window.QuestHalloween({ THREE: THREE, scene: scene, sfx: sfx }) : null; if (!hween || !hween.on) hween = null; } catch (e) { hween = null; }
+  if (hween) try {
+    var hwSkin = 'palmer'; if (hats) try { hwSkin = hats.skin() || 'palmer'; } catch (e) { hwSkin = 'palmer'; }
+    if (hwSkin === 'palmer') hwTrap = !!hween.dress(player);
+    hween.decorate({ scene: scene, places: PLACES, placeAt: placeAt, fountain: fountain.group, collide: collide, mx: mx });
+  } catch (e) { hwTrap = false; }
   // SNAKE MODE (hats.js, ten clears: the Solid Snake skin). Decided once here, after apply(): the reviewers patrol set
   // routes with cones of vision instead of hunting (see "SNAKE MODE" under reviewer navigation). Any other skin, no
   // hats.js, or a throw: SNAKE stays false and the reviewers behave exactly as before.
@@ -605,6 +616,7 @@
     var m = rig({ suit: 0xb91c1c, hair: 0x4a2a1a, glasses: true, tie: 0x111111, angry: true, spiky: false, satchel: false });
     m.position.set(b.x, 0, b.z); m.scale.set(0.95, 0.95, 0.95); scene.add(m);
     var badge = labelSprite('REVIEWER ' + (i + 1), '#b91c1c', '#fff'); badge.scale.set(2.2, 0.42, 1); badge.position.y = 3.3; m.add(badge);
+    if (hween) try { hween.reviewer(m, i); } catch (e) {}
     b.mesh = m; b.yaw = rnd() * 6.28; b.wander = 0; b.flee = 0; b.cool = 0; b.walkT = 0; b.home = { x: b.x, z: b.z };
     // navigation state (see "reviewer navigation"): smoothed heading, plan/waypoint, approach slot, stuck detector, escape, homing
     b.head = b.yaw; b.mode = 0; b.plan = i * 0.03; b.wx = b.x; b.wz = b.z; b.chase = false; b.slot = 0; b.slotOn = false; b.fleeA = 0;
@@ -896,7 +908,13 @@
     if (diveT >= 0) return;
     if (fp) { fire(); return; }                        // first person is the endgame: nobody left to talk to, so F fires (E is the car's door)
     var t = nearbyTarget();                            // the same order as the prompt: a target first, then the car, then the fountain
-    if (t && t.kind === 'baddie') { rebut(t.obj); return; }
+    if (t && t.kind === 'baddie') {
+      rebut(t.obj);
+      if (hwTrap) try {                                // Halloween: the same rebut, then the trap holds him still for the show
+        var hk = hween.capture(t.obj); if (hk > 0) { t.obj.ko = hk; pstate.yaw = Math.atan2(t.obj.mesh.position.x - player.position.x, t.obj.mesh.position.z - player.position.z); }
+      } catch (e) {}
+      return;
+    }
     if (t) { current = t.obj; openDialog(t); return; }
     if (carNear()) { carEnter(); return; }                      // the Chief's ride (in town; E in the fight)
     if (fountainNear()) startDive();
@@ -918,6 +936,7 @@
   var fwd = new THREE.Vector3();
   function viewDir() { return fwd.set(-Math.sin(camYaw) * Math.cos(fpPitch), Math.sin(fpPitch), -Math.cos(camYaw) * Math.cos(fpPitch)); }
   var swoopYaw = 0, keysPill = root.querySelector('.q-keys');
+  if (hwTrap && keysPill) keysPill.textContent = keysPill.textContent.replace('REBUT', 'TRAP');   // the Ghostbuster traps, he does not rebut
   function enterFP() {
     fp = true; fpPitch = 0; swoopYaw = camYaw; camYaw = pstate.yaw + Math.PI;   // look where he was facing; the swoop leaves from the orbit he had
     fpCue = 1;                                               // the gun is readied as the swoop starts and the toast waits for its end (update)
@@ -1467,6 +1486,7 @@
     if (W && driving && Math.abs(W.speed) > 4) for (k = 0; k < BADDIES.length; k++) { b = BADDIES[k]; if (!(b.ko > 0) && b.mesh.visible && W.inside(b.mesh.position.x, b.mesh.position.z, 0.3)) runOver(b); }
     for (k = 0; k < BADDIES.length; k++) {
       b = BADDIES[k]; m = b.mesh;
+      if (hween && !endgame && !(b.ko > 0) && !(b.flee > 0) && !m.visible) m.visible = true;   // Halloween safety net: a trapped reviewer always comes back
       if (b.ko > 0) {
         b.ko -= dt;
         if (b.ko <= 0) { b.ko = 0; if (W) W.stand(m); b.flee = 7; b.cool = 2; b.mode = 0; b.plan = 0; b.stuckT = 0; b.stuckN = 0; }
@@ -1796,6 +1816,7 @@
       ph = (t * 1.6 + d.userData.k / 14) % 1; d.position.set(Math.cos(ang) * ph * 2.0, 2.3 + Math.sin(ph * 3.14) * 1.4 - ph * 1.2, Math.sin(ang) * ph * 2.0);
     });
     clouds.forEach(function (c) { c.position.x += c.userData.v * dt; if (c.position.x > 110) c.position.x = -110; });
+    if (hween) try { hween.update(dt, { t: t, endgame: endgame }); } catch (e) {}
 
     // camera. The swoop into first person (k 0 -> 1) leaves from the orbit view he last saw (swoopYaw, kept by enterFP)
     // and flies straight down that line of sight into his head - a line the player has just seen clear - turning from
@@ -1832,7 +1853,7 @@
 
     // prompt: a target (sign, colleague, reviewer), else the Warthog, else the fountain's rim; none from the car or mid-hop
     var near = nearbyTarget(), ptxt = null, px2 = player.position.x, pz2 = player.position.z;   // nearbyTarget is null in the endgame and the car
-    if (near) ptxt = near.kind === 'baddie' ? 'F: REBUT' : 'F: TALK';
+    if (near) ptxt = near.kind === 'baddie' ? (hwTrap ? 'F: TRAP' : 'F: REBUT') : 'F: TALK';
     else if (carNear()) { ptxt = fp ? (padShown() ? 'B: WARTHOG' : 'E: WARTHOG') : 'F: WARTHOG'; if (fp) { px2 = W.pos.x; pz2 = W.pos.z; } }
     else if (fountainNear()) ptxt = 'F: DIVE IN?';
     prompt.hidden = !ptxt || dialogOpen || !hudOn;

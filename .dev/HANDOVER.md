@@ -1,4 +1,52 @@
-# Handover — astheeggeggs.github.io (updated 2026-10-12; the 2026-10-11, 2026-10-10, 2026-10-04 and 2026-09-21 text follows below)
+# Handover — astheeggeggs.github.io (updated 2026-10-29; the 2026-10-12, 2026-10-11, 2026-10-10, 2026-10-04 and 2026-09-21 text follows below)
+
+## 2026-10-29: HALLOWEEN (BUILT, verified in headless Chrome, NOT committed, NOT seen by Duncan)
+Duncan: reskin the reviewers and the protagonist for Halloween, only 30 Oct - 1 Nov; then (same day) "let's go with a
+ghostbuster - and rather than rebut, you can hoover them into the ghost catcher thing. You can also add spooky things
+to the environment as you see fit." The jack-o'-lantern head was dropped for the Ghostbuster.
+Files: `assets/js/halloween.js` (new, `window.QuestHalloween(api)`, header documents the interface), `assets/js/quest.js`
+(+21 lines: the `hween` block after the hats block, one call in `BADDIES.forEach`, the trap branch in `action()`,
+`'F: TRAP'` in the prompt, `hween.update` after the clouds), `_layouts/default.html` (loads halloween.js, defer, before
+quest.js). No README/page copy, music, SFX module, speeds or gameplay rules touched.
+- **Gate**: on when the visitor's LOCAL date is 30 Oct, 31 Oct or 1 Nov (any year): `m === 9 && dd >= 30 || m === 10 &&
+  dd === 1`. **Hooks**: `?halloween=1` forces on, `?halloween=0` off. Off, missing or throwing: `hween` is null and
+  nothing is touched (no host `rnd()` is ever drawn by the module, so the seeded town is unchanged even when on).
+- **Reviewers** (by index, box parts + material swaps, never mutating host materials): 1 Freddy, 2 Jason, 3 Frankenstein's
+  monster, 4 Dracula, 5 Michael Myers, 6 Ghostface, 7 the Mummy, 8 Pinhead, 9 the Wolfman. Red REVIEWER n badges kept.
+- **Player** (plain skin only; `hats.skin()` 'snake'/'chief' win and keep F: REBUT): a Ghostbuster: tan flight suit,
+  proton pack with a turning cyclotron, the wand in his right hand with a hose, a no-ghost patch (32 px canvas) on his
+  left arm; his own blond hair and glasses, so hats and the MQ Link cap sit as before. First person hides him as before.
+- **Trap**: F near a reviewer calls the unchanged `rebut(b)` (counter, toast, blips, flee 7, cool 2), then
+  `hween.capture(b)` returns 2.25 s which the host puts in `b.ko` (the existing knock-out hold: nav, catching and F all
+  skip him). Streams (3 jittering additive beams + a core, wrapping him) ~2 s; he lifts and flails; a trap is thrown to
+  his feet, opens with a light cone; he shrinks and spins in; flaps shut, smoke. When ko ends the host's own code sets
+  flee 7 and he flees INVISIBLY; he reappears with a puff when `b.flee` runs out (where the flee took him). The arm is
+  raised while aiming. Sounds: existing FPSFX `plasma` x3, `teleport`, `click` (gain <= 0.9, positioned). Endgame mid-
+  capture: tidied, he stays hidden (the host hides everyone anyway).
+- **Town**: two glowing box pumpkins at every door (no colliders), four on the fountain rim (own resources, inside
+  `fountain.group`, so the editor's landing disposes them with it), four small graveyards (stones with tiny canvas
+  plaques RIP / H0 / p=.051 / N=3 / R2 / v1.0) and a dead tree each, placed only where `collide()` is clear and off the
+  roads, 7 bats circling the fountain, 8 drifting fog discs, a full moon low in the north. No colliders added.
+**Verified** (scratch `.dev/tmp/halloween/`, one Chrome on 9741 profile halloween, served bytes hash-matched disk; a
+`window.__hw` TEMP handle was used for staged shots and removed; final quest.js md5 bb439ce6..., halloween.js d61d5634...):
+- `compare.mjs`: HEAD's quest.js (served via Fetch interception) vs `?halloween=0` vs no param (today, 29 Oct): whole
+  scene-graph signature identical and 120/120 frames of every reviewer's x/z/rotation identical under a fake 100 ms clock,
+  loop 1 and `loop=2&clears=3`; null control base vs base identical; positive control `?halloween=1` scene DIFFERENT.
+  (`cmp-l1.json`, `cmp-l2.log`.) `throw.mjs`: module missing / factory throwing / every method throwing with
+  `?halloween=1`: scene matches HEAD, 0 page errors.
+- `gate.mjs` (Date overridden in the page): 29 Oct 23:59 off, 30 Oct 00:01 on, 31 Oct on, 1 Nov 23:59 on, 2 Nov 00:01 off,
+  2031-10-30 on, 1 Jun off, `halloween=0` on the 31st off, `halloween=1` on the 29th on. 9/9.
+- `capture.mjs`: ko 2.25 -> lift (y 0.71..0.87) -> shrink (scale 0.5, 0.06) -> hidden, ko 0, flee 7 -> visible again
+  when flee ran out; toast RESPONSE TO REVIEWERS SENT; 0 errors. `endgame.mjs`: crosshair up, player hidden, 0 of 41
+  costume meshes visible on screen, 0 errors. `node .dev/regress.mjs` all passed, 0 errors (handle-free bytes).
+- Shots looked at, `.dev/tmp/halloween/final/`: `cast.png` (all nine in a row, loop 2), `r1..r9.png`, `cast-front.jpg`,
+  `cast-quarter.jpg`, `player.jpg` (front/quarter/back, clears=3 hats, clears=10 Snake, clears=20 Chief), `town.png`
+  (staged high camera: pumpkins, bats, Myers and Jason), `town-ingame.png`, `town-dusk.png` (dread 0.8), `capture-seq.jpg`
+  + `capture-1-stream/2-open/3-shut.png`, `endgame-fp.png`.
+**Open / not verified**: nobody has played it or heard the trap sounds in the mix; touch (the B button) is code-read only
+(it calls the same `action()`); the first-person arm stays the grey suit sleeve; the lamps were not warmed (their
+material is the host's) and there are no cobwebs; the moon is only seen when the camera looks up (FP, orbit); fog discs
+and graves are walk-through (no colliders by design); a man trapped next to a wall flees from where he stood, invisibly.
 
 ## 2026-10-12: Warthog follow-ups after Duncan drove it (DONE, verified, NOT committed)
 Duncan: steering was mirrored going forward -> `warthog.js` stepDrive `yawRate = -vF / WB * tan(steer)` (right swings
