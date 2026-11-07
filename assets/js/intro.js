@@ -11,6 +11,14 @@
             dissolves to white, about 4.6 s after the coin (3.4 s if there is
             no chant). It runs on the wall clock. A click skips it and cuts
             the chant. It is never a gate.
+            THE SOLID SNAKE SKIN (10..19 clears, as hats.js) gets a different
+            logo instead: the KONAMI card as Metal Gear Solid boots: from
+            black a white card fades up with the slanted orange-and-red
+            two-piece emblem over PALMER in bold black capitals, the jingle is sung
+            over it, "PA PA PA PAL-MER" (window.PalmerKonami, konamichant.js,
+            optional; both phrases, 9.1 s), and it fades down to black, about
+            10.1 s (3.0 s with no jingle; the chant is capped at 10 s). Same skip, timing guards and hand-off.
+            ?bootlogo=konami|sega forces either.
    title    the frame flashes white, the host starts the title theme (onScore)
             and the logo slams back in over the title card: THE ROAD TO
             PUBLICATION, PRESS START, one credit. The next click starts the
@@ -47,6 +55,16 @@
     var LOOP = 12;                             // the attract loop, seconds
     var CARD_CAM = 170;                        // the title card's camera: the Radcliffe Camera dead centre under the logo
     var LOOP2 = !!(api && api.params && api.params.loop === 2);
+    // Which logo the coin buys: the Konami-style one for the Solid Snake skin, which is exactly hats.js's rule as
+    // quest.js feeds it (localStorage quest.clears, overridden for one page load by ?clears=N; 10..19 = Snake);
+    // the SEGA-style PALMER for everyone else. ?bootlogo=konami|sega forces either (test hook).
+    var BOOT = (function () {
+      var n = 0, m;
+      try { m = location.search.match(/[?&]bootlogo=([^&]*)/); if (m && (m[1] === 'konami' || m[1] === 'sega')) return m[1]; } catch (e) { }
+      try { n = parseInt(localStorage.getItem('quest.clears'), 10) || 0; } catch (e) { n = 0; }
+      try { m = location.search.match(/[?&]clears=([^&]*)/); if (m && /^\d+$/.test(decodeURIComponent(m[1]))) n = parseInt(decodeURIComponent(m[1]), 10); } catch (e) { }
+      return n >= 10 && n <= 19 ? 'konami' : 'sega';
+    })();
 
     /* ---------------------------------------------------------------- 9-bit palette */
     var LV = [0, 36, 73, 109, 146, 182, 219, 255];
@@ -550,10 +568,10 @@
     var built = false;
     function buildAll() {
       if (built) return; built = true;
-      buildSky(); buildStars(); buildFar(); buildMid(); buildNear(); buildTitle(); buildLogo(); warmCard();
+      buildSky(); buildStars(); buildFar(); buildMid(); buildNear(); buildTitle(); if (BOOT === 'konami') buildKonami(); else buildLogo(); warmCard();
     }
     function freeAll() {                           // drop every canvas and cache; buildAll() makes them again
-      SKY = STARS = MOON = FAR = MID = NEAR = TITLE = LOGO = null;
+      SKY = STARS = MOON = FAR = MID = NEAR = TITLE = LOGO = KLOGO = null;
       SIGNS = []; TWINK = []; patCache = {}; clearText(); built = false;
     }
 
@@ -787,6 +805,77 @@
       if (t > LOGO_LEN - FADE_LEN) stip(x, C.white, (t - (LOGO_LEN - FADE_LEN)) / FADE_LEN, 0, 0, VW, VH);
     }
 
+    /* ---- the Solid Snake skin's logo: the KONAMI corporate card as Metal Gear Solid boots, after a fashion. A white
+            card; centred on it the emblem: two identical pieces, the upper-left orange and the lower-right dark red
+            (the same piece moved down and right), each a band sheared about 24 degrees whose centre-line steps left
+            through a soft S halfway down, so together they read as a slanted plus with an S-shaped gap through the
+            middle; close under it PALMER in bold black capitals. The piece's numbers were fitted to the reference
+            card (IoU 0.99 for both pieces), in the reference's own pixels; the emblem is rasterised from that shape
+            at 4x4 samples per pixel and thresholded, so every pixel is a whole palette colour. The card fades up
+            from black through the palette in seven steps, holds while the jingle is sung, and fades back down. ---- */
+    var KLOGO = null, K_CHANT_AT = 0.35, K_FADE = 0.6, K_IN0 = 0.05, K_IN1 = 0.75, K_NOCHANT = 3.0;
+    var K_ORANGE = [255, 182, 0], K_RED = [182, 36, 36];          // #F7A400 and #B5141B snapped to the 9-bit palette
+    // one piece, in reference pixels: rows 0..63; left edge a - s v, shifted left by D through a smoothstep of width t
+    // centred on mL (the right edge likewise on mR); the band is w wide. The red piece is the orange one at (+25, +32).
+    var KP = { H: 63, a: 55, s: 0.44, w: 35, D: 30, mL: 30, mR: 32, t: 14, rx: 25, ry: 32, u0: -2.4, UW: 117.4, VH: 95 };
+    function kPiece(u, v) {
+      if (v < 0 || v >= KP.H) return false;
+      var kl = (v - KP.mL + KP.t / 2) / KP.t, kr = (v - KP.mR + KP.t / 2) / KP.t;
+      kl = kl <= 0 ? 0 : kl >= 1 ? 1 : kl * kl * (3 - 2 * kl); kr = kr <= 0 ? 0 : kr >= 1 ? 1 : kr * kr * (3 - 2 * kr);
+      return u >= KP.a - KP.s * v - KP.D * kl && u <= KP.a + KP.w - KP.s * v - KP.D * kr;
+    }
+    function buildKonami() {
+      var i, j, x, y, k, sx, sy;
+      var EH = 68, sc = EH / KP.VH, EW = Math.round(KP.UW * sc), em = new Uint8Array(EW * EH);
+      for (y = 0; y < EH; y++) for (x = 0; x < EW; x++) {
+        var no = 0, nr = 0;
+        for (sy = 0; sy < 4; sy++) for (sx = 0; sx < 4; sx++) {
+          var u = (x + (sx + 0.5) / 4) / sc + KP.u0, v = (y + (sy + 0.5) / 4) / sc;
+          if (kPiece(u, v)) no++; else if (kPiece(u - KP.rx, v - KP.ry)) nr++;
+        }
+        if (no >= 8) em[y * EW + x] = 1; else if (nr >= 8) em[y * EW + x] = 2;
+      }
+      // the word: bold capitals about a fifth of the emblem's height, normal spacing, slanted ~12 degrees, stroked centre-lines
+      var H = 13, hw = 1.6, GAP = 2;
+      var G = [                                   // cell width, then centre-line paths of [x, y, corner radius]
+        [10, [[1.6, 13], [1.6, 1.6], [8.4, 1.6, 3.2], [8.4, 7.2, 3.2], [1.6, 7.2]]],                      // P
+        [12, [[0.5, 14.5], [6, 0.3], [11.5, 14.5]], [[3, 9.8], [9, 9.8]]],                                // A
+        [9, [[1.6, 0], [1.6, 11.4], [9, 11.4]]],                                                          // L
+        [13, [[1.6, 13], [1.6, 0.8], [6.5, 9.5], [11.4, 0.8], [11.4, 13]]],                               // M
+        [9, [[9, 1.6], [1.6, 1.6], [1.6, 11.4], [9, 11.4]], [[1.6, 6.5], [8, 6.5]]],                      // E
+        [10, [[1.6, 13], [1.6, 1.6], [8.4, 1.6, 3.2], [8.4, 7.2, 3.2], [1.6, 7.2]], [[5, 7.2], [9.8, 14]]] // R
+      ];
+      var TW = -GAP, OX = [];
+      for (i = 0; i < G.length; i++) { OX.push(TW + GAP); TW += G[i][0] + GAP; }
+      var tb = new Uint8Array(TW * H);
+      for (i = 0; i < G.length; i++)
+        for (j = 1; j < G[i].length; j++) strokeInto(tb, TW, OX[i], G[i][0], H, G[i][j], hw);
+      // one canvas per palette step: the card is every colour scaled by k/7 and snapped (a Mega Drive palette fade)
+      var GAPV = 11, ey0 = (VH - (EH + GAPV + H)) >> 1, ex0 = (VW - EW) >> 1, tx0 = (VW - TW - 3) >> 1, ty0 = ey0 + EH + GAPV, cv = [];
+      for (k = 1; k <= 7; k++) {
+        var cnv = mk(VW, VH), cx = cnv.getContext('2d'), img = cx.createImageData(VW, VH), p = img.data, n;
+        var bg = q(255 * k / 7), oc = [q(K_ORANGE[0] * k / 7), q(K_ORANGE[1] * k / 7), q(K_ORANGE[2] * k / 7)];
+        var rc = [q(K_RED[0] * k / 7), q(K_RED[1] * k / 7), q(K_RED[2] * k / 7)];
+        for (n = 0; n < VW * VH; n++) { p[n * 4] = p[n * 4 + 1] = p[n * 4 + 2] = bg; p[n * 4 + 3] = 255; }
+        for (y = 0; y < EH; y++) for (x = 0; x < EW; x++) {
+          var e = em[y * EW + x]; if (!e) continue;
+          var col = e === 1 ? oc : rc; n = ((ey0 + y) * VW + ex0 + x) * 4;
+          p[n] = col[0]; p[n + 1] = col[1]; p[n + 2] = col[2];
+        }
+        for (y = 0; y < H; y++) for (x = 0; x < TW; x++) if (tb[y * TW + x]) { n = ((ty0 + y) * VW + tx0 + x + Math.round((H - 1 - y) * 0.22)) * 4; p[n] = p[n + 1] = p[n + 2] = 0; }   // slanted, as the reference's word is
+        cx.putImageData(img, 0, 0);
+        cv.push(cnv);
+      }
+      KLOGO = cv;
+    }
+    function drawKonami(x, t) {
+      var a = t < K_IN0 ? 0 : t < K_IN1 ? (t - K_IN0) / (K_IN1 - K_IN0) : 1, o = LOGO_LEN - K_FADE;
+      if (t > o) a = Math.min(a, 1 - (t - o) / K_FADE);
+      var k = Math.round(a * 7);
+      if (k > 0 && KLOGO) x.drawImage(KLOGO[(k > 7 ? 7 : k) - 1], 0, 0);
+      else R(x, C.black, 0, 0, VW, VH);
+    }
+
     /* ---- the level select (after Sonic 2's): two groups of three, the pick in yellow ---- */
     var ENTRIES = [
       { loop: 1, level: 'town',  name: 'OVERWORLD',           dest: 'OVERWORLD' },
@@ -863,7 +952,7 @@
     // _seek / _setPhase / _buffer are test hooks: they let a harness land on an exact
     // frame deterministically. Nothing in the host needs them.
     var self = { start: start, click: click, stop: stop, phase: 'attract', active: false, startError: null,
-                 drawErrors: 0, drawError: null,
+                 drawErrors: 0, drawError: null, boot: BOOT,
                  _seek: seek, _setPhase: setPhase, _buffer: function () { return buf; } };
     var opts = null, raf = 0, last = 0, T = 0, flourish = 0, doneTimer = 0, doneSent = false, scoreSent = false, onRes = null, frozen = false;
     // PRESS START is refused until the card has been DRAWN up to the prompt fully dissolved in (T = 0.65; T only
@@ -974,13 +1063,16 @@
         return c || null;
       } catch (e) { return null; }
     }
+    // the logo's voice: the sung KONAMI-style jingle for the Snake skin, the SEGA-style chant for everyone else
+    function jingle() { return BOOT === 'konami' ? window.PalmerKonami : window.PalmerChant; }
+    function logoFade() { return BOOT === 'konami' ? K_FADE : FADE_LEN; }
     function startChant() {
       try {
-        var c = window.PalmerChant ? ac() : null;
+        var J = jingle(), c = J ? ac() : null;
         if (c) {
-          chant = window.PalmerChant.play(c);
+          chant = J.play(c);
           // a late timer (busy main thread) must not have the fade cut the chant short: the logo waits for it
-          var need = (performance.now() - logoAt) / 1000 + chantLen + FADE_LEN;
+          var need = (performance.now() - logoAt) / 1000 + chantLen + logoFade();
           if (chantLen > 0 && need > LOGO_LEN) LOGO_LEN = Math.min(need, LOGO_LEN + 3);
         }
       } catch (e) { chant = null; }
@@ -1051,7 +1143,7 @@
       if (!bx) return;
       try {
         if (self.phase === 'attract') drawAttract(bx, T);
-        else if (self.phase === 'logo') drawLogo(bx, T);
+        else if (self.phase === 'logo') { if (BOOT === 'konami') drawKonami(bx, T); else drawLogo(bx, T); }
         else if (self.phase === 'select') drawSelect(bx, T);
         else drawTitleCard(bx, T);
       } catch (e) { noteDrawError('draw', e); }
@@ -1107,17 +1199,17 @@
     }
     // the coin. The dashes are silent; the chant lands on the finished logo and the fade follows it.
     function coin() {
-      var d = 0;
-      try { if (wake() && window.PalmerChant) d = +window.PalmerChant.duration || 0; } catch (e) { d = 0; }
-      chantLen = d > 0 ? Math.min(5, Math.max(1.5, d)) : 0;
-      LOGO_LEN = d > 0 ? CHANT_AT + chantLen + FADE_LEN : 3.4;
+      var d = 0, J = jingle(), K = BOOT === 'konami', at = K ? K_CHANT_AT : CHANT_AT;
+      try { if (wake() && J) d = +J.duration || 0; } catch (e) { d = 0; }
+      chantLen = d > 0 ? Math.min(K ? 10 : 5, Math.max(1.5, d)) : 0;   // the Konami jingle is two phrases, ~9 s
+      LOGO_LEN = d > 0 ? at + chantLen + logoFade() : (K ? K_NOCHANT : 3.4);
       setPhase('logo');
       if (d > 0) {                                           // a timer, not a frame: it keeps time when frames are scarce
         var g = gen;
         chantTimer = setTimeout(function () {
           chantTimer = 0;
           if (g === gen && self.active && self.phase === 'logo') startChant();
-        }, CHANT_AT * 1000);
+        }, at * 1000);
       }
     }
 
@@ -1190,7 +1282,7 @@
         } else {
           warmTimer = setTimeout(function () {                // synthesise the chant during the attract, not on the coin
             warmTimer = 0;
-            try { if (g === gen && window.PalmerChant && window.PalmerChant.warm) window.PalmerChant.warm(); } catch (e) { }
+            try { var J = jingle(); if (g === gen && J && J.warm) J.warm(); } catch (e) { }
           }, 500);
         }
         if (document.fonts && document.fonts.ready && document.fonts.ready.then) {

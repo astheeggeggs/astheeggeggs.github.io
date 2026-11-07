@@ -1,5 +1,127 @@
 # Handover — astheeggeggs.github.io (updated 2026-10-29; the 2026-10-12, 2026-10-11, 2026-10-10, 2026-10-04 and 2026-09-21 text follows below)
 
+## 2026-11-02: PAUSED mid-verification at Duncan's request (the test Chromes were slowing his laptop)
+Duncan approved the codec script and said "go ahead" (= commit Konami logo + jingle + MGS intro together, no
+Co-Authored-By line, push to `rebuild-with-game`; Duncan pushes master himself). Before committing, an independent
+review found nothing serious; three fixes are APPLIED (uncommitted):
+1. mgsintro.js key handler now ignores keys whose target is outside `#quest` (focused links, fields) and keys while the
+   game is scrolled off screen (same rect test as quest.js `checkVisible`).
+2. mgsintro.js overlay acts on `pointerup` (moved < 10 px, no `pointercancel`), so a scrolling swipe is not a tap.
+3. intro.js header comment: Konami card is ~10.1 s now (jingle both phrases, 9.1 s; chant cap 10 s).
+Verified so far: syntax OK; Enter-Enter skip still works (PASS). NOT yet verified: Space advances, focused outside link
+ignored, scrolled-away ignored, click advances / drag doesn't, skip button. Script for those:
+`/private/tmp/claude-501/-Users-dpalmer-Repositories-astheeggeggs-github-io/767e19b8-54ac-46cb-a199-e038c94674a7/scratchpad/fix.mjs`
+(may be gone; it's a session scratchpad). Then `node .dev/regress.mjs`, then commit.
+Test-harness trouble found 11-02: Chrome auto-updated to 156 overnight. The old `chrome-mgsintro` profile no longer
+launches (tests now use `mgsintro2`); after page load the main thread blocks 6 s (plain) to 14 s (`?clears=10`) before
+`ev` answers, so 3.5 s goto waits are too short. Unknown whether that is Chrome 156/SwiftShader or our code: a CPU
+profile of page load (Profiler domain, self time by file) was about to answer it. `.dev/tmp/mgsintro/gate.mjs`
+check "host not running" needs `window.__mi`, which no longer exists (expected FAIL), and its skip check races the
+4 s wall-clock confirm window on slow Chrome. Run ONE Chrome at a time; always kill your port afterwards.
+
+## 2026-11-01: MGS3 opening for the Solid Snake skin: "METAL GEAR PALMER 3: PEER EATER" (BUILT, verified in headless Chrome, NOT committed, NOT seen or heard by Duncan)
+Duncan: "for the MGS skin that occurs after you complete it 10 times, can you include a comicly long introductory
+cutscene that pays homage to MGS? Maybe the introduction to MGS3, with it culminating in the player skydiving into the
+initial area?" Then: "'Para-statistician' is lame - you can do better" -> PARA-METRIC (only trusts the normal; Q-Q plots;
+a Wilcoxon test is "just not cinema") and SIG-FIG (the decimal-places pedant). MAJOR REVISIONS kept for Major Zero.
+Files: `assets/js/mgsintro.js` (new, `window.QuestMGSIntro(api)`, header documents the interface), `assets/js/quest.js`
+(+34: `mgsStart/mgsEnd/mgsFrame/mgsAbort/mgsOrbit` before `begin()`, two guards at the top of `begin()`, one line in
+`loop()`), `_layouts/default.html` (loads mgsintro.js, defer, before quest.js). No page copy, README, CSS file, music
+file or SFX module touched. The full codec script, ready to edit, is `SCRIPT` at the top of mgsintro.js (and
+`.dev/tmp/mgsintro/final/codec-script.txt`).
+- **When**: the first PRESS START of a browser session (`sessionStorage quest.mgsintro`, set when it starts) with
+  `hats.skin() === 'snake'` (10-19 clears; it wins over the Halloween Ghostbuster as the skin does), both loops. Not with
+  `?endgame / ?shmup / ?cave` or a level-select warp to a fight (a warp to a town plays it). `?mgsintro=1` forces it with any
+  skin and any session; `?mgsintro=0` never. While it plays `running` stays false (no input, no dread, no reviewer moves,
+  no catching), `loop()` hands every frame to `mgsi.update(dt)` and skips its own render; on landing `begin()` runs exactly
+  as before (overworld music, MQ toast and grace, dread clock from 0). A missing module or a throw: the normal start.
+- **Beats** (game seconds, unskipped): title card (TACTICAL ESPIONAGE ACTION, a slammed METAL GEAR / PALMER 3 / PEER
+  EATER pixel logo, "BASED ON A TRUE GRANT APPLICATION") 11 s; a box-built transport hold under red light, its own
+  THREE.Scene with the player's own model reparented in, engine drone, captions 7.6 s; the codec (green CRT screen, pixel
+  box-face portraits of Snake, MAJOR REVISIONS 140.85, PARA-METRIC 145.73, SIG-FIG 148.41, PTT/meter/MEMORY, typed text
+  with `api.speak` voices, a ring with his hand to his ear, a fake ending and a second call, F / Space / click advance,
+  auto-advance) ~103 s; the ramp opens, green light, he walks off mid-sentence 6.8 s; the fall in the real town from
+  y 240 (fog and far plane pushed out, an Oxfordshire patchwork underlay, a cloud deck, air streaks, four shots) under 14
+  60s-style credit cards 33 s; parachute (box canopy and lines on the man) spiralling onto the spawn 12 s; crouch landing,
+  "Kept you waiting, huh?", the camera cranes up into the host's own orbit pose 4.4 s.
+- **Skip**: PRESS START TO SKIP (SKIP > on phones) after 1 s; Enter / Esc / the button asks "ARE YOU SURE? THE MAJOR
+  WORKED VERY HARD ON THIS." (4 s of wall clock), a second press skips to the landed state. The keys it handles are
+  stopped at window capture: the Enter that skips used to reach quest.js's own handler with the game running and dive
+  into the fountain (found by gate.mjs, fixed). The touch pad and A/B are hidden while it plays (`.quest.is-mgs`).
+- **Music**: an original 60s spy-title cue in E minor, 120 BPM (`'mgsbond'`, registered with `Riff.addStyle` at play();
+  brass stabs, a scooping trumpet line, strings with a line cliche, a twang-guitar figure, brushes, timpani; it quotes
+  nothing), played through `api.music` from the ramp, so only when music is wanted; the parachute ends it on the next bar
+  with an Em(maj9). SFX (codec ring/open/close/static, typing ticks, the title boom, engine, hydraulics, buzzer, wind,
+  canopy whump, landing thud) are synthesised on `api.audio()`.
+**Verified** (only my Chrome on 9751, profile mgsintro, scratch `.dev/tmp/mgsintro/`; served bytes hash-matched disk before
+every run; a `window.__mi` TEMP handle was used and removed; final md5 mgsintro.js 681568f8..., quest.js f2eeda5f...):
+- Length: `measure.mjs` (fake clock, 20 frames a game second) 177.9 s = 2:58 unskipped (codec 103.05 s; the analytic sum of
+  typing + holds + tunes + rings is ~101 s, the rest is frame quantisation). Full unskipped runs at timescale 3/5/8: 178-181 s.
+- `full.mjs` (beats, `?clears=10&timescale=3`, Halloween on by date): all 23 beats shot; after landing running, HUD
+  visible, Riff 'quest', overlay gone, man at (0,0,4) upright, far 300, fog back, session flag 1, reviewers start their
+  patrols only now, W moves him; 0 console errors. `gate.mjs` 29/29: plays at clears=10; a press in the first second is
+  ignored; ask + skip; game starts with town music and HUD; not again on reload in the same session; never at clears=0,
+  clears=20, clears=0&halloween=0, clears=10&mgsintro=0, clears=10&endgame=1&skipintro=1, &shmup=1, &cave=1;
+  `mgsintro=1` plays at clears=0 (Ghostbuster in the plane) even with the flag set; F and a click advance lines; Esc asks;
+  the question lapses; the skip button skips from the codec with the man in the plane. `skipfall.mjs`: skipping from the
+  fall in MASTER QUEST and from the chute in loop 1 puts the scene child count, the man's children, camera far/up, fog,
+  rotation order, limbs and scale back; quest2 / quest music. `mobile.mjs` (390x844 touch): codec fits the 4:3 view,
+  taps advance, pad hidden, SKIP > tag, two taps skip, pad back.
+- Unchanged without the skin: `compare2.mjs` (HEAD's quest.js served via Fetch interception vs the working copy, fake
+  clock, traces aligned on the first reviewer step): null control HEAD vs HEAD 120/120 frames identical; clears=0,
+  clears=10&mgsintro=0, clears=20 all 120/120 identical to HEAD; positive control clears=10 fresh session: HEAD's
+  reviewers move at frame 12, the working copy's never within 1400 frames (the intro holds them).
+- Level: `render.mjs` (Riff.render + analyse, dread 0): mgsbond -17.6 dBFS RMS (6-40 s), the town theme -16.5, the title
+  -14.6 (bus gain set from -23.7 to there). `node .dev/regress.mjs` all passed, 0 errors, on the handle-free bytes;
+  `smoke.mjs` handle-free 4/4. All 15 assets/js files parse; mgsintro.js parses as ES5 (acorn --ecma5; an arrow function
+  is rejected as the negative control); `grep "__mi|TEMP"` clean.
+- Shots looked at (`.dev/tmp/mgsintro/final/`): 01-02 title, 03-04 plane, 05 the ring (hand to ear), 06/09/10/11/13 codec
+  (Major, Para-Metric, the shouted SNAAAAAAKE!, Sig-Fig, the save), 12 the fake ending, 14-15 ramp, 16-19 fall + credits,
+  20-21 chute, 22-23 landing and crane, 24 control, 26-27 skip, 28-30 phone. Audition: `final/mgsbond-score.wav` (46 s).
+**Open / not verified**: nobody has heard the cue or the SFX, or seen it at 60 fps in a real browser (all timing is
+headless at timescale 3-8); the mix of the cue's voices against each other was not measured, only its total level; the
+cloud deck and dust are plain boxes (read as boxes); the plane hold is dark by design; old harnesses that start at
+`?clears=10` (mgs-final/t.mjs etc.) will now sit in the intro on a fresh session: add `&mgsintro=0`.
+
+## 2026-11-01: KONAMI-style boot logo for the Solid Snake skin (BUILT, verified in headless Chrome, NOT committed, NOT heard)
+Duncan: "rather than the 'palmer' sega logo, include an homage to the konami logo, along with the 'doot doot doot do do
+do' (which itself is a reference to policenauts), make it go 'pa pa pa palmer' (same tune)"; then, with a reference image,
+the target is the 2000s KONAMI corporate card on the MGS boot screen (white card, orange + dark-red two-piece emblem,
+black wordmark), not a red wordmark.
+Files: `assets/js/intro.js` (BOOT decision, `buildKonami`/`drawKonami`, `jingle()`/`logoFade()` replace the hard-wired
+PalmerChant in coin/startChant/warm), new `assets/js/konamichant.js` (`window.PalmerKonami`, same interface as chant.js),
+`_layouts/default.html` (+1 tag, defer, before intro.js). chant.js untouched.
+- **Who sees it**: `BOOT = 'konami'` iff clears in 10..19 (localStorage `quest.clears`, overridden by `?clears=N`, exactly
+  as quest.js feeds hats.js); everyone else keeps the SEGA logo. Hook `?bootlogo=konami|sega` forces either. Exposed as
+  `intro.boot` (read-only, for harnesses).
+- **Card** (redrawn from Duncan's reference image, `.dev/tmp/konamilogo/final/compare.png` = reference | ours): black ->
+  white card in 7 palette steps (0.05-0.75 s), hold, 7 steps back to black over the last 0.6 s. Emblem 84x68 px: two
+  identical pieces, orange (255,182,0) = #F7A400 snapped and red (182,36,36) = #B5141B snapped, the red one the orange
+  one moved (+25, +32) reference px; each a band sheared ~24 deg (0.44 px/row) whose centre-line steps left 30 px through a
+  14-row smoothstep halfway down, ends cut horizontally. Parameters fitted to the reference by grid search (IoU 0.988 /
+  0.991; `fit.mjs`); our raster at reference scale vs the reference mask IoU 0.986 / 0.993 (6 px-shift control 0.85;
+  `iou.mjs`). PALMER below: bold stroked caps, 13 px (about a fifth of the emblem, as KONAMI is), 2 px spacing, slanted
+  ~12 deg like the reference word, 11 px under the emblem. Jingle at 0.35 s; phase = 0.35 + 3.2 + 0.6 = 4.15 s (3.0 s
+  with music off / no konamichant.js). Same skip (350 ms dwell), late-timer wait (+3 s cap), stop on leaving the phase,
+  hand-off to the title card.
+- **Jingle** "PA PA PA PAL-MER": chant.js's formant choir, 22.05 kHz, no 8-bit DAC, a dotted-eighth echo. Tune is a
+  BEST RECOLLECTION, not a transcription: A4 A4 A4 G4 F4 E4 (eighths at ~107 bpm, last held ~1 s), harmony a fourth and an
+  octave below. Audition (WAV 16-bit mono 48 kHz, byte-identical to a re-render): `.dev/tmp/render/palmer-konami.wav`
+  (pal on G, mer on F~E: wired in), `-alt1.wav` (paal on G~F, mer on E), `-alt2.wav` (rising A A A C5 D5 E5). Switch:
+  default variant in `render()`; edit `SCORES` to change notes. Re-render: `node .dev/tmp/konamilogo/m.mjs assets/js/konamichant.js .dev/tmp/render`.
+**Verified** (scratch `.dev/tmp/konamilogo/`, Chrome 9761 profile konamilogo, served bytes hash-matched disk, machine
+load 30-50): boot matrix 15/15 + 6/6 on the final card (`k1.log`, `final.log`); SEGA frames at t 0.5/1/1.5/2/4.4
+byte-identical to HEAD's intro.js at clears=0 and 20 (null control HEAD=HEAD, positive control Konami != HEAD); jingle
+play 0.42 s after the coin, title 4.69 s (pumped, loaded box); skip stops it synchronously, 3/3 (`k1b.log`); music off and
+konamichant.js blocked: card runs and hands off, game starts, 0 errors; Konami code during the card -> select -> Esc ->
+title -> PRESS START; plain flow; level-select warp to the boss with x50 (`k3`); `regress.mjs` all passed; 0 console/draw
+errors. Shots looked at, `.dev/tmp/konamilogo/final/`: `k-fadein|full|fadeout-page.png` (+`-phone`), `-buf.png`,
+`compare.png`, `s-clears0|20-buf.png`.
+**Open**: nobody has heard the jingle or seen the card; the tune is from recollection; the emblem is traced from the reference
+but rendered at 84x68 integer pixels, so its curves are stair-stepped where the reference is antialiased; under heavy load the jingle timer fired up to 3.3 s
+late (the card waits for it, as the SEGA one does); desktop stretches the 320x224 frame non-uniformly (old issue 5); the
+title card's opening white flash now follows a fade to black.
+
 ## 2026-10-29: HALLOWEEN (BUILT, verified in headless Chrome, NOT committed, NOT seen by Duncan)
 Duncan: reskin the reviewers and the protagonist for Halloween, only 30 Oct - 1 Nov; then (same day) "let's go with a
 ghostbuster - and rather than rebut, you can hoover them into the ghost catcher thing. You can also add spooky things

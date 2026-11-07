@@ -773,8 +773,41 @@
   start.addEventListener('click', startPress);
   start.addEventListener('keydown', function (e) { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); startPress(); } });
 
+  /* THE MGS3 HOMAGE (mgsintro.js). Snake's first PRESS START of a browser session (sessionStorage quest.mgsintro) is a
+     long codec briefing on a transport plane and a HALO jump into the town; ?mgsintro=1 forces it (any skin, any
+     session), ?mgsintro=0 never. Not for the ?endgame / ?shmup / ?cave hooks or a level-select warp to a fight. Until he
+     lands, `running` stays false (no input, no dread, no reviewers) and loop() hands each frame to the module, which
+     renders; when he lands it calls mgsEnd and begin() runs as it always has. A missing module or any failure falls
+     through to the normal start. Any other skin and no hook: none of this runs. */
+  var mgsi = null, mgsOn = false, mgsTried = false;
+  function mgsStart() {
+    mgsTried = true;
+    var q = qp('mgsintro', '');
+    if (q === '0' || !window.QuestMGSIntro) return false;
+    if (PARAMS.endgame || PARAMS.shmup || PARAMS.cave || (PARAMS.warp && PARAMS.warp.level !== 'town')) return false;
+    if (q !== '1' && !(SNAKE && ssGet('quest.mgsintro') !== '1')) return false;
+    try {
+      var skin = 'palmer'; if (hats) try { skin = hats.skin() || 'palmer'; } catch (e) { skin = 'palmer'; }
+      mgsi = window.QuestMGSIntro(api); mgsOn = true;
+      var ok = mgsi.play({ onDone: mgsEnd, orbit: mgsOrbit, skin: skin, hats: function (dt, st) { if (hats) try { hats.update(dt, st); } catch (e) {} } });
+      if (!ok || !mgsi.active) { mgsOn = false; mgsi = null; return false; }
+      start.hidden = true; blip(440, .06); ssSet('quest.mgsintro', '1');
+      return true;
+    } catch (e) { mgsOn = false; mgsi = null; return false; }
+  }
+  function mgsEnd() { if (!mgsOn) return; mgsOn = false; mgsi = null; begin(); }
+  function mgsFrame(dt) {
+    try { mgsi.update(dt); } catch (e) { mgsAbort(); return; }
+    if (mgsOn && !(mgsi && mgsi.active)) mgsAbort();
+  }
+  function mgsAbort() { try { if (mgsi) mgsi.skip(); } catch (e) {} if (mgsOn) { mgsOn = false; mgsi = null; begin(); } }
+  function mgsOrbit() {                                // where update() puts the third-person camera once he is running
+    var y = MQ ? MQ_YAW : camYaw, px = player.position.x, pz = player.position.z;
+    return { x: px + Math.sin(y) * Math.cos(camPitch) * camDist, y: 1.5 + Math.sin(camPitch) * camDist, z: pz + Math.cos(y) * Math.cos(camPitch) * camDist, lx: px, ly: 1.6 + hatLift, lz: pz };
+  }
   function begin() {
-    if (running) return;
+    if (running || mgsOn) return;
+    if (!mgsTried && mgsStart()) return;
     running = true; start.hidden = true; el.focus(); blip(440, .06);
     music('quest');
     if (MQ) { graceT = MQ_GRACE; camYaw = MQ_YAW; showToast('MASTER QUEST. THE TOWN IS MIRRORED.', 3.5, ['THE REVIEWERS HAVE READ VERSION 1.', 3.5]); }
@@ -2176,6 +2209,7 @@
     checkVisible();
     if ((shmup && shmup.active) || (cave && cave.active)) return;   // a 2D overlay has the screen; stop paying for WebGL
     if (!visible && rendered++ > 2) return;
+    if (mgsOn) { mgsFrame(dt); return; }              // the MGS3 homage has the world (and renders it) until he lands
     if (running) update(dt); else { camYaw += dt * 0.15; update(0); }
     renderer.render(scene, camera);
   }
